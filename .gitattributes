@@ -1,0 +1,14 @@
+# The offline manifest hashes file bytes, so text must use the same line endings on every checkout.
+* text=auto eol=lf
+*.js text
+*.cjs text
+*.mjs text
+*.html text
+*.css text
+*.json text
+*.svg text
+*.txt text
+*.wav binary
+*.mp3 binary
+*.woff2 binary
+*.webp binary

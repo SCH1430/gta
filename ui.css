@@ -91,6 +91,10 @@
   touch-action: none;
   cursor: grab;
 }
+.k-look:focus-visible {
+  outline: 2px solid var(--k-amber);
+  outline-offset: -3px;
+}
 .k-look:active {
   cursor: grabbing;
 }

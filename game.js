@@ -590,6 +590,7 @@ class GameAudio {
     stationVoiceGain;
     nextBroadcast = 0;
     nextTownNews = 0;
+    nextDistrictBroadcast = 0;
     radioAudible = false;
     throttleRelease = 0;
     lastThrottle = 0;
@@ -617,6 +618,7 @@ class GameAudio {
     line;
     dialogueNoise = new dialogue_js_1.DialogueNoise();
     onDialogueResume;
+    onDistrictBulletin;
     noise;
     wind;
     clips = new Map();
@@ -745,8 +747,12 @@ class GameAudio {
         this.track = 0;
         this.slot = 0;
         this.nextBroadcast = 0;
+        this.nextDistrictBroadcast = 0;
         this.breakDue = false;
         this.stopStation();
+        this.stopMusic();
+    }
+    stopMusic() {
         const music = this.music;
         this.music = undefined;
         if (music) {
@@ -771,7 +777,9 @@ class GameAudio {
         const ctx = this.ctx;
         let pending = this.clips.get(name);
         if (!pending) {
-            pending = (0, local_assets_js_1.decodeAudioAsset)(ctx, 'audio/' + name + '.mp3');
+            pending = name === 'dk-metal-theme'
+                ? Promise.resolve().then(() => require('./venues-music.js').createMetalTheme(ctx, 'radio'))
+                : (0, local_assets_js_1.decodeAudioAsset)(ctx, 'audio/' + name + (name === 'fm-vodosbros' ? '.wav' : '.mp3'));
             this.clips.set(name, pending);
             pending.catch(() => this.clips.delete(name));
         }
@@ -1217,11 +1225,26 @@ class GameAudio {
             this.stopStation();
         const localNews = radio && this.station !== 'night' && !state.wanted && !this.isSpeaking && at >= this.nextTownNews
             ? state.townNews?.take() : undefined;
+        let districtReport;
+        if (!localNews && radio && this.station !== 'night' && !state.wanted && !this.isSpeaking && !this.musicLoading && at >= this.nextDistrictBroadcast) {
+            districtReport = state.districtRadio?.().find(report => report.station === this.station);
+            this.nextDistrictBroadcast = at + (districtReport ? 95 : 2);
+        }
         if (localNews) {
             this.nextTownNews = at + 7;
             this.nextBroadcast = at + 17;
             this.breakDue = false;
             this.broadcast([localNews], .82 + open * .08, true);
+        }
+        else if (districtReport) {
+            this.stopMusic();
+            this.nextBroadcast = at + 17;
+            this.breakDue = false;
+            this.programme = [];
+            this.stationSpeaking = true;
+            this.say(districtReport.id, .75 + open * .10, { subtitle: districtReport.subtitle });
+            if (districtReport.subtitle)
+                this.onDistrictBulletin?.(districtReport.subtitle);
         }
         else if (radio && !this.music && !this.musicLoading && !this.isSpeaking) {
             const talk = this.station === 'dispatch';
@@ -4218,9 +4241,8 @@ exports.createCityAdditions=createCityAdditions;
 "game/city-clock.js": function(require, module, exports) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.districtMinutes = void 0;
-const districtMinutes = (seconds) => (1065 + Math.floor(Math.max(0, seconds) / 2)) % 1440;
-exports.districtMinutes = districtMinutes;
+exports.districtCalendarMinutes = (seconds) => 1065 + Math.floor(Math.max(0, seconds) / 2);
+exports.districtMinutes = (seconds) => exports.districtCalendarMinutes(seconds) % 1440;
 
 },
 "game/city-life-layout.js": function(require, module, exports) {
@@ -6852,13 +6874,720 @@ function createDirectionalAudio(ctx, bus) {
 }
 
 },
+"game/district-deliveries.js": function(require, module, exports) {
+"use strict";
+const { approach, depot, routes } = require("./district-delivery-routes.js");
+const { createDistrictDeliveryView } = require("./district-delivery-view.js");
+const { groundHeight } = require("./world-layout.js");
+const { hullFits, moveHull } = require("./collision.js");
+const { dist } = require("./sim-navigation.js");
+
+const post = { x: 141.3, z: -18.2 };
+const cafe = { x: -98.7, z: 38.84 };
+const nightStarts = 21 * 60;
+const deliveryTime = 7 * 60;
+const dayLength = 24 * 60;
+const vanId = 'district-shift-van';
+const followDistance = 35;
+const envelopes = [
+    { bin: 'east', address: 'Станция Восточная · путевая служба. В конверте заявка на освещение платформы.' },
+    { bin: 'west', address: 'Западный терминал · Таможенный склад. В конверте ведомость ночной смены.' },
+    { bin: 'foundry', address: 'Литейная · кафе «Горячий лёд». В конверте график завтраков для утренней смены.' }
+];
+const mailBags = [
+    { bin: 'foundry', label: 'В мешок «Литейная / кафе Горячий лёд»' },
+    { bin: 'east', label: 'В мешок «Станция Восточная / путевая служба»' },
+    { bin: 'west', label: 'В мешок «Западный терминал / Таможенный склад»' }
+];
+const guides = [
+    ['Вагонный мост · выезд смены', approach.x, approach.z, 'Подъедьте с юга на машине. Нужен водитель сопровождения'],
+    ['Почта 87 · ночное окно', post.x, post.z, 'Западная стена почты у станции Восточной. Сортировка с 21:00 до полуночи']
+];
+
+function bridgeRestriction(c) {
+    const icy = c.weather.roadIce >= .65 && c.weather.wind > .55;
+    if (c.weather.snow >= .66 || icy)
+        return icy ? 'наледь на Вагонном мосту' : 'снежные заносы на Вагонном мосту';
+    const debris = c.sim.streetIncidents.debris(c.sim.brokenFixtures, c.sim.elapsed);
+    if (debris.some(p => Math.abs(p.x + 942) < 3.4 + p.radius && p.z > 51 && p.z < 99))
+        return 'препятствие на Вагонном мосту';
+    return '';
+}
+
+function vanAt(pose) {
+    return {
+        ...pose, y: groundHeight(pose.x, pose.z), id: vanId, kind: 'van', color: '#bc7b43',
+        districtEscort: true, health: 100, lights: true, speed: 0, steer: 0, wheel: 0,
+        braking: true, police: false, auto: false, lane: 0, s: 0, vx: 0, vz: 0
+    };
+}
+
+function attachVan(c, route, trip, offsets) {
+    for (const offset of offsets) {
+        const s = Math.max(0, Math.min(route.length, trip.distance + offset));
+        const van = vanAt(route.at(s));
+        if (!hullFits(van, van, c.sim.cars, c.sim.streetBodies()))
+            continue;
+        trip.distance = s;
+        c.sim.cars.push(van);
+        return van;
+    }
+    return null;
+}
+
+function detachVan(sim, van) {
+    const index = sim.cars.indexOf(van);
+    if (index >= 0) {
+        sim.cars.splice(index, 1);
+        sim.impactSliding.delete(van);
+        sim.populationRevision++;
+    }
+}
+
+function stopVan(van) {
+    van.speed = van.vx = van.vz = 0;
+    van.braking = true;
+}
+
+function advanceVan(c, van, trip, route, gap) {
+    const limit = Math.min(route.speedLimit(trip.distance), 14 - c.weather.snow * 6 - c.weather.roadIce * 3.5);
+    const pace = limit * Math.min(1, (followDistance - gap) / 11);
+    const speed = Math.min(pace, van.speed + 4.6 * c.dt);
+    const braking = speed < van.speed - .06;
+    const distance = Math.min(trip.distance + speed * c.dt, route.length);
+    const target = route.at(distance), dx = target.x - van.x, dz = target.z - van.z;
+    const fraction = Math.min(1, (speed * c.dt + .0001) / Math.max(.0001, Math.hypot(dx, dz)));
+    const moved = moveHull(van, dx * fraction, dz * fraction, target.yaw, c.sim.cars, c.sim.streetBodies());
+    if (moved.hit) {
+        stopVan(van);
+        return;
+    }
+    van.vx = (moved.x - van.x) / c.dt;
+    van.vz = (moved.z - van.z) / c.dt;
+    van.speed = Math.hypot(van.vx, van.vz);
+    van.braking = braking;
+    van.wheel += van.speed * c.dt / .375;
+    Object.assign(van, { x: moved.x, z: moved.z, yaw: moved.yaw, y: groundHeight(moved.x, moved.z) });
+    if (fraction >= .999)
+        trip.distance = distance;
+}
+
+function createDistrictDeliveries(scene) {
+    const view = scene ? createDistrictDeliveryView(scene) : null;
+    let trip = null, escorted = '', sorted = null, mailCount = 0, parked = false, warned = false;
+    const vanById = c => c.sim.cars.find(car => car.id === vanId);
+    const atNight = c => c.minutes >= nightStarts;
+    const announce = (c, message) => { c.notify(message); c.record(message); };
+    function start(c, name) {
+        if (name === 'direct') {
+            const restriction = bridgeRestriction(c);
+            if (restriction) {
+                c.notify('Диспетчер закрыл прямой выезд · ' + restriction + '. Выберите объезд.');
+                return;
+            }
+        }
+        const state = { route: name, distance: 0 };
+        const van = attachVan(c, routes[name], state, [0, 2.5, 5]);
+        if (!van) {
+            c.notify('Выезд занят. Освободите полосу и попробуйте снова.');
+            return;
+        }
+        trip = state;
+        warned = false;
+        c.ui.clearRoute(approach);
+        c.addMapPin(depot.x, depot.z, 'Таможенный склад · приём смены');
+        announce(c, 'Сменный фургон тронется первым. Держите оранжевый маяк в поле зрения и держитесь в 5–30 м за ним.');
+    }
+    function cancel(c) {
+        const van = vanById(c);
+        if (van)
+            detachVan(c.sim, van);
+        trip = null;
+        announce(c, 'Сопровождение снято. Новый рейс можно взять на южном подходе к Вагонному мосту.');
+    }
+    function actions(c) {
+        const rows = [];
+        if (c.zone !== 'street' || c.sim.wanted || c.sim.transition || c.sim.tramRider.onboard)
+            return rows;
+        const stopped = Math.abs(c.player.speed) < .45;
+        const atApproach = dist(c.player, approach) < 18;
+        if (!escorted && !trip && c.car && atApproach && Math.abs(c.car.speed) < 1.4)
+            rows.push({ id: 'escort', label: 'Сменный фургон · согласовать маршрут' });
+        if (trip && stopped) {
+            const van = vanById(c), route = routes[trip.route];
+            if (trip.distance >= route.length && dist(c.player, depot) < 12)
+                rows.push({ id: 'escort-finish', label: 'Таможенный склад · сдать путевой лист' });
+            else if (atApproach || van && dist(c.player, van) < 14)
+                rows.push({ id: 'escort-status', label: 'Сменный фургон · связаться с диспетчером' });
+        }
+        if (!c.car && dist(c.player, post) < 3.6) {
+            if (!sorted && atNight(c))
+                rows.push({ id: 'post-sort', label: mailCount ? 'Почта 87 · продолжить сортировку' : 'Почта 87 · разложить ночную почту' });
+            else if (!sorted && stopped)
+                rows.push({ id: 'post-night', label: 'Почта 87 · дождаться 21:00' });
+            else if (sorted && !sorted.delivered)
+                rows.push({ id: 'post-status', label: 'Почта 87 · проверить мешок утренней развозки' });
+        }
+        if (!c.car && sorted && dist(c.player, cafe) < 3.2) {
+            if (sorted.delivered)
+                rows.push({ id: 'cafe-board', label: 'Кафе «Горячий лёд» · прочитать новый график' });
+            else if (stopped)
+                rows.push({ id: 'post-morning', label: 'У кафе · дождаться утренней развозки' });
+        }
+        return rows;
+    }
+    function sortAtWindow(c) {
+        const letter = envelopes[mailCount];
+        c.choose('Конверт ' + (mailCount + 1) + ' из ' + envelopes.length + ' · ' + letter.address, mailBags.map(bag => ({
+            label: bag.label,
+            run() {
+                if (bag.bin !== letter.bin) {
+                    c.notify('Сортировщица вернула конверт. Проверьте район на адресной строке.');
+                    return;
+                }
+                mailCount++;
+                if (mailCount < envelopes.length) {
+                    c.notify('Конверт в нужном мешке. Разложено ' + mailCount + ' из ' + envelopes.length + '.');
+                    return;
+                }
+                sorted = { due: (Math.floor(c.calendarMinutes / dayLength) + 1) * dayLength + deliveryTime, delivered: false, seen: false };
+                c.sim.money += 120;
+                c.addMapPin(cafe.x, cafe.z, 'Кафе «Горячий лёд» · новый график');
+                announce(c, 'Три конверта отсортированы. После 07:00 новый график появится у кафе «Горячий лёд». +120 ₽');
+            }
+        })));
+    }
+    function act(id, c) {
+        if (!actions(c).some(row => row.id === id))
+            return false;
+        if (id === 'escort') {
+            const restriction = bridgeRestriction(c);
+            c.choose(restriction ? 'Сводка диспетчера · ' + restriction : 'Маршрут сменного фургона', [
+                { label: restriction ? 'Прямой рейс временно закрыт' : 'Прямо · через Вагонный мост · 500 м', run: () => start(c, 'direct') },
+                { label: 'Объезд · Карьерный мост и Сортировочное шоссе · 1,25 км', run: () => start(c, 'detour') }
+            ]);
+        } else if (id === 'escort-status') {
+            c.choose('Водитель ждёт, если машина сопровождающего отстала или вышла из строя.', [
+                { label: 'Продолжить рейс', run: () => c.notify('Держитесь за оранжевым маяком.') },
+                { label: 'Отменить сопровождение', run: () => cancel(c) }
+            ]);
+        } else if (id === 'escort-finish') {
+            const route = routes[trip.route];
+            c.sim.money += route.reward;
+            escorted = trip.route;
+            trip = null;
+            parked = true;
+            announce(c, 'Таможенный склад принял смену. Маршрут · ' + route.title + '. +' + route.reward + ' ₽');
+        } else if (id === 'post-night') {
+            if (c.waitUntil(nightStarts))
+                c.notify('21:00. Ставни поднялись, ночная сортировка началась.');
+        } else if (id === 'post-sort') {
+            sortAtWindow(c);
+        } else if (id === 'post-status') {
+            c.notify('Мешок для Литейной запечатан. Развозка прибудет к 07:00.');
+        } else if (id === 'post-morning') {
+            if (c.waitUntil(deliveryTime))
+                c.notify('07:00. У кафе заканчивают утреннюю развозку.');
+        } else if (id === 'cafe-board') {
+            if (!sorted.seen)
+                c.record('У «Горячего льда» висит новый график завтраков. Кафе открыто с 06:30.');
+            sorted.seen = true;
+            c.notify('«Завтрак для смены. Кафе открыто с 06:30». Конверт из «Почты 87» доставлен.');
+        }
+        return true;
+    }
+    function update(c) {
+        if (sorted && !sorted.delivered && c.calendarMinutes >= sorted.due) {
+            sorted.delivered = true;
+            announce(c, 'Почтальон вывесил новый график завтраков у кафе «Горячий лёд».');
+            c.persist?.();
+        }
+        view?.post(atNight(c), sorted?.delivered ?? false);
+        let van = vanById(c);
+        if (trip) {
+            const route = routes[trip.route];
+            if (!van && c.zone === 'street' && dist(c.player, route.at(trip.distance)) < 140)
+                van = attachVan(c, route, trip, trip.distance >= route.length ? [0] : [0, 2.5, 5]);
+            if (van && !c.sim.impactSliding.has(van)) {
+                const gap = dist(c.player, van);
+                const following = c.car && c.zone === 'street' && !c.sim.wanted && !c.sim.transition && c.dt > 0;
+                if (following && gap >= 5 && gap < followDistance && trip.distance < route.length) {
+                    warned = false;
+                    advanceVan(c, van, trip, route, gap);
+                    if (trip.distance >= route.length) {
+                        stopVan(van);
+                        announce(c, 'Фургон у Таможенного склада. Остановитесь рядом и сдайте путевой лист.');
+                    }
+                } else {
+                    stopVan(van);
+                    if (!warned && following && gap >= followDistance && gap < 85 && trip.distance < route.length) {
+                        warned = true;
+                        c.notify('Сменный фургон остановился. Подъедьте ближе к оранжевому маяку.');
+                    }
+                }
+            }
+        } else if (van && (!parked || dist(c.player, van) > 90)) {
+            detachVan(c.sim, van);
+            parked = false;
+            van = null;
+        }
+        view?.van(van && c.zone === 'street' && dist(c.player, van) < 145 ? van : null, c.sim.elapsed);
+    }
+    function agenda() {
+        const rows = [];
+        if (trip) {
+            const route = routes[trip.route];
+            rows.push({ title: 'Сменный фургон · ' + route.title, goal: trip.distance >= route.length ?
+                'Сдать путевой лист у Таможенного склада.' :
+                'Следовать за фургоном с оранжевым маяком. До склада ' + Math.ceil(route.length - trip.distance) + ' м.' });
+        }
+        if (sorted && !sorted.seen)
+            rows.push({ title: 'Почта 87', goal: sorted.delivered ?
+                'Новый график висит у входа в «Горячий лёд» на Литейной.' :
+                'После 07:00 следующего дня проверить доску у кафе «Горячий лёд».' });
+        else if (!sorted && mailCount)
+            rows.push({ title: 'Почта 87', goal: 'Разложено ' + mailCount + ' из ' + envelopes.length + '. Вернуться к ночному окну с 21:00 до полуночи.' });
+        return rows;
+    }
+    function save() {
+        return { trip: trip && { ...trip }, escorted, mailCount, sorted: sorted && { ...sorted } };
+    }
+    function restore(raw) {
+        escorted = typeof raw?.escorted === 'string' && Object.hasOwn(routes, raw.escorted) ? raw.escorted : '';
+        const saved = raw?.trip;
+        trip = !escorted && typeof saved?.route === 'string' && Object.hasOwn(routes, saved.route) && Number.isFinite(saved.distance) ?
+            { route: saved.route, distance: Math.max(0, Math.min(routes[saved.route].length, saved.distance)) } : null;
+        const letter = raw?.sorted;
+        sorted = Number.isSafeInteger(letter?.due) && letter.due >= dayLength + deliveryTime ?
+            { due: letter.due, delivered: letter.delivered === true, seen: letter.delivered === true && letter.seen === true } : null;
+        mailCount = sorted ? envelopes.length : Number.isInteger(raw?.mailCount) ? Math.max(0, Math.min(envelopes.length - 1, raw.mailCount)) : 0;
+        parked = warned = false;
+        view?.post(false, sorted?.delivered ?? false);
+        view?.van(null, 0);
+    }
+    return { actions, act, update, agenda, save, restore };
+}
+
+exports.guides = guides;
+exports.createDistrictDeliveries = createDistrictDeliveries;
+
+},
+"game/district-delivery-routes.js": function(require, module, exports) {
+"use strict";
+const { aim, dist, lerp } = require("./sim-navigation.js");
+
+const point = (x, z) => ({ x, z });
+const at = (a, b, t) => point(lerp(a.x, b.x, t), lerp(a.z, b.z, t));
+const approach = point(-944, 116);
+const depot = point(-754, -209.5);
+
+function escortRoad(coordinates, title, reward) {
+    const corners = coordinates.map(([x, z]) => point(x, z));
+    const nodes = [corners[0]], turns = [];
+    for (let i = 1; i < corners.length - 1; i++) {
+        const prev = corners[i - 1], corner = corners[i], next = corners[i + 1];
+        // A short bend stays inside the junction while keeping the van in its lane.
+        const radius = Math.min(5.4, dist(corner, prev) * .65, dist(corner, next) * .65);
+        const before = at(corner, prev, radius / dist(corner, prev));
+        const after = at(corner, next, radius / dist(corner, next));
+        const enter = nodes.length;
+        for (let step = 0; step <= 8; step++) {
+            const t = step / 8;
+            nodes.push(at(at(before, corner, t), at(corner, after, t), t));
+        }
+        turns.push({ enter, exit: nodes.length - 1 });
+    }
+    nodes.push(corners.at(-1));
+    const starts = [0];
+    for (let i = 1; i < nodes.length; i++)
+        starts.push(starts.at(-1) + dist(nodes[i - 1], nodes[i]));
+    const length = starts.at(-1);
+    function position(s) {
+        const clamped = Math.max(0, Math.min(length, s));
+        const i = Math.min(nodes.length - 2, starts.findLastIndex(start => start <= clamped));
+        return at(nodes[i], nodes[i + 1], (clamped - starts[i]) / (starts[i + 1] - starts[i]));
+    }
+    return {
+        title, reward, length,
+        at(s) { return { ...position(s), yaw: aim(position(s - .45), position(s + .45)) }; },
+        speedLimit(s) {
+            const turn = turns.find(({ exit }) => s < starts[exit]);
+            const distance = Math.min(length - s, turn ? starts[turn.enter] - s : Infinity);
+            return Math.min(14, Math.sqrt(24 + Math.max(0, distance) * 5));
+        }
+    };
+}
+
+const routes = {
+    direct: escortRoad([
+        [-942.05, 107], [-942.05, -101.05], [-862.05, -101.05],
+        [-862.05, -202.05], [-754, -202.05], [depot.x, depot.z]
+    ], 'Вагонный мост', 850),
+    detour: escortRoad([
+        [-937, 113.95], [-442.05, 113.95], [-442.05, -271.95],
+        [-717.95, -271.95], [-717.95, -205.95], [-754, -205.95], [depot.x, depot.z]
+    ], 'Карьерный мост и Сортировочное шоссе', 1200)
+};
+
+exports.approach = approach;
+exports.depot = depot;
+exports.routes = routes;
+
+},
+"game/district-delivery-view.js": function(require, module, exports) {
+"use strict";
+const T = require("../engine/three.module.min.js");
+const { Batches } = require("./world-batch.js");
+const { signTexture } = require("./world-textures.js");
+const { groundHeight } = require("./world-layout.js");
+const { specs } = require("./vehicle-cabin.js");
+
+function anchor(parent, name, x, z, yaw = 0) {
+    const group = new T.Group();
+    group.name = name;
+    group.position.set(x, groundHeight(x, z), z);
+    group.rotation.y = yaw;
+    parent.add(group);
+    return group;
+}
+
+function board(parent, title, subtitle, y, z, w, h, ink = '#f3d8a1', back = '#3c5559') {
+    const map = signTexture(title, subtitle, ink, back, w / h);
+    const mesh = new T.Mesh(new T.PlaneGeometry(w, h), new T.MeshBasicMaterial({ map }));
+    mesh.position.set(0, y, z);
+    parent.add(mesh);
+    (parent.userData.readableSigns ??= []).push({ x: 0, y, z, w, h, angle: 0, text: map.userData.signText });
+}
+
+function sortingWindow(scene) {
+    const group = anchor(scene, 'Ночное окно «Почты 87»', 143.48, -18.2, -Math.PI / 2);
+    const trim = new Batches(group), paint = '#315158', steel = '#747f82';
+    trim.box(0, 1.66, .11, 2.48, 1.39, .26, paint);
+    trim.box(0, 1.04, .24, 2.58, .13, .46, steel);
+    trim.box(0, 2.44, .32, 2.82, .12, .81, paint);
+    trim.box(0, 2.515, .32, 2.78, .035, .73, '#c9d6d8');
+    trim.box(0, 2.88, .105, 2.51, .59, .23, paint);
+    trim.flush();
+    board(group, 'ПОЧТА 87', 'НОЧНАЯ СОРТИРОВКА · 21:00–00:00', 2.88, .233, 2.42, .52);
+
+    const shutter = new T.Group(), closed = new Batches(shutter);
+    shutter.name = 'Почта 87 · ставни закрыты';
+    closed.box(0, 1.67, .26, 2.23, 1.14, .09, '#596c70');
+    for (let i = 0; i < 8; i++)
+        closed.box(0, 1.16 + .143 * i, .314, 2.23, .028, .021, '#768b8b');
+    closed.flush();
+    group.add(shutter);
+
+    const open = new T.Group(), window = new Batches(open);
+    open.name = 'Почта 87 · окно открыто';
+    window.lamp(0, 1.67, .235, 2.21, 1.15, .025, '#eab87d');
+    window.box(0, 1.28, .28, 2.20, .39, .065, '#765d4d');
+    window.box(0, 1.72, .29, .069, 1.02, .038, '#43575a');
+    window.box(-.79, 1.34, .32, .38, .46, .09, '#cbc096');
+    window.box(.72, 1.25, .37, .56, .25, .19, '#928c67');
+    window.box(.28, 1.15, .44, .30, .023, .16, '#efe0b3');
+    window.lamp(0, 2.36, .55, 1.86, .031, .080, '#ffe5aa');
+    window.flush();
+    open.visible = false;
+    group.add(open);
+    return { shutter, open };
+}
+
+function cafeBoard(scene) {
+    const group = anchor(scene, 'График смены у кафе «Горячий лёд»', -98.7, 39.76, Math.PI);
+    const frame = new Batches(group);
+    frame.box(0, 1.63, .09, 1.80, .88, .19, '#47544e');
+    frame.box(0, 1.16, .12, 1.85, .085, .23, '#b1c2bd');
+    frame.flush();
+    const pending = new T.Group(), delivered = new T.Group();
+    pending.name = 'Доска кафе · старое объявление';
+    delivered.name = 'Доска кафе · новый график';
+    board(pending, 'ГОРЯЧИЙ ЛЁД', 'РАСПИСАНИЕ УТОЧНЯЕТСЯ', 1.63, .195, 1.66, .74, '#afc0b1', '#374747');
+    board(delivered, 'ЗАВТРАК ДЛЯ СМЕНЫ', 'КАФЕ ОТКРЫТО С 06:30', 1.63, .195, 1.66, .74, '#281f1a', '#ffd297');
+    const light = new Batches(delivered);
+    light.lamp(0, 2.09, .16, 1.34, .054, .082, '#ffd08f');
+    light.flush();
+    delivered.visible = false;
+    group.add(pending, delivered);
+    return { pending, delivered };
+}
+
+function roadBoard(scene) {
+    const group = anchor(scene, 'Сменный рейс · южный подход', -935.9, 119.45, Math.PI);
+    const frame = new Batches(group);
+    for (const x of [-.79, .79])
+        frame.box(x, .98, 0, .095, 1.96, .095, '#566c70');
+    frame.box(0, 1.88, 0, 2.16, .77, .11, '#435b5d');
+    frame.flush();
+    board(group, 'СМЕННЫЙ РЕЙС', 'ОТПРАВЛЕНИЕ У ВАГОННОГО МОСТА', 1.88, .061, 2.07, .70);
+}
+
+function createDistrictDeliveryView(scene) {
+    const post = sortingWindow(scene), cafe = cafeBoard(scene);
+    roadBoard(scene);
+    const beacon = new T.Group(), base = new Batches(beacon), lamp = new T.Group(), lights = new Batches(lamp);
+    beacon.name = 'Оранжевый маяк сменного фургона';
+    base.box(0, specs.van.roof + .062, -.50, .56, .104, .21, '#a56d37');
+    lights.lamp(0, specs.van.roof + .125, -.50, .53, .075, .19, '#ffbc4b');
+    base.flush();
+    lights.flush();
+    beacon.add(lamp);
+    scene.add(beacon);
+    beacon.visible = false;
+    return {
+        post(open, delivered) {
+            post.shutter.visible = !open;
+            post.open.visible = open;
+            cafe.pending.visible = !delivered;
+            cafe.delivered.visible = delivered;
+        },
+        van(car, elapsed) {
+            beacon.visible = !!car;
+            if (car) {
+                beacon.position.set(car.x, car.y, car.z);
+                beacon.rotation.y = car.yaw;
+                lamp.visible = Math.floor(elapsed * (car.braking ? 4 : 2.5)) % 2 === 0;
+            }
+        }
+    };
+}
+
+exports.createDistrictDeliveryView = createDistrictDeliveryView;
+
+},
+"game/district-outskirts.js": function(require, module, exports) {
+"use strict";
+
+const { createOutskirtsView } = require('./outskirts-view.js');
+
+const skver = { x: -70, z: -634 };
+const hockey = { x: -73.3, z: -601.5, launch: -5.5, goal: 5.65, lanes: [-3.2, 0, 3.2] };
+const scoreBoard = { x: -66.3, z: -607 };
+const dam = { x: 891.6, z: -243.8, gateX: 901.1, gateZ: -236.15 };
+const eveningStart = 18 * 60;
+const waterSchedule = [18 * 60 + 30, 20 * 60 + 30, 22 * 60 + 30];
+const gamesToKeep = 3;
+const shotsPerGame = 3;
+const shotDuration = .78;
+const distance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+const clockLabel = minutes => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+const waterTimes = waterSchedule.map(clockLabel).join(', ');
+const waterScheduleText = `Белая плотина. У Водосброса № 2 открыта смотровая. Сброс в ${waterTimes}. Перед началом загораются янтарные фонари.`;
+const rinkPin = 'Ледовая арена · три броска';
+const damPin = 'Водосброс № 2 · смотровая';
+
+const guides = [
+    ['Сквер Полярников', skver.x, skver.z, 'От сквера идёт пешеходная дорожка к Ледовой арене.'],
+    [rinkPin, hockey.x, hockey.z + hockey.launch, 'После 18:00. Три броска и доска результатов.'],
+    [damPin, dam.x, dam.z, `Местное радио и вечерний сброс в ${waterTimes}.`]
+];
+
+function waterPhase(minutes) {
+    const start = waterSchedule.find(time => minutes >= time - 8 && minutes < time + 12);
+    if (start === undefined) return 'idle';
+    return minutes < start ? 'warning' : 'running';
+}
+
+function nextWaterStart(minutes) {
+    return waterSchedule.find(time => time > minutes) ?? waterSchedule[0];
+}
+
+function hockeyBlockerAt(time) {
+    return Math.sin(time * 2.2 + .7) * 3.75;
+}
+
+function atShootingLine(player) {
+    return Math.abs(player.x - hockey.x) <= 4.85 && Math.abs(player.z - hockey.z - hockey.launch) < 1.55;
+}
+
+function laneAt(player) {
+    const relativeX = player.x - hockey.x;
+    return relativeX < -1.6 ? hockey.lanes[0] : relativeX > 1.6 ? hockey.lanes[2] : hockey.lanes[1];
+}
+
+function onFoot(c) {
+    return c.player && c.zone === 'street' && !c.car && !c.sim?.home?.door && !c.sim?.transition && !c.sim?.tramRider?.onboard;
+}
+
+function canWait(c) {
+    return typeof c.waitUntil === 'function' && !c.sim?.wanted && Math.abs(c.player.speed ?? 0) < .45;
+}
+
+function newRound(results = []) {
+    return { time: 0, results, shot: null };
+}
+
+function validScore(score) {
+    return Number.isInteger(score) && score >= 0 && score <= shotsPerGame;
+}
+
+function createDistrictOutskirts(scene) {
+    const view = scene ? createOutskirtsView(scene, { skver, hockey, scoreBoard, dam }) : null;
+    let scores = [], round = null, lastPuck = null, waterSeen = false;
+    let waterAnimationTime = 0, waterSoundIn = 0;
+
+    function restore(raw) {
+        scores = Array.isArray(raw?.scores) ? raw.scores.filter(validScore).sort((a, b) => b - a).slice(0, gamesToKeep) : [];
+        const results = raw?.round;
+        round = Array.isArray(results) && results.length < shotsPerGame && results.every(value => typeof value === 'boolean')
+            ? newRound([...results]) : null;
+        lastPuck = null;
+        waterSeen = raw?.waterSeen === true;
+        waterAnimationTime = 0;
+        waterSoundIn = 0;
+        view?.drawScores(scores);
+    }
+
+    function actions(c) {
+        if (!onFoot(c)) return [];
+        const rows = [];
+        if (distance(c.player, skver) < 3) rows.push({ id: 'hockey-sign', label: 'Прочитать указатель к Ледовой арене' });
+        if (atShootingLine(c.player)) {
+            if (round && !round.shot) rows.push({ id: 'hockey-shot', label: `Бросить шайбу · ${round.results.length + 1}/${shotsPerGame}` });
+            else if (!round) rows.push({ id: 'hockey-start', label: 'Три броска · Ледовая арена' });
+        }
+        if (distance(c.player, scoreBoard) < 2.6) rows.push({ id: 'hockey-scores', label: 'Посмотреть доску результатов' });
+        if (distance(c.player, dam) < 3.6) {
+            const phase = waterPhase(c.minutes);
+            if (phase === 'running') rows.push({ id: 'water-watch', label: 'Посмотреть сброс со смотровой' });
+            rows.push({ id: 'water-radio', label: 'Послушать местное радио' });
+            if (phase !== 'running' && canWait(c)) rows.push({ id: 'water-wait', label: 'Дождаться сброса' });
+        }
+        return rows;
+    }
+
+    function act(id, c) {
+        if (!actions(c).some(action => action.id === id)) return false;
+        switch (id) {
+            case 'hockey-sign':
+                c.addMapPin(hockey.x, hockey.z + hockey.launch, rinkPin);
+                c.notify('За Кедровой идите вдоль арены к синей ледовой площадке. Три броска после 18:00.');
+                break;
+            case 'hockey-start': {
+                const entries = [];
+                const open = c.minutes >= eveningStart;
+                if (open) entries.push({ label: 'Начать серию из трёх бросков', run: () => {
+                    round = newRound();
+                    lastPuck = null;
+                    c.follow?.reset(Math.PI);
+                } });
+                else if (canWait(c)) entries.push({ label: 'Подождать до 18:00', run: () => c.waitUntil(eveningStart) });
+                entries.push({ label: 'Закрыть', run: () => {} });
+                c.choose(open ? 'Встаньте на одну из трёх дорожек. Бросайте, когда щит у ворот уходит с вашей линии.' : 'Команда тренируется с 18:00 до полуночи.', entries);
+                break;
+            }
+            case 'hockey-shot': {
+                const lane = laneAt(c.player);
+                const t = round.time + shotDuration;
+                const hit = Math.abs(hockeyBlockerAt(t) - lane) >= 1.26;
+                round.shot = { lane, at: round.time, t, hit };
+                lastPuck = null;
+                c.audio?.burst?.(1120, .09, .12);
+                break;
+            }
+            case 'hockey-scores':
+                c.choose(scores.length ? `Лучшие серии · ${scores.map(value => `${value}/${shotsPerGame}`).join(' · ')}` : 'Доска «Север-8». Здесь появятся ваши три лучших результата.', [{ label: 'Закрыть', run: () => {} }]);
+                break;
+            case 'water-radio':
+                c.choose(waterScheduleText, [
+                    { label: 'Записать расписание в блокнот', run: () => c.record(waterScheduleText) },
+                    { label: 'Прослушать выпуск', run: () => c.audio?.say?.('fm-vodosbros', .75, { foreground: true, subtitle: waterScheduleText }) },
+                    { label: 'Закрыть', run: () => {} }
+                ]);
+                break;
+            case 'water-wait':
+                if (c.waitUntil(nextWaterStart(c.minutes)))
+                    c.notify('На водосбросе загорелись янтарные огни. Поток виден справа от смотровой.');
+                break;
+            case 'water-watch':
+                if (!waterSeen) c.record('Водосброс № 2. Со смотровой видел, как поток ударил о бетон и поднял пар над каналом.');
+                waterSeen = true;
+                c.follow?.reset(Math.atan2(c.player.x - dam.gateX, c.player.z - dam.gateZ + 2.6));
+                c.notify('Водосброс № 2 · янтарные фонари и пар над потоком.');
+                break;
+        }
+        return true;
+    }
+
+    function advanceShot(c) {
+        const shot = round.shot;
+        if (!shot || round.time < shot.t) return;
+        round.results.push(shot.hit);
+        round.shot = null;
+        lastPuck = { lane: shot.lane, z: hockey.goal - (shot.hit ? .06 : 1), remaining: .62 };
+        const hits = round.results.filter(Boolean).length;
+        if (round.results.length === shotsPerGame) {
+            const record = !scores.length || hits > scores[0];
+            scores = [...scores, hits].sort((a, b) => b - a).slice(0, gamesToKeep);
+            round = null;
+            c.record(`Ледовая арена · ${hits} из ${shotsPerGame}.${record ? ' Личный рекорд.' : ''}`);
+            c.notify(`Серия завершена · ${hits} из ${shotsPerGame}${record ? ' · личный рекорд' : ''}`);
+            view?.drawScores(scores);
+            c.persist?.();
+        } else {
+            c.notify(`${shot.hit ? 'Попадание' : 'Щит отбил шайбу'} · ${hits}/${round.results.length}`);
+        }
+        if (shot.hit) c.audio?.tone?.(670, 530, .16, .09, 'triangle');
+        else c.audio?.burst?.(600, .11, .16);
+    }
+
+    function update(c) {
+        const dt = Math.max(0, c.dt ?? 0);
+        if (round && (!onFoot(c) || distance(c.player, hockey) > 24)) round = null;
+        if (lastPuck) {
+            lastPuck.remaining -= dt;
+            if (lastPuck.remaining <= 0) lastPuck = null;
+        }
+        if (round) {
+            round.time += dt;
+            advanceShot(c);
+        }
+        const nearRink = c.player && distance(c.player, hockey) < 95;
+        if (view) {
+            const shot = round?.shot;
+            const flight = shot && Math.min(1, (round.time - shot.at) / shotDuration);
+            const onLaunch = nearRink && onFoot(c) && atShootingLine(c.player);
+            const puck = shot ? { lane: shot.lane, z: hockey.launch + (hockey.goal - (shot.hit ? .06 : 1) - hockey.launch) * flight } : lastPuck;
+            view.drawHockey(nearRink, c.minutes >= eveningStart, round, onLaunch ? laneAt(c.player) : null, puck, hockeyBlockerAt(round?.time ?? 0), dt);
+        }
+        const phase = waterPhase(c.minutes);
+        waterAnimationTime = phase === 'running' ? waterAnimationTime + dt : 0;
+        const nearDam = c.player && distance(c.player, dam) < 105;
+        if (phase === 'running' && nearDam && c.zone === 'street' && distance(c.player, dam) < 16) {
+            waterSoundIn -= dt;
+            if (waterSoundIn <= 0) {
+                c.audio?.burst?.(445, .68, (1 - distance(c.player, dam) / 16) * .055);
+                waterSoundIn = .45;
+            }
+        }
+        else waterSoundIn = 0;
+        view?.drawWater(nearDam, phase, waterAnimationTime, dt);
+    }
+
+    return {
+        actions, act, update, restore,
+        save: () => ({ scores: [...scores], waterSeen, round: round ? [...round.results] : null }),
+        radio: () => [{ id: 'fm-vodosbros', station: 'dispatch', subtitle: waterScheduleText }],
+        agenda: c => round ? [{ title: 'Ледовая арена', goal: `Броски: ${round.results.length}/${shotsPerGame}. Попадания: ${round.results.filter(Boolean).length}.` }]
+            : c.player && distance(c.player, dam) < 90 ? [{ title: 'Водосброс № 2', goal: waterPhase(c.minutes) === 'running' ? 'Идёт сброс. Смотровая открыта.' : `Следующий сброс в ${clockLabel(nextWaterStart(c.minutes))}.` }]
+                : []
+    };
+}
+
+module.exports = { createDistrictOutskirts, guides, hockey, scoreBoard, dam, waterSchedule, waterScheduleText, waterPhase, hockeyBlockerAt };
+
+},
 "game/district-play.js": function(require, module, exports) {
 "use strict";
 const T = require("../engine/three.module.min.js");
 const nav = require("./world-layout.js");
 const clearance = require("./camera-volume.js");
 const { houseClearance } = require("./house-layout.js");
+const outskirts = require("./district-outskirts.js");
+const deliveries = require("./district-deliveries.js");
+const venues = require("./district-venues.js");
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+const destinationGuides = [...outskirts.guides, ...deliveries.guides, ...venues.guides];
 const guides = [
     ['Канальные гаражи', -40, 42, 'Машины, инструмент и мастерская'],
     ['Поворот у «Спектра»', 38.35, 36.35, 'Кнопка пешеходного перехода'],
@@ -6869,7 +7598,8 @@ const guides = [
     ['Трамвайное депо', 12, -39, 'Мастерские и дежурная смена'],
     ['Кафе «Горячий лёд»', -101, 38.84, 'Столярные работы'],
     ['Шлюзовой съезд', 14.1, 57.7, 'Обмен у лодки'],
-    ['Лесозавод', 191, 677, 'Весовая площадка']
+    ['Лесозавод', 191, 677, 'Весовая площадка'],
+    ...destinationGuides
 ];
 function aimedSign(scene, camera, sim) {
     if (!scene) return null;
@@ -6906,7 +7636,10 @@ exports.createDistrictPlay = function(scene, ui, context, persist) {
     const modules = {
         city: require("./city-additions.js").createCityAdditions(scene),
         mobility: require("./mobility-additions.js").createMobilityAdditions(scene),
-        culture: require("./culture-additions.js").createCultureAdditions(scene)
+        culture: require("./culture-additions.js").createCultureAdditions(scene),
+        outskirts: outskirts.createDistrictOutskirts(scene),
+        deliveries: deliveries.createDistrictDeliveries(scene),
+        venues: venues.createDistrictVenues(scene)
     };
     let notes, parking, driven, selection, menuTitle;
     function restore(data) {
@@ -6925,15 +7658,16 @@ exports.createDistrictPlay = function(scene, ui, context, persist) {
         ui.open('district-choice');
     }
     function ctx(dt = 0, weather) {
-        return Object.assign(context(dt, weather), { notify: ui.notify, choose, record, addMapPin: ui.addMapPin });
+        return Object.assign(context(dt, weather), { notify: ui.notify, choose, record, addMapPin: ui.addMapPin, persist });
     }
     function here(c) {
         if (c.sim.transition || c.sim.home.door) return [];
         return Object.entries(modules).flatMap(([key, mod]) => (mod.actions(c) || []).map(a => ({...a, id:'district:' + key + ':' + a.id})));
     }
     function guide(pin) {
-        ui.addMapPin(pin[1], pin[2], pin[0]);
-        if (ctx().sim.home.inside) {
+        const inside = ctx().sim.home.inside;
+        if (inside || !destinationGuides.includes(pin)) ui.addMapPin(pin[1], pin[2], pin[0]);
+        if (inside) {
             ui.notify('Метка «'+pin[0]+'» сохранена. На улице выберите её на карте.');
             return;
         }
@@ -6958,6 +7692,10 @@ exports.createDistrictPlay = function(scene, ui, context, persist) {
             selection.map((a,i)=>'<button type="button" class="k-panel-row k-book-row" data-action="district:pick:'+i+'"><span>'+escape(a.label)+'</span><b aria-hidden="true">›</b></button>').join('')+'</div>', true);
     return {restore, save() {
         return {notes:notes.slice(),parking,...Object.fromEntries(Object.entries(modules).map(([key,mod])=>[key,mod.save?.()]))};
+    }, destinations: destinationGuides.map(([label, x, z]) => ({ label, x, z, area: nav.districtAt(x, z) })),
+    radio() {
+        const c = ctx();
+        return Object.values(modules).flatMap(mod => mod.radio?.(c) ?? []);
     }, actions:()=>here(ctx()), update(dt, weather) {
         const c = ctx(dt, weather);
         if (driven && !c.car && !c.sim.transition) {
@@ -6993,6 +7731,208 @@ exports.createDistrictPlay = function(scene, ui, context, persist) {
 };
 
 },
+"game/district-venues.js": function(require, module, exports) {
+'use strict';
+
+const { river, metal, rehearsalOpen } = require('./venue-layout.js');
+const { createVenueView } = require('./venues-view.js');
+const { createRehearsalSound, metalTrack, metalTitle } = require('./venues-music.js');
+
+const guides = [
+    [river.door.label, river.door.x, river.door.z, 'Южный порт · зал ожидания и рейс в 18:20'],
+    [metal.door.label, metal.door.x, metal.door.z, 'Литейный квартал · вечерняя репетиция с 18:00 до 22:00'],
+];
+const passengerShiftStart = 18 * 60;
+const passengerShiftEnd = 19 * 60 + 20;
+const recordingLength = 8.2;
+const emptyRoutes = river.passengers.map(() => null);
+const distance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+const dayOf = c => Math.floor((c.calendarMinutes ?? c.minutes) / 1440);
+const isTime = value => Number.isFinite(value) && value >= 0;
+
+function initialStation(day = -1) {
+    return { day, routes: [...emptyRoutes] };
+}
+
+function stationSchedule(acting, routed, finished) {
+    if (finished)
+        return ['РЕЙС 18:20 · ЗАМЕНА', '2 ПАССАЖИРА К АВТОБУСУ 12  ·  1 К ТАКСИ'];
+    if (acting)
+        return ['18:20 · РЕЙС ЗАДЕРЖАН', routed ? `ПЕРЕНАПРАВЛЕНО: ${routed} ИЗ 3` : 'ОБРАТИТЕСЬ К ДЕЖУРНОЙ У ТАБЛО'];
+    return ['18:20 · РЕЙС НА НАБЕРЕЖНУЮ', 'ТАБЛО ОБНОВИТСЯ К НАЧАЛУ ВЕЧЕРНЕЙ СМЕНЫ'];
+}
+
+function createDistrictVenues(scene) {
+    const view = createVenueView(scene);
+    const rehearsalAudio = createRehearsalSound();
+    let station = initialStation();
+    let spoke = false, stands = [false, false], recordingAt = null, captured = false, broadcastAt = null;
+
+    function stationState(c) {
+        const routes = station.day === dayOf(c) ? station.routes : emptyRoutes;
+        const routed = routes.filter(Boolean).length;
+        const open = (c.minutes >= passengerShiftStart && c.minutes < passengerShiftEnd) || routed > 0;
+        return { open, routes, routed };
+    }
+
+    function actions(c) {
+        const result = [];
+        const add = (id, label) => result.push({ id, label });
+        if (c.car || c.sim.tramRider?.onboard)
+            return result;
+        if (c.zone === river.door.zone) {
+            const shift = stationState(c);
+            if (distance(c.player, river.display) < 6.5)
+                add('schedule', 'Посмотреть табло рейсов');
+            if (distance(c.player, river.dispatcher) < 2.30) {
+                add('dispatcher', 'Поговорить с дежурной Мариной');
+                if (!shift.open && c.waitUntil) add('station-wait', 'Дождаться вечернего рейса · 18:00');
+            }
+            if (shift.open) river.passengers.forEach((p, i) => {
+                if (!shift.routes[i] && distance(c.player, p) < 1.75)
+                    add('passenger-' + i, 'Подсказать маршрут · ' + p.name);
+            });
+        }
+        if (c.zone === 'street' && distance(c.player, metal.door) < 2.5) {
+            add('poster', 'Прочитать афишу ДК');
+            if (c.waitUntil && !rehearsalOpen(c.minutes)) add('metal-wait', 'Дождаться репетиции · 18:00');
+        }
+        if (c.zone === metal.door.zone && rehearsalOpen(c.minutes)) {
+            if (distance(c.player, metal.leader) < 2.0) {
+                add('leader', 'Поговорить с руководителем ансамбля');
+                if (spoke && stands.every(Boolean) && !captured && recordingAt === null)
+                    add('record', 'Записать «' + metalTitle + '»');
+                if (captured && broadcastAt === null)
+                    add('send', 'Передать запись на Канальный FM');
+            }
+            if (spoke) metal.stands.forEach((p, i) => {
+                if (!stands[i] && distance(c.player, p) < 1.42)
+                    add('stand-' + i, 'Поставить пюпитр · ' + (i === 0 ? 'аккордеон' : 'контрабас'));
+            });
+        }
+        return result;
+    }
+
+    function routePassenger(c, index, mode) {
+        const passenger = river.passengers[index];
+        if (station.day !== dayOf(c)) station = initialStation(dayOf(c));
+        if (station.routes[index]) return;
+        if (mode !== passenger.route) {
+            c.notify(passenger.name + ': «' + passenger.question + '»');
+            return;
+        }
+        station.routes[index] = { mode, at: c.sim.elapsed };
+        c.addMapPin(river[mode].x, river[mode].z, mode === 'bus' ? 'Речной вокзал · автобус 12' : 'Речной вокзал · такси');
+        if (station.routes.every(Boolean)) {
+            c.record('Речной вокзал: из-за задержки рейса двое отправлены к автобусу 12, один к такси.');
+            c.notify(passenger.answer + ' Марина обновила табло.');
+        } else {
+            c.notify(passenger.answer);
+        }
+    }
+
+    function act(id, c) {
+        if (!actions(c).some(action => action.id === id)) return;
+        if (id.startsWith('passenger-')) {
+            const index = Number(id.slice('passenger-'.length));
+            const passenger = river.passengers[index];
+            c.choose(passenger.name + ': «' + passenger.question + '»', [
+                { label: 'Автобус 12 · на рынок', run: () => routePassenger(c, index, 'bus') },
+                { label: 'Такси · к диспетчерской', run: () => routePassenger(c, index, 'taxi') },
+            ]);
+        } else if (id === 'schedule') {
+            const { open, routed } = stationState(c);
+            c.notify(stationSchedule(open, routed, routed === river.passengers.length).join(' · '));
+        } else if (id === 'dispatcher') {
+            const shift = stationState(c);
+            if (shift.routed === river.passengers.length) c.notify('Марина: «Все нашли остановки. Спасибо, что предупредили каждого»');
+            else if (shift.open) c.notify('Марина: «В тумане рейс задержан. Спросите троих в зале, куда они едут. К рынку идёт автобус 12, у входа справа стоянка такси»');
+            else c.notify('Марина: «Рейс на набережную по расписанию в 18:20. Вечернюю смену начинаем в 18:00»');
+        } else if (id === 'station-wait' || id === 'metal-wait') {
+            if (!c.waitUntil(id === 'station-wait' ? passengerShiftStart : metal.opens)) {
+                c.notify('Чтобы подождать, остановитесь в безопасном месте.');
+                return;
+            }
+            c.notify(id === 'station-wait' ? 'Наступила вечерняя смена. Рейс задержан.' : '18:00. Дверь ДК открыта, изнутри слышна репетиция.');
+        } else if (id === 'poster') {
+            c.notify('ДК «Металлург» · репетиция ежедневно с 18:00 до 22:00. Вход со двора рядом с кафе.');
+        } else if (id === 'leader') {
+            spoke = true;
+            if (broadcastAt !== null) c.notify('Руководитель: «Наш вальс включат на Канальном FM. Слушайте по дороге»');
+            else if (captured) c.notify('Руководитель: «Хорошо записалось. Передай вальс на Канальный FM»');
+            else if (stands.every(Boolean)) c.notify('Руководитель: «Пюпитры на месте. Запиши следующий проход!»');
+            else c.notify('Руководитель: «Помоги поставить два пюпитра у сцены. Мы репетируем “Литейный вальс”»');
+        } else if (id.startsWith('stand-')) {
+            stands[Number(id.slice('stand-'.length))] = true;
+            c.notify(stands.every(Boolean) ? 'Оба пюпитра на месте. Вернитесь к руководителю.' : 'Пюпитр на месте. Второй стоит у другого края сцены.');
+        } else if (id === 'record') {
+            recordingAt = c.sim.elapsed;
+            c.audio?.unlock?.();
+            c.notify('Запись «' + metalTitle + '». Останьтесь в зале до конца прохода.');
+        } else if (id === 'send') {
+            broadcastAt = c.sim.elapsed + 12;
+            c.record('ДК «Металлург»: «Литейный вальс» записан и передан в эфир Канального FM.');
+            c.notify('Канальный FM принял «' + metalTitle + '». Запись прозвучит в одном из следующих выпусков.');
+        }
+    }
+
+    function update(c) {
+        const shift = stationState(c);
+        const rehearsal = rehearsalOpen(c.minutes);
+        const inside = c.zone === metal.door.zone;
+        if (recordingAt !== null) {
+            if (!inside || !rehearsal) recordingAt = null;
+            else if (c.sim.elapsed - recordingAt >= recordingLength) {
+                recordingAt = null;
+                captured = true;
+                c.notify('Запись готова. Подойдите к руководителю, чтобы отправить её в эфир.');
+            }
+        }
+        const outsideLevel = c.zone === 'street' ? Math.max(0, 1 - distance(c.player, metal.door) / 23) * .43 : 0;
+        rehearsalAudio(c.audio, rehearsal ? (inside ? .86 : outsideLevel * (c.car ? .49 : 1)) : 0, inside);
+        const text = stationSchedule(shift.open, shift.routed, shift.routed === river.passengers.length);
+        view(c, shift, text, rehearsal, stands);
+    }
+
+    function agenda(c) {
+        const { routed } = stationState(c);
+        const items = [];
+        if (routed > 0 && routed < river.passengers.length)
+            items.push({ title: river.door.label, goal: `Подсказать пересадку оставшимся пассажирам · ${routed} из 3` });
+        if (spoke && broadcastAt === null)
+            items.push({ title: metal.door.label, goal: captured ? 'Передать запись на Канальный FM' : 'Подготовить и записать вечернюю репетицию' });
+        return items;
+    }
+
+    function save() {
+        return { station: { day: station.day, routes: station.routes.map(route => route && { ...route }) }, spoke, stands: [...stands], recordingAt, captured, broadcastAt };
+    }
+
+    function restore(raw) {
+        station = initialStation(Number.isSafeInteger(raw?.station?.day) ? raw.station.day : -1);
+        station.routes = river.passengers.map((passenger, i) => {
+            const route = raw?.station?.routes?.[i];
+            return route?.mode === passenger.route && isTime(route.at) ? { mode: route.mode, at: route.at } : null;
+        });
+        spoke = raw?.spoke === true;
+        stands = [0, 1].map(i => spoke && raw?.stands?.[i] === true);
+        captured = stands.every(Boolean) && raw?.captured === true;
+        recordingAt = !captured && stands.every(Boolean) && isTime(raw?.recordingAt) ? raw.recordingAt : null;
+        broadcastAt = captured && isTime(raw?.broadcastAt) ? raw.broadcastAt : null;
+    }
+
+    function radio(c) {
+        return broadcastAt !== null && c.sim.elapsed >= broadcastAt
+            ? [{ id: metalTrack, station: 'district', subtitle: 'Канальный FM · ДК «Металлург» — «' + metalTitle + '»' }]
+            : [];
+    }
+
+    return { actions, act, update, agenda, save, restore, radio };
+}
+
+module.exports = { createDistrictVenues, guides };
+
+},
 "game/exploration-layout.js": function(require, module, exports) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -7000,6 +7940,7 @@ exports.explorationObstacles = exports.entranceIntercom = exports.swapCabinet = 
 exports.marketLayouts = marketLayouts;
 exports.marketPassBlocked = marketPassBlocked;
 const city_clock_js_1 = require("./city-clock.js");
+const { river, metal } = require('./venue-layout.js');
 exports.entrances = {
     school1: require('./school-site.js').schoolOutside,
     house: { x: -34.96, z: 17, yaw: Math.PI, zone: 'house', label: 'Дом № 23' },
@@ -7009,9 +7950,11 @@ exports.entrances = {
     cafe: { x: -101, z: 38.84, yaw: Math.PI, zone: 'cafe', label: 'Кафе «Горячий лёд»' },
     terminal: { x: -802, z: -121.65, yaw: 0, zone: 'terminal', label: 'Дежурка терминала' },
     hydro: { x: 788, z: -171.8, yaw: 0, zone: 'hydro', label: 'Диспетчерская плотины' },
+    'river-station': river.door,
+    'metal-hall': metal.door,
     passage: { x: -34.96, z: 3.4, yaw: Math.PI, zone: 'passage', label: 'Сквозной проход дома № 23' }
 };
-exports.serviceEntries = ['taxipark', 'cafe', 'terminal', 'hydro', 'school1'];
+exports.serviceEntries = ['taxipark', 'cafe', 'terminal', 'hydro', 'river-station', 'metal-hall', 'school1'];
 exports.passageFront = { x: -33.1, z: 16.95, yaw: 0 };
 exports.bankFinds = [
     { id: 'box', x: -115, z: 72.8, name: 'Ящик рыбака', description: 'В жестяном ящике — пробковый поплавок, карта глубин и билет на старый трамвай.' },
@@ -8292,7 +9235,8 @@ async function start(boot, listen) {
     let roll = 1;
     let freeSelection = { ...free_drive_js_1.defaultFreeSelection };
     let mainSession = null;
-    const clockMinutes = () => Math.floor(((0, city_clock_js_1.districtMinutes)(sim.elapsed) + garage.wait) % 1440);
+    const calendarMinutes = () => Math.floor((0, city_clock_js_1.districtCalendarMinutes)(sim.elapsed) + garage.calendarWait);
+    const clockMinutes = () => calendarMinutes() % 1440;
     const storyBlock = () => sim.mission === 0 && sim.stage === 1;
     const stories = (0, story_scenery_js_1.createStoryScenery)(scene), motorWorld = (0, vehicle_world_js_1.createMotorWorld)(scene), explore = (0, exploration_view_js_1.createExploration)(scene), crew = (0, city_life_view_js_1.createRepairVisual)(scene);
     const glass = (0, vehicle_view_js_1.createCabinGlass)(canvas);
@@ -8325,11 +9269,20 @@ async function start(boot, listen) {
     const townNews = new radio_news_js_1.TownRadioNews();
     const ui = (0, ui_js_1.createUI)(document.querySelector('#hud'), action);
     const districtPlay = require('./district-play.js').createDistrictPlay(scene, ui, (dt, conditions) => ({
-        sim, player:sim.player, car:sim.activeCar() ?? null, dt, minutes:clockMinutes(), weather:conditions ?? (0, weather_js_1.weatherAt)(sim.elapsed, clockMinutes()),
+        sim, player:sim.player, car:sim.activeCar() ?? null, dt, minutes:clockMinutes(), calendarMinutes:calendarMinutes(),
+        waitUntil(minute) {
+            if (!Number.isInteger(minute) || minute < 0 || minute >= 1440 || sim.wanted || sim.transition || sim.home.door || sim.tramRider.onboard || Math.abs(sim.player.speed) >= .45)
+                return false;
+            garage.setTime(minute, clockMinutes());
+            return true;
+        },
+        weather:conditions ?? (0, weather_js_1.weatherAt)(sim.elapsed, clockMinutes()),
         scene, camera, ui, world, follow, hero, people, cars, audio, garage, jobs, parcels, zone:sim.home.zone, indoorScene:house?.scene, interiorScene:house?.scene
     }), () => persist());
     districtPlay.restore(saved?.districtPlay);
+    ui.update({ districtDestinations: districtPlay.destinations });
     audio.onDialogueResume = text => ui.notify(text);
+    audio.onDistrictBulletin = text => ui.notify(text);
     const hud = document.querySelector('#hud');
     const showSound = (0, sound_guide_js_1.createSoundGuide)(hud);
     const soundCaptions = new sound_captions_js_1.SoundCaptions();
@@ -8732,7 +9685,7 @@ async function start(boot, listen) {
             return;
         }
         if (id.startsWith('home:')) {
-            const r = sim.home.act(id, sim.hero, sim.elapsed, p => (0, collision_js_1.clearDisc)(p, .31, (0, world_layout_js_1.groundHeight)(p.x, p.z), sim.cars) && !sim.people.some(n => !n.onboard && Math.hypot(n.x - p.x, n.z - p.z) < .55));
+            const r = sim.home.act(id, sim.hero, sim.elapsed, p => (0, collision_js_1.clearDisc)(p, .31, (0, world_layout_js_1.groundHeight)(p.x, p.z), sim.cars) && !sim.people.some(n => !n.onboard && Math.hypot(n.x - p.x, n.z - p.z) < .55), clockMinutes());
             if (r) {
                 if ('untilHour' in r && typeof r.untilHour === 'number')
                     garage.setTime(r.untilHour * 60, clockMinutes());
@@ -8962,7 +9915,7 @@ async function start(boot, listen) {
     const availableTourStop = () => jobs.active ? null : tour.next;
     function actions() {
         const base = sim.interactionOptions().map(label => ({ id: 'interact', label, value: label }));
-        const more = sim.driven || sim.transition || sim.tramRider.onboard ? [] : sim.home.options(sim.hero, sim.elapsed);
+        const more = sim.driven || sim.transition || sim.tramRider.onboard ? [] : sim.home.options(sim.hero, sim.elapsed, clockMinutes());
         const stop = availableTourStop(), visit = stop && tour.canInteract(tourFrame()) ? [{ id: 'tour-check', label: stop.action }] : [];
         const carry = sim.driven || sim.transition || sim.home.inside || sim.tramRider.onboard ? [] : parcels.actions(sim.hero, sim.cars, parcelRear, storyBlock());
         const rest = canWait() ? [{ id: 'rest-hour', label: 'Подождать час' }] : [];
@@ -9076,7 +10029,7 @@ async function start(boot, listen) {
         }
         audio.update(dt, { x: player.x, z: player.z, train: sim.tramRider.onboard, doorOpen: sim.home.open,
             acousticRoom: (0, acoustic_space_js_1.acousticRoom)(sim.home.zone, player), doorDistance: (0, acoustic_space_js_1.doorwayDistance)(player, sim.home.inside), lookout: !!sim.home.lookout,
-            roomMix: sim.home.acoustics(sim.hero, sim.elapsed), broadcast: jobs.broadcast, archive: jobs.archive, townNews,
+            roomMix: sim.home.acoustics(sim.hero, sim.elapsed), broadcast: jobs.broadcast, archive: jobs.archive, townNews, districtRadio: districtPlay.radio,
             inside: sim.home.inside, tramTime: sim.tramTime, district: sim.district(), driving: !!c, speed: c?.speed ?? player.speed,
             wanted: sim.wanted, moving: Math.abs(player.speed) > .15, running: player.speed > 3.5, paused, road, weather: conditions,
             pursuit: { tracking: sim.wanted > 0 && !sim.search, distance, side, phase: sim.pursuitStatus.phase }, soundGuide: clue.sources, blackout: power, landmarks, cargoRail, dialogueNoise });
@@ -9656,11 +10609,12 @@ class GarageLog {
             if (Number.isInteger(value) && value >= 0 && value < names.length)
                 outfit[key] = value;
         }
-        this.state = { cars: [...new Set(stored)], records, walking: finite(saved?.walking ?? 0), outfit, wait: finite(saved?.wait ?? 0) % 1440, lights: saved?.lights !== false, shutter: typeof saved?.shutter === 'boolean' ? saved.shutter : undefined };
+        this.state = { cars: [...new Set(stored)], records, walking: finite(saved?.walking ?? 0), outfit, wait: finite(saved?.wait ?? 0) % 1440, waitedDays: Number.isSafeInteger(saved?.waitedDays) ? Math.max(0, saved.waitedDays) : 0, lights: saved?.lights !== false, shutter: typeof saved?.shutter === 'boolean' ? saved.shutter : undefined };
         this.ladoga = new ladoga_history_js_1.LadogaHistory(saved?.ladoga);
     }
     get outfit() { return this.state.outfit; }
     get wait() { return this.state.wait; }
+    get calendarWait() { return this.state.waitedDays * 1440 + this.state.wait; }
     get lights() { return this.state.lights !== false; }
     get shutter() { return this.state.shutter; }
     toggleLights() { this.state.lights = !this.lights; }
@@ -9677,8 +10631,13 @@ class GarageLog {
     remove(id) { this.state.cars = this.state.cars.filter(car => car !== id); }
     has(id) { return this.state.cars.includes(id); }
     canAdd(id) { return this.has(id) || this.state.cars.length < limit; }
-    setTime(target, current) { this.state.wait = (this.state.wait + target - current + 1440) % 1440; }
-    pause(hours) { this.state.wait = (this.state.wait + hours * 60) % 1440; }
+    setTime(target, current) { this.advanceWait((target - current + 1440) % 1440); }
+    pause(hours) { this.advanceWait(hours * 60); }
+    advanceWait(minutes) {
+        const total = this.state.wait + minutes;
+        this.state.waitedDays += Math.floor(total / 1440);
+        this.state.wait = total % 1440;
+    }
     cycle(key) {
         const option = exports.wearOptions.find(row => row.key === key);
         if (!option)
@@ -14318,6 +15277,7 @@ exports.annexClearance = annexClearance;
 const campus = require("./campus-layout.js").campus;
 const campusMotion = require("./campus-movement.js");
 const house_layout_js_1 = require("./house-layout.js");
+const { river, metal } = require('./venue-layout.js');
 const v = (kind, x, z, w, d, h) => ({ kind, x, z, w, d, h });
 const lab = (x, z, name) => ({ x, z, name });
 function room(name, x, z, w, d, floor, ceiling, furniture, labels, entrance) {
@@ -14357,13 +15317,25 @@ exports.annexes = {
     passage: room('Сквозной вход · Канальная, 23', 234, 0, 4.4, 11.4, 0, 2.8, [
         v('pipe', 232.08, .3, .32, 7.35, 1.71)
     ], [lab(234, 4.5, 'Канальная'), lab(234, -4.5, 'Панельный двор')], { x: 234, z: 4.48 }),
+    'river-station': room(river.door.label, river.centre, 0, 12.6, 9.2, 0, 3.30, [
+        v('counter', river.dispatcher.x, river.dispatcher.z + .76, 4.2, .76, .99),
+        v('bench-row', 252.5, 1.15, .66, 3.52, .84),
+        v('bench-row', 263.5, 1.25, .66, 3.52, .84),
+        v('luggage', 253.8, -3.86, 1.64, .68, 1.15),
+    ], [lab(river.centre, -3.15, 'Табло'), lab(254.3, 1.6, 'Зал ожидания'), lab(river.centre, 3.45, 'Выход')], { x: river.centre, z: 3.55 }),
+    'metal-hall': room(metal.door.label, metal.centre, 0, 14, 11.6, 0, 3.85, [
+        v('stage', metal.centre, -3.65, 8.65, 3.15, .41),
+        v('bench-row', 277.25, 2.45, .72, 4.28, .84),
+        v('bench-row', 288.75, 2.45, .72, 4.28, .84),
+        v('instrument-case', 287.98, -3.7, 1.80, .86, .52),
+    ], [lab(metal.centre, -3.3, 'Сцена'), lab(metal.centre, -.8, 'Репетиция'), lab(metal.centre, 4.60, 'Выход')], { x: metal.centre, z: 4.65 }),
     roof: room('Крыша · Канальная, 23', -92, 0, 17.6, 10.6, 18.2, 80, [
         v('vent', -95, -2.52, 1.21, 1.18, 1.24), v('vent', -88.13, .20, .93, .79, .95), v('headhouse', -98.3, 2.75, 2.50, 2.32, 2.74)
     ], [lab(-98., .65, 'Лестница'), lab(-92, 4, 'Лифт'), lab(-86, -3.8, 'Панорама')], { x: -98.0, z: .80 }),
     stairs: room('Служебная лестница', exports.stairBaseX + 2 * exports.laneWidth, 0, exports.stairLanes * exports.laneWidth, 8.4, 3.06, 24, stairWalls, [lab(exports.stairBaseX, 3.35, 'Этаж 2'), lab(exports.stairBaseX + 4 * exports.laneWidth, -3.35, 'Крыша')], { x: exports.stairBaseX, z: 3.55 }),
     lift: room('Лифт · Канальная, 23', -65, 0, 2.38, 2.55, 0, 2.56, [], [lab(-65, 0, 'Кабина')], { x: -65, z: .5 }),
 };
-const annexAt = (x, z = 0, y = 0) => campusMotion.isCampusX(x) ? campusMotion.zoneFor(x, z, y) : x > 220 ? 'passage' : x > 193 ? 'hydro' : x > 166 ? 'terminal' : x > 139 ? 'cafe' : x > 110 ? 'taxipark' : x < -78 ? 'roof' : x < -56 ? 'lift' : x < -30 ? 'stairs' : x > 83 ? 'dispatch' : x > 53 ? 'workshop' : x > 22 ? 'basement' : null;
+const annexAt = (x, z = 0, y = 0) => campusMotion.isCampusX(x) ? campusMotion.zoneFor(x, z, y) : x > 270 ? 'metal-hall' : x > 246 ? 'river-station' : x > 220 ? 'passage' : x > 193 ? 'hydro' : x > 166 ? 'terminal' : x > 139 ? 'cafe' : x > 110 ? 'taxipark' : x < -78 ? 'roof' : x < -56 ? 'lift' : x < -30 ? 'stairs' : x > 83 ? 'dispatch' : x > 53 ? 'workshop' : x > 22 ? 'basement' : null;
 exports.annexAt = annexAt;
 const zoneAt = (x, z = 0, y = 0) => (0, exports.annexAt)(x, z, y) ?? 'house';
 exports.zoneAt = zoneAt;
@@ -14443,6 +15415,7 @@ const stops = {
     landing: { x: -2.40, z: -5.68, label: '2 · Квартира 7', height: 3.06, yaw: 0 },
     roof: { x: -92, z: 3.58, label: 'К · Крыша', height: 18.2, yaw: 0 }
 };
+const { rehearsalOpen } = require('./venue-layout.js');
 const coats = require("./human-kits.js").heroCoats.map(coat => coat.name);
 const initialLift = () => ({ car: 'landing', from: 'landing', to: 'landing', time: 0, total: 0, phase: 'shut', open: 0 });
 const point = (x, z, yaw = 0) => ({ x, z, yaw, y: (0, house_layout_js_1.houseFloor)(x, z), speed: 0 });
@@ -14559,7 +15532,7 @@ class InteriorLife {
         d.total = .8 + Math.abs(stops[d.car].height - stops[stop].height) * .16;
         d.phase = d.open > 0 ? 'closing' : 'moving';
     }
-    options(outside, elapsed) {
+    options(outside, elapsed, minutes = (0, city_clock_js_1.districtMinutes)(elapsed)) {
         const p = this.avatar ?? outside, zone = this.zone;
         const a = [];
         const add = (id, label) => a.push({ id: 'home:' + id, label });
@@ -14580,6 +15553,8 @@ class InteriorLife {
                 add('door-dispatch', 'В диспетчерскую');
             for (const id of exploration_layout_js_1.serviceEntries) {
                 const q = exploration_layout_js_1.entrances[id];
+                if (id === 'metal-hall' && !rehearsalOpen(minutes))
+                    continue;
                 if (near(p, q, 1.62))
                     add('door-' + id, 'Войти · ' + q.label);
             }
@@ -22315,6 +23290,261 @@ exports.outerTrees = plantGroves();
 exports.outerTreeTrunks = exports.outerTrees.map(({ x, z, h }) => ({ x, z, h, w: h * .038, d: h * .038 }));
 
 },
+"game/outskirts-view.js": function(require, module, exports) {
+"use strict";
+
+const THREE = require('../engine/three.module.min.js');
+const { createPerson } = require('./model-people.js');
+
+const cube = new THREE.BoxGeometry();
+const disc = new THREE.CylinderGeometry(1, 1, 1, 16);
+const cloud = new THREE.IcosahedronGeometry(1, 0);
+const enamel = color => new THREE.MeshStandardMaterial({ color, roughness: .82 });
+const glow = (color, options = {}) => new THREE.MeshBasicMaterial({ color, ...options });
+
+function mesh(group, geometry, material, x, y, z, w, h, d) {
+    const detail = new THREE.Mesh(geometry, material);
+    detail.position.set(x, y, z);
+    detail.scale.set(w, h, d);
+    group.add(detail);
+    return detail;
+}
+
+function box(group, material, x, y, z, w, h, d) {
+    return mesh(group, cube, material, x, y, z, w, h, d);
+}
+
+function place(scene, x, z, name) {
+    const group = new THREE.Group();
+    group.position.set(x, 0, z);
+    group.name = name;
+    scene.add(group);
+    return group;
+}
+
+function sign(group, x, y, z, w, h, rows, accent) {
+    if (typeof document === 'undefined') return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#1e313a';
+    ctx.fillRect(0, 0, 512, 256);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 8;
+    ctx.strokeRect(13, 13, 486, 230);
+    ctx.textAlign = 'center';
+    rows.forEach((row, index) => {
+        ctx.fillStyle = index === 0 ? '#f2eee2' : accent;
+        ctx.font = `700 ${index === 0 ? 43 : 34}px system-ui`;
+        ctx.fillText(row, 256, 100 + index * 60, 462);
+    });
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const face = mesh(group, new THREE.PlaneGeometry(), glow('#ffffff', { map: texture }), x, y, z, w, h, 1);
+    face.rotation.y = Math.PI;
+}
+
+function peopleAround(group, positions) {
+    return positions.map(({ x, z, yaw, variant }) => {
+        const person = createPerson('resident', variant);
+        person.root.position.set(x, .055, z);
+        person.root.rotation.y = yaw;
+        group.add(person.root);
+        return person;
+    });
+}
+
+function createHockeyView(scene, skver, hockey, board) {
+    const rink = place(scene, hockey.x, hockey.z, 'Ледовая арена · площадка');
+    const scores = place(scene, board.x, board.z, 'Ледовая арена · доска результатов');
+    const direction = place(scene, skver.x + .9, skver.z - .8, 'Сквер Полярников · указатель');
+    const metal = enamel('#435963'), white = enamel('#c3d7df'), boards = enamel('#184959');
+    const ice = enamel('#8eb3c2'), stripe = glow('#d6f1ee'), red = enamel('#a34548');
+    const dark = enamel('#213943'), amber = glow('#ffc67f'), muted = glow('#42585b');
+    const scoreLight = glow('#80e8c8'), puckMaterial = enamel('#182730');
+    let players;
+    let practiceTime = 0;
+
+    box(rink, ice, 0, .014, 0, 12.4, .055, 16.6);
+    box(rink, white, 0, .02, .02, 12.7, .025, 16.9);
+    box(rink, stripe, 0, .047, hockey.launch + .64, 11.7, .008, .08);
+    box(rink, red, 0, .047, -.6, 11.7, .009, .095);
+    box(rink, red, 0, .48, hockey.goal + .37, 10.2, .08, .085);
+    box(rink, red, 0, 1.14, hockey.goal + .37, 10.2, .08, .085);
+    box(rink, dark, 0, .61, hockey.goal + .8, 10.4, 1.19, .12);
+    box(rink, white, 0, .053, hockey.goal - .88, 11.7, .009, .075);
+    for (const x of [-5.02, 5.02]) {
+        box(rink, red, x, .66, hockey.goal + .29, .12, 1.33, .13);
+        box(rink, boards, x * 1.11, .22, 2.07, .19, .41, 11.88);
+        box(rink, white, x * 1.11, .43, 2.07, .2, .075, 11.88);
+        box(rink, metal, x * 1.08, 1.82, hockey.goal + .73, .11, 3.65, .12);
+        const lamp = box(rink, muted, x * 1.08, 3.61, hockey.goal + .57, .66, .16, .46);
+        lamp.name = 'rink lamp';
+    }
+    const lamps = rink.children.filter(node => node.name === 'rink lamp');
+    const pads = hockey.lanes.map(lane => {
+        const mark = box(rink, boards, lane, .052, hockey.launch, 1.92, .011, .82);
+        box(rink, stripe, lane, .057, hockey.launch, .24, .01, .33);
+        box(rink, boards, lane, .053, -.03, .10, .01, 4.47);
+        const circle = mesh(rink, disc, stripe, lane, .61, hockey.goal + .67, .5, .09, .5);
+        circle.rotation.x = Math.PI / 2;
+        const center = mesh(rink, disc, boards, lane, .61, hockey.goal + .61, .29, .095, .29);
+        center.rotation.x = circle.rotation.x;
+        return mark;
+    });
+    const blocker = new THREE.Group();
+    blocker.position.z = hockey.goal - 1;
+    rink.add(blocker);
+    box(blocker, red, 0, .41, 0, 2.35, .76, .27);
+    for (const x of [-.67, 0, .67]) box(blocker, white, x, .43, -.151, .155, .54, .035).rotation.z = -.42;
+    const puck = mesh(rink, disc, puckMaterial, 0, .15, hockey.launch, .22, .125, .22);
+    const puckRim = mesh(rink, disc, amber, 0, .18, hockey.launch, .224, .038, .224);
+
+    for (const x of [-1.12, 1.12]) box(scores, metal, x, .79, 0, .105, 1.58, .13);
+    box(scores, dark, 0, 1.5, 0, 2.68, 1.58, .15);
+    sign(scores, 0, 1.87, -.08, 2.58, .68, ['СЕВЕР-8', 'ЛУЧШИЕ СЕРИИ'], '#80e8c8');
+    const lights = Array.from({ length: 3 }, (_, index) => Array.from({ length: 3 }, (_, shot) =>
+        mesh(scores, disc, muted, -.75 + shot * .75, 1.48 - index * .27, -.10, .084, .048, .084)));
+    for (const lamp of lights.flat()) lamp.rotation.x = Math.PI / 2;
+
+    box(direction, metal, 0, .74, 0, .12, 1.48, .14);
+    box(direction, dark, 0, 1.47, 0, 1.52, .58, .11);
+    sign(direction, 0, 1.47, -.061, 1.51, .565, ['ЛЕДОВАЯ АРЕНА', 'ПРЯМО ПО ТРОПЕ'], '#a8dfd4');
+    box(rink, metal, -7.35, .2, 2.55, .52, .34, 2.6);
+    box(rink, enamel('#7b6957'), -7.35, .403, 2.55, .67, .10, 2.6);
+
+    return {
+        drawScores(results) {
+            lights.forEach((row, rank) => row.forEach((lamp, shot) => {
+                lamp.material = results[rank] === undefined ? muted : shot < results[rank] ? scoreLight : dark;
+            }));
+        },
+        drawHockey(near, evening, round, lane, flyingPuck, blockerX, dt) {
+            rink.visible = scores.visible = near;
+            if (!near) return;
+            for (const lamp of lamps) lamp.material = evening ? scoreLight : muted;
+            pads.forEach((mark, index) => { mark.material = round && hockey.lanes[index] === lane ? amber : boards; });
+            blocker.position.x = blockerX;
+            const used = flyingPuck ?? (round && lane !== null ? { lane, z: hockey.launch + .78 } : null);
+            puck.visible = puckRim.visible = !!used;
+            if (used) {
+                puck.position.set(used.lane, .115, used.z);
+                puckRim.position.set(used.lane, .169, used.z);
+            }
+            if (evening && !players && typeof document !== 'undefined') {
+                players = peopleAround(rink, [
+                    { x: -7.32, z: -.9, yaw: -1.64, variant: 5 },
+                    { x: 6.82, z: .65, yaw: 1.58, variant: 11 }
+                ]);
+                for (const player of players) {
+                    box(player.root, enamel('#a28462'), .34, .49, -.24, .037, 1.04, .039).rotation.x = -.28;
+                    box(player.root, enamel('#31383e'), .34, .065, -.46, .045, .066, .31);
+                }
+            }
+            if (players) {
+                practiceTime += dt;
+                players.forEach((player, index) => {
+                    player.root.visible = evening;
+                    if (!evening) return;
+                    const sway = practiceTime * .61 + index * Math.PI;
+                    player.root.position.z = (index ? .65 : -.9) + Math.sin(sway) * 1.85;
+                    player.root.rotation.y = index ? 1.60 + Math.cos(sway) * .36 : -1.60 - Math.cos(sway) * .36;
+                    player.update(dt, .95 * Math.abs(Math.cos(sway)));
+                });
+            }
+        }
+    };
+}
+
+function createWaterView(scene, dam) {
+    const work = place(scene, dam.gateX, dam.gateZ, 'Водосброс № 2 · канал');
+    const lookout = place(scene, dam.x, dam.z, 'Водосброс № 2 · смотровая');
+    const concrete = enamel('#757f84'), steel = enamel('#405861'), rail = enamel('#89aeb2');
+    const gate = enamel('#243d45'), back = enamel('#172b37'), panel = enamel('#273b44');
+    const amber = glow('#ffbf64'), standby = enamel('#705336');
+    const water = glow('#8bcdde', { transparent: true, opacity: .88, depthWrite: false });
+    const stream = glow('#bce5ea', { transparent: true, opacity: .82, depthWrite: false });
+    let spectators;
+
+    box(work, concrete, 0, .04, -2.4, 8.9, .08, 5.75);
+    box(work, back, 0, .092, -2.71, 7.23, .05, 5.17);
+    box(work, steel, 0, 1.53, -.22, 7.23, 3.06, .39);
+    box(work, back, 0, 1.34, -.431, 6.21, 2.16, .09);
+    box(work, rail, 0, 2.82, -.47, 7.71, .2, .42);
+    box(work, water, 0, .138, -2.74, 7.03, .022, 5.04).name = 'water pool';
+    const shutters = [], bulbs = [];
+    for (const x of [-2, 0, 2]) {
+        shutters.push(box(work, gate, x, 1.32, -.518, 1.84, 1.96, .09));
+        box(work, rail, x, 1.42, -.583, .12, 2.35, .11);
+    }
+    for (const x of [-4.1, 4.1]) {
+        box(work, concrete, x, .38, -2.45, .45, .76, 5.52);
+        box(work, steel, x, 1.76, -.61, .22, 3.52, .24);
+        bulbs.push(box(work, standby, x, 3.49, -.75, .55, .22, .38));
+    }
+    const pool = work.getObjectByName('water pool');
+    const jets = Array.from({ length: 12 }, (_, index) => {
+        const jet = box(work, index % 3 ? water : stream, 0, 0, 0, .31, .44, 1);
+        jet.rotation.x = -.55;
+        return jet;
+    });
+    const steam = Array.from({ length: 10 }, () => mesh(work, cloud,
+        glow('#e8f1ec', { transparent: true, opacity: .16, depthWrite: false }), 0, 0, 0, .64, .38, .48));
+
+    box(lookout, concrete, 0, .019, 0, 5.88, .052, 3.48);
+    box(lookout, rail, 2.14, .77, .48, .10, .10, 2.92);
+    for (const z of [-.94, 1.92]) box(lookout, steel, 2.14, .43, z, .11, .86, .11);
+    box(lookout, steel, -.84, .62, .94, .18, 1.24, .15);
+    box(lookout, panel, -.84, 1.22, .94, 1.62, .86, .18);
+    sign(lookout, -.84, 1.22, .845, 1.59, .82, ['ВОДОСБРОС № 2', 'МЕСТНОЕ РАДИО'], '#ffbf64');
+    box(lookout, steel, -.28, 1.67, .94, .043, .61, .042).rotation.z = -.24;
+
+    return function drawWater(near, phase, time, dt) {
+        work.visible = lookout.visible = near;
+        if (!near) return;
+        const running = phase === 'running';
+        for (const bulb of bulbs) bulb.material = phase === 'idle' ? standby : amber;
+        for (const shutter of shutters) shutter.position.y = running ? 2.26 : 1.32;
+        pool.visible = running;
+        jets.forEach((jet, index) => {
+            jet.visible = running;
+            if (!running) return;
+            const t = (time * 2.15 + index * .31) % 1;
+            const x = (Math.floor(index / 4) - 1) * 2 + ((index % 4) - 1.5) * .30;
+            jet.position.set(x, 1.45 * (1 - t * t) + .12, -.54 - 3.75 * t);
+            jet.scale.set(.31 + t * .55, .21 + .16 * t, .9 + .68 * t);
+        });
+        steam.forEach((puff, index) => {
+            puff.visible = running;
+            if (!running) return;
+            const t = (time * .39 + index * .171) % 1;
+            puff.position.set((index - 4.5) * .62 + t * 1.12, .22 + t * 2.9, -3.45 - t * 1.2);
+            puff.scale.set(.51 + .75 * t, .36 + .24 * t, .43 + .59 * t);
+            puff.material.opacity = Math.sin(t * Math.PI) * .35;
+        });
+        if (phase !== 'idle' && !spectators && typeof document !== 'undefined') {
+            spectators = peopleAround(lookout, [
+                { x: 1.50, z: 1.46, yaw: -2.05, variant: 7 },
+                { x: 1.47, z: -1.07, yaw: -2.24, variant: 10 },
+                { x: .24, z: 1.72, yaw: -2.08, variant: 1 }
+            ]);
+        }
+        spectators?.forEach((person, index) => {
+            person.root.visible = phase === 'warning' ? index < 2 : running;
+            if (person.root.visible) person.update(dt, 0);
+        });
+    };
+}
+
+function createOutskirtsView(scene, { skver, hockey, scoreBoard, dam }) {
+    return { ...createHockeyView(scene, skver, hockey, scoreBoard), drawWater: createWaterView(scene, dam) };
+}
+
+module.exports = { createOutskirtsView };
+
+},
 "game/parcel-hands.js": function(require, module, exports) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -25724,7 +26954,7 @@ class Residence extends interior_life_js_1.InteriorLife {
             }
         }
     }
-    options(outside, elapsed) { return this.door ? [] : super.options(outside, elapsed); }
+    options(outside, elapsed, minutes) { return this.door ? [] : super.options(outside, elapsed, minutes); }
     hint(outside) {
         if (this.door)
             return '';
@@ -25744,8 +26974,8 @@ class Residence extends interior_life_js_1.InteriorLife {
         this.door = { entering: !this.inside, t: 0, origin: { ...(this.avatar ?? outside) }, landing };
         return true;
     }
-    act(id, outside, elapsed, exitSafe) {
-        if (this.door || !this.options(outside, elapsed).some(o => o.id === id))
+    act(id, outside, elapsed, exitSafe, minutes) {
+        if (this.door || !this.options(outside, elapsed, minutes).some(o => o.id === id))
             return null;
         if (id === 'home:door-house' || id === 'home:exit-house') {
             return this.begin(outside, exitSafe) ? { text: '', sound: 'hinge' } : { text: 'Проход временно занят' };
@@ -26314,7 +27544,7 @@ exports.isServiceRoom = isServiceRoom;
 exports.addServiceInterior = addServiceInterior;
 const interior_layout_js_1 = require("./interior-layout.js");
 function isServiceRoom(zone) {
-    return zone === 'taxipark' || zone === 'cafe' || zone === 'terminal' || zone === 'hydro' || zone === 'passage';
+    return Object.hasOwn(design, zone);
 }
 const design = {
     taxipark: { title: 'ТАКСОПАРК', tag: 'СМЕНЫ · ПОДАЧА МАШИН', body: '#6a7c72', top: '#b49268', trim: '#d3a95c', lamp: '#f4c66e' },
@@ -26322,10 +27552,12 @@ const design = {
     terminal: { title: 'ДЕЖУРКА ТЕРМИНАЛА', tag: 'ПРОПУСКА · УЧЁТ ГРУЗА', body: '#607a78', top: '#8f9992', trim: '#bc8d60', lamp: '#91d5c7' },
     hydro: { title: 'БЕЛАЯ ПЛОТИНА', tag: 'ГИДРОТЕХНИЧЕСКИЙ ПОСТ', body: '#576c82', top: '#8a9da7', trim: '#b7b19f', lamp: '#a1def3' },
     passage: { title: 'ДОМ № 23', tag: 'СКВОЗНОЙ ПОДЪЕЗД', body: '#777e70', top: '#b4aa86', trim: '#b49264', lamp: '#e8b466' },
+    'river-station': { title: 'РЕЧНОЙ ВОКЗАЛ', tag: 'ЗАЛ ОЖИДАНИЯ · ЮЖНЫЙ ПОРТ', body: '#435e67', top: '#b19574', trim: '#aa8659', lamp: '#b8decf' },
+    'metal-hall': { title: 'ДК «МЕТАЛЛУРГ»', tag: 'МАЛЫЙ ЗАЛ · РЕПЕТИЦИЯ 18—22', body: '#755250', top: '#a88367', trim: '#b98955', lamp: '#efbb75' },
 };
 function addServiceInterior(b, sign, room) {
     const p = interior_layout_js_1.annexes[room], style = design[room], x = p.entrance.x, z = p.bounds.minZ;
-    sign(style.title, style.tag, x, 2.33, z + .125, Math.min(4, (p.bounds.maxX - p.bounds.minX) * .75), .60, 0, style.body, style.lamp);
+    sign(style.title, style.tag, x, room === 'river-station' || room === 'metal-hall' ? 2.96 : 2.33, z + .125, Math.min(4, (p.bounds.maxX - p.bounds.minX) * .75), .60, 0, style.body, style.lamp);
     if (room === 'passage') {
         const back = z + .06;
         b.box(x, 1.12, back, 1.53, 2.24, .09, '#6c8478');
@@ -26357,6 +27589,27 @@ function addServiceInterior(b, sign, room) {
             b.box(f.x + f.w * .40, .715, f.z, .114, .43, f.d, style.trim);
             for (const dx of [-1, 1])
                 b.box(f.x, .226, f.z + dx * f.d * .40, .13, .43, .11, style.body);
+            continue;
+        }
+        if (f.kind === 'bench-row') {
+            const side = f.x < x ? -1 : 1;
+            b.box(f.x, .46, f.z, f.w, .15, f.d, style.top);
+            b.box(f.x + side * (f.w / 2 - .07), .73, f.z, .12, .51, f.d, style.body);
+            for (const end of [-1, 0, 1])
+                b.box(f.x, .23, f.z + end * f.d * .41, f.w * .74, .42, .10, style.body);
+            continue;
+        }
+        if (f.kind === 'stage') {
+            b.box(f.x, f.h / 2, f.z, f.w, f.h, f.d, style.top);
+            b.box(f.x, f.h * .60, f.z + f.d / 2, f.w, f.h, .08, style.body);
+            for (const side of [-1, 1]) {
+                b.box(f.x + side * 4.18, 2.06, f.z - 1.31, .58, 3.27, .36, '#864d4b');
+                for (let fold = -2; fold <= 2; fold++)
+                    b.box(f.x + side * 4.18 + .09 * fold, 2.06, f.z - 1.08, .035, 3.27, .14, '#693f3f');
+                b.box(f.x + side * 4.55, 2.82, f.z - .31, .46, .31, .20, '#473833');
+                b.lamp(f.x + side * 4.55, 2.64, f.z - .28, .29, .036, .13, style.lamp);
+            }
+            b.box(f.x, 3.56, f.z - 1.3, f.w, .21, .34, '#693f3f');
             continue;
         }
         if (f.kind === 'cafe-table') {
@@ -26417,7 +27670,7 @@ function addServiceInterior(b, sign, room) {
             b.box(x + 3.72, 1.15 + .22 * i, z + .133, .83, .059, .03, '#bf9d78');
         sign('МЕНЮ', 'ЧАЙ · БУЛОЧКИ · СУП', x + 3.72, 2.37, z + .13, .87, .28, 0, '#8b6155', '#f6d5a5');
     }
-    else {
+    else if (room === 'terminal' || room === 'hydro') {
         for (let i = 0; i < 8; i++) {
             const flag = x + (i - 3.5) * .45;
             b.box(flag, 1.14, -3.03, .27, .18, .32, '#566765');
@@ -27230,7 +28483,7 @@ class Simulation {
         let best = null, distance = 4.65;
         for (const c of this.cars) {
             const d = (0, sim_navigation_js_1.dist)(this.hero, c);
-            if (c.carriedBy || c.police || Math.abs(c.speed) > 2.6 || d >= distance || !(0, sim_navigation_js_1.visible)(this.hero, c))
+            if (c.carriedBy || c.police || c.districtEscort || Math.abs(c.speed) > 2.6 || d >= distance || !(0, sim_navigation_js_1.visible)(this.hero, c))
                 continue;
             distance = d;
             best = c;
@@ -34690,6 +35943,7 @@ const { minX, maxX, minZ, maxZ } = world_expansion_layout_js_1.cityLimits;
 const cityBox = [minX - 4, minZ - 4, maxX - minX + 8, maxZ - minZ + 8].join(' ');
 const hb = house_layout_js_1.housePlan.bounds;
 const homeBox = [hb.minX - 1, hb.minZ - 1, hb.maxX - hb.minX + 2, hb.maxZ - hb.minZ + 2].join(' ');
+const escapeLabel = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const footprint = (b) => `<rect x="${b.x - b.w / 2}" y="${b.z - b.d / 2}" width="${b.w}" height="${b.d}"/>`;
 function floorPlan(large) {
     const steps = house_layout_js_1.housePlan.stairs;
@@ -34775,10 +36029,13 @@ function paintMap(svg, state) {
         paths.innerHTML = route ? line(route.path, route.mode === 'drive' ? '#efa959' : '#99dfcb', route.mode !== 'drive' ? '.4 3' : '') + line(route.lastMile, '#99dfcb', '.4 3') + (route.tram ? line(route.tram,'#f4cf7a') + route.tram.filter((p,i)=>i%2===0).map(p=>`<path d="M-1.25 0H1.25" transform="translate(${p.x} ${p.z}) rotate(${p.yaw*180/Math.PI})" stroke="#f4cf7a" stroke-width=".45"/>`).join('') : '') : '';
     }
     const pins = one('.k-map-marks'), marks = inside ? undefined : state.marks;
-    if (pinsShown.get(pins) !== marks) {
-        pinsShown.set(pins, marks);
+    const destinations = large && !inside ? state.districtDestinations : undefined;
+    const previousPins = pinsShown.get(pins);
+    if (!previousPins || previousPins.marks !== marks || previousPins.destinations !== destinations) {
+        pinsShown.set(pins, { marks, destinations });
         const glyph = { car: 'M-1.9-3.3h3.8l-.45-1.5h-2.85Z', place: 'm0-5 1.5 1.6L0-2l-1.5-1.4Z', return: 'm-.9-4.8 2.3 1.5-2.3 1.5Z' };
-        pins.innerHTML = (marks ?? []).map(m => `<g transform="translate(${m.x} ${m.z}) scale(${large ? 1 : .70})" fill="${ui_navigation_js_1.markColors[m.kind]}" stroke="#172923" stroke-width=".8"><title>${escape(m.label || ui_navigation_js_1.markNames[m.kind])}</title><g class="k-map-symbol"><path d="M0 2.8C-1.5 .6-3.6-1.4-3.6-3.5a3.6 3.6 0 1 1 7.2 0C3.6-1.4 1.5 .6 0 2.8Z"/><path d="${glyph[m.kind]}" fill="#22332b" stroke="none"/></g></g>`).join('');
+        const activities = (destinations ?? []).map(p => `<g transform="translate(${p.x} ${p.z})" data-map-place="${escapeLabel(p.label)}" style="cursor:pointer"><title>${escapeLabel(p.label)}</title><g class="k-map-symbol"><circle r="5" fill="#28362e" stroke="#f1d48d" stroke-width="1.1"/><path d="M0-2.9 2.9 0 0 2.9-2.9 0Z" fill="#f1d48d"/></g></g>`).join('');
+        pins.innerHTML = activities + (marks ?? []).map(m => `<g transform="translate(${m.x} ${m.z}) scale(${large ? 1 : .70})" fill="${ui_navigation_js_1.markColors[m.kind]}" stroke="#172923" stroke-width=".8"><title>${escapeLabel(m.label || ui_navigation_js_1.markNames[m.kind])}</title><g class="k-map-symbol"><path d="M0 2.8C-1.5 .6-3.6-1.4-3.6-3.5a3.6 3.6 0 1 1 7.2 0C3.6-1.4 1.5 .6 0 2.8Z"/><path d="${glyph[m.kind]}" fill="#22332b" stroke="none"/></g></g>`).join('');
     }
     const search = one('.k-search-circle');
     search.setAttribute('r', String(inside ? 0 : state.search?.radius ?? 0));
@@ -34816,7 +36073,10 @@ function atlasPlaces(state) {
         points.push({ ...target, label: target.label ?? 'Цель заказа' });
     if (state.inside)
         return [...points, ...(state.interiorPlan?.labels ?? house_layout_js_1.housePlan.labels).map(l => ({ ...l, label: l.name }))];
-    return [...points, ...regionalStops, { ...house_layout_js_1.houseEntry, label: 'Дом № 23' }, { ...world_layout_js_1.places.market, label: 'Рынок «Спектр»' }, { ...world_layout_js_1.places.depot, label: 'Трамвайное депо' }, { ...world_layout_js_1.places.garage, label: 'Канальные гаражи' }, ...world_expansion_layout_js_1.expansionLandmarks, ...ui_map_streets_js_1.lifeStops, ...(state.marks ?? []).map(m => ({ ...m, label: m.label || ui_navigation_js_1.markNames[m.kind] }))];
+    const destinations = state.districtDestinations ?? [];
+    const names = new Set(destinations.map(place => place.label));
+    const landmarks = [...regionalStops, { ...house_layout_js_1.houseEntry, label: 'Дом № 23' }, { ...world_layout_js_1.places.market, label: 'Рынок «Спектр»' }, { ...world_layout_js_1.places.depot, label: 'Трамвайное депо' }, { ...world_layout_js_1.places.garage, label: 'Канальные гаражи' }, ...world_expansion_layout_js_1.expansionLandmarks, ...ui_map_streets_js_1.lifeStops];
+    return [...points, ...destinations, ...landmarks.filter(place => !names.has(place.label)), ...(state.marks ?? []).map(m => ({ ...m, label: m.label || ui_navigation_js_1.markNames[m.kind] }))];
 }
 exports.zoomWidths = [maxX - minX + 8, 1050, 470, 225, 100];
 exports.atlasDistrictZoom = 3;
@@ -35213,6 +36473,9 @@ const key = (name) => `<kbd data-key-name="${name}">${name}</kbd>`;
 const iconButton = (act, icon, label) => `<button type="button" class="k-icon-button" data-action="${act}" aria-label="${label}" title="${label}">${(0, ui_icons_js_1.ico)(icon)}</button>`;
 const panelRow = (act, icon, title, after = '', value) => `<button type="button" class="k-panel-row" data-action="${act}"${value === undefined ? '' : ` data-value="${escape(value)}"`}>${(0, ui_icons_js_1.ico)(icon)}<span>${title}</span>${after || (0, ui_icons_js_1.ico)('chevron', 16)}</button>`;
 const touch = (act, icon, label, hold = false) => `<button type="button" aria-label="${label}" title="${label}" ${hold ? `data-hold="${act}"` : `data-action="${act}"`} class="k-touch k-${act}">${(0, ui_icons_js_1.ico)(icon, 23)}<span>${label}</span></button>`;
+const controlSelector = 'button,input,select,textarea,summary,[tabindex="0"]';
+const controlAttributes = ['id', 'data-action', 'data-value', 'data-setting', 'data-map-focus', 'data-map-place', 'data-color', 'data-pin-label'];
+const canFocus = el => el.offsetWidth > 0 && !el.disabled && el.tabIndex !== -1;
 const campaign = ['Последний рейс', 'Холодный пуск', 'Чужая частота'];
 const briefs = [
     'Семён, диспетчер депо: «Последний трамвай уже на линии. Забери блок на рынке, пока вагон не дошёл до стрелки».',
@@ -35232,7 +36495,7 @@ function createUI(host, onAction) {
         if (node.textContent !== value)
             node.textContent = value;
     };
-    root.innerHTML = `<div class="k-look" aria-label="Поворот камеры"></div><div class="k-top-shade"></div><div class="k-bottom-shade"></div>
+    root.innerHTML = `<div class="k-look" tabindex="0" role="group" aria-label="Игровое поле"></div><div class="k-top-shade"></div><div class="k-bottom-shade"></div>
     <header class="k-brand"><span class="k-emblem">${ui_icons_js_1.logo}</span><span class="k-title">КОНТУР<span>–77</span></span><time class="k-clock" aria-label="Игровое время" hidden></time></header>
     <button class="k-mission" type="button" data-action="phone" title="Открыть журнал заказов">
       <span class="k-mission-top"><span class="k-mission-kind">Заказ</span><span class="k-step">1 / 3</span></span>
@@ -35301,7 +36564,7 @@ function createUI(host, onAction) {
     let pendingBinding = null, toggledRun = false, toggledRear = false;
     const builtIn = new Set(['laptop','phone', 'garage', 'settings', 'pause', 'map', 'layout', 'alternatives']);
     const panelLinks = () => panelRow('laptop','settings','Ноутбук и клавиши') + [...externalPanels].filter(([,o])=>!o.hidden).map(([id, o]) => panelRow(id, 'chevron', escape(o.title))).join('');
-    let panel = null;
+    let panel = null, returnFocus = null;
     let showArchive = false;
     const pressed = new Set(), held = new ui_touch_js_1.TouchButtons();
     const gasContacts = new Map();
@@ -35310,7 +36573,7 @@ function createUI(host, onAction) {
     let lastDraw = -Infinity, toastTimer = 0, offlineTimer = 0;
     let offlineLabel = 'Подготовка офлайн-версии';
     let garagePaint = '#4e8491';
-    const modal = q('.k-modal'), dialogContent = q('.k-dialog-scroll'), mapMini = q('.k-map-frame').querySelector('svg'), kStick = q('.k-stick'), knob = q('.k-stick-knob'), gasLabel = q('.k-gas span'), look = q('.k-look');
+    const modal = q('.k-modal'), dialog = q('.k-dialog'), dialogContent = q('.k-dialog-scroll'), mapMini = q('.k-map-frame').querySelector('svg'), kStick = q('.k-stick'), knob = q('.k-stick-knob'), gasLabel = q('.k-gas span'), look = q('.k-look');
     const mission = q('.k-mission'), missionTitle = q('.k-mission-title'), missionKind = q('.k-mission-kind'), missionObjective = q('.k-objective-text'), missionDistance = q('.k-objective-distance'), hintButton = q('.k-interact'), wp = q('.k-waypoint'), toast = q('.k-toast'), off = q('.k-offline');
     const mapCard = q('.k-mapcard'), navDistance = q('.k-nav-distance'), wanted = q('.k-wanted'), wantedText = q('.k-wanted-text'), wantedLevel = q('.k-alert-level'), wantedProgress = q('.k-alert-progress'), driveStatus = q('.k-drive-status'), place = q('.k-map-place span'), wallet = q('.k-money'), clock = q('.k-clock'), speed = q('.k-speed'), gear = q('.k-gear'), lamps = q('.k-lamps'), vehicle = q('.k-vehicle-name'), conditionMeter = q('.k-condition'), condition = q('.k-condition i'), step = q('.k-step');
     const input = { moveX: 0, moveY: 0, steer: 0, gas: 0, brake: 0, handbrake: false, run: false, rear: false, analog: false };
@@ -35331,7 +36594,7 @@ function createUI(host, onAction) {
                         return;
                     skipClickUntil = performance.now() + 700;
                     buzz('mark');
-                    open('alternatives');
+                    open('alternatives', hintButton);
                     return;
                 }
                 if (panel !== 'map')
@@ -35613,9 +36876,17 @@ function createUI(host, onAction) {
         })
             .join('')}</div>${idx < 3 ? `<div class="k-list">${panelRow('map', 'map', 'Показать на карте')}${panelRow('restart', 'checkpoint', 'С контрольной точки')}</div>` : ''}`;
     }
-    function drawPanel() {
+    function focusPanel(previous) {
+        const controls = [...dialogContent.querySelectorAll(controlSelector)].filter(canFocus);
+        const matching = previous && controls.find(control => control.tagName === previous.tagName &&
+            controlAttributes.every(name => control.getAttribute(name) === previous.getAttribute(name)));
+        const target = matching || controls.find(control => control.matches('button')) || q('.k-dialog-head button');
+        target.focus({ preventScroll: true });
+    }
+    function drawPanel(keepFocus = true) {
         if (!panel)
             return;
+        const focused = keepFocus && dialogContent.contains(document.activeElement) ? document.activeElement : null;
         const info = {
             pause: ['КОНТУР-77 · ВЕРСИЯ 3.3', 'Пауза'],
             layout: ['УПРАВЛЕНИЕ', 'Расстановка кнопок'], alternatives: ['РЯДОМ', 'Выбор действия'],
@@ -35624,7 +36895,7 @@ function createUI(host, onAction) {
             phone: ['ТЕЛЕФОН', 'Журнал заказов'],
             garage: ['КАНАЛЬНЫЕ ГАРАЖИ', 'Мастерская'],
         };
-        q('.k-dialog').classList.toggle('k-atlas', panel === 'map');
+        dialog.classList.toggle('k-atlas', panel === 'map');
         const registeredTitle = externalPanels.get(panel)?.title;
         const title = info[panel] ?? [panel==='district-choice' || panel==='district-book' ? 'КАНАЛЬНАЯ' : 'ТЕЛЕФОН',
             typeof registeredTitle === 'function' ? registeredTitle() : registeredTitle ?? 'Меню'];
@@ -35660,8 +36931,12 @@ function createUI(host, onAction) {
                 hintButton.querySelector('strong').textContent = 'Действие';
             positioning.draw(editMode, settings.layouts, settings.leftHanded);
         }
+        if (focused)
+            focusPanel(focused);
     }
-    function open(name) {
+    function open(name, opener = document.activeElement) {
+        if (!panel)
+            returnFocus = opener;
         resetInput();
         if (name === 'map') {
             focusIndex = -1;
@@ -35680,10 +36955,12 @@ function createUI(host, onAction) {
         panel = name;
         modal.hidden = false;
         root.classList.add('k-modal-on');
-        drawPanel();
-        if (root.classList.contains('k-hardware-input')) dialogContent.querySelector('button:not([disabled]),input')?.focus({preventScroll:true});
+        drawPanel(false);
+        focusPanel();
     }
     function close() {
+        const opener = returnFocus;
+        returnFocus = null;
         panel = null;
         pendingBinding=null;
         modal.hidden = true;
@@ -35691,8 +36968,10 @@ function createUI(host, onAction) {
         root.classList.toggle('k-driving', view.driving);
         positioning.draw(view.driving ? 'car' : 'foot', settings.layouts, settings.leftHanded);
         resetInput();
+        if (opener?.isConnected && canFocus(opener))
+            opener.focus({ preventScroll: true });
     }
-    function act(a, value) {
+    function act(a, value, opener) {
         if (a === 'free-orbit') { changed({freeOrbit:!settings.freeOrbit}); notify(settings.freeOrbit?'Свободный обзор зафиксирован':'Камера следует за движением'); return; }
         if (a === 'bind-key') { pendingBinding=value; drawPanel(); return; }
         if (a === 'bind-reset') { pendingBinding=null; changed({bindings:{}}); drawPanel(); return; }
@@ -35721,7 +37000,7 @@ function createUI(host, onAction) {
         if (a === 'interact' && view.actions?.length) {
             const choice = view.actions[0];
             if (choice.choiceLabel) {
-                open('alternatives');
+                open('alternatives', opener);
                 return;
             }
             onAction(choice.id, choice.value);
@@ -35794,7 +37073,7 @@ function createUI(host, onAction) {
             if (panel === a)
                 close();
             else
-                open(a);
+                open(a, opener);
             return;
         }
         if (a === 'run') {
@@ -35824,7 +37103,7 @@ function createUI(host, onAction) {
     }
     root.addEventListener('click', (event) => {
         const el = event.target;
-        if (performance.now() < skipClickUntil && (hintButton.contains(el) || el.closest('.k-big-map')))
+        if (event.detail !== 0 && performance.now() < skipClickUntil && (hintButton.contains(el) || el.closest('.k-big-map')))
             return;
         if (panel === 'layout' && el.closest('[data-drag-control]'))
             return;
@@ -35849,7 +37128,7 @@ function createUI(host, onAction) {
         }
         const action = el.closest('[data-action]');
         if (action) {
-            act(action.dataset.action, action.dataset.value);
+            act(action.dataset.action, action.dataset.value, action);
             return;
         }
         if (el === modal)
@@ -35909,7 +37188,7 @@ function createUI(host, onAction) {
         const target = e.target;
         if (panel === 'layout' && positioning.down(e))
             return;
-        if (panel === 'map' && target.closest('.k-big-map') && !view.inside && !target.closest('button')) {
+        if (panel === 'map' && target.closest('.k-big-map') && !view.inside && !target.closest('button,[data-map-place]')) {
             if (pan)
                 return;
             const svg = q('.k-big-map').querySelector('svg'), box = svg.viewBox.baseVal, ctm = svg.getScreenCTM();
@@ -35958,6 +37237,7 @@ function createUI(host, onAction) {
             cameraPointer === null &&
             (e.pointerType !== 'mouse' || e.button === 0 || e.button === 2)) {
             e.preventDefault();
+            look.focus({ preventScroll: true });
             look.setPointerCapture(e.pointerId);
             cameraPointer = { id: e.pointerId, x: e.clientX, y: e.clientY };
         }
@@ -36032,7 +37312,8 @@ function createUI(host, onAction) {
         KeyZ: 'street:cover',
     };
     function keyDown(e) {
-        const code = laptop.resolveKey(settings.bindings,e.code);
+        if (e.defaultPrevented)
+            return;
         if (pendingBinding && panel==='laptop') {
             if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.code==='Tab') return;
             e.preventDefault();
@@ -36043,7 +37324,9 @@ function createUI(host, onAction) {
             }
             pendingBinding=null; drawPanel(); return;
         }
-        if (e.target?.matches('input,textarea,select') && !['Escape','Tab'].includes(e.code)) return;
+        if (e.target?.matches?.('input,textarea,select') && !['Escape','Tab'].includes(e.code)) return;
+        if (!panel && ['Space', 'Enter', 'NumpadEnter'].includes(e.code) && e.target?.matches?.('button'))
+            return;
         if (panel==='map' && !view.inside && ['KeyI','KeyJ','KeyK','KeyL'].includes(e.code)) {
             e.preventDefault();
             const step=e.shiftKey ? 12 : 2, pos=atlasPick ?? atlasCenter ?? view;
@@ -36054,23 +37337,26 @@ function createUI(host, onAction) {
             focusIndex=-1; markPending=null; drawPanel(); return;
         }
         if (panel && e.code === 'Tab') {
-            const elements=[...q('.k-dialog').querySelectorAll('button,input,select,textarea,summary,[tabindex="0"]')].filter(el=>el.offsetWidth&&!el.disabled);
-            if (elements.length && (!q('.k-dialog').contains(document.activeElement) ||
+            const elements=[...dialog.querySelectorAll(controlSelector)].filter(canFocus);
+            if (elements.length && (!dialog.contains(document.activeElement) ||
                 document.activeElement===elements[e.shiftKey?0:elements.length-1])) {
                 e.preventDefault(); elements[e.shiftKey?elements.length-1:0].focus();
             }
             return;
         }
         if (panel && ['ArrowDown','ArrowUp'].includes(e.code)) {
-            const buttons = [...q('.k-dialog').querySelectorAll('button,input,select,summary')].filter(el=>el.offsetWidth&&!el.disabled);
+            const buttons = [...dialog.querySelectorAll('button,input,select,summary')].filter(canFocus);
             if (buttons.length) { e.preventDefault(); const i=buttons.indexOf(document.activeElement); buttons[(i+(e.code==='ArrowUp'?-1:1)+buttons.length)%buttons.length].focus(); }
             return;
         }
-        if (panel && (e.code==='Enter' || e.code==='Space') && !q('.k-dialog').contains(document.activeElement)) {
-            e.preventDefault(); q('.k-dialog-scroll button')?.focus(); return;
+        if (panel && ['Space', 'Enter', 'NumpadEnter'].includes(e.code) && !dialog.contains(document.activeElement)) {
+            e.preventDefault();
+            focusPanel();
+            return;
         }
         if (e.ctrlKey || e.altKey || e.metaKey)
             return;
+        const code = laptop.resolveKey(settings.bindings,e.code);
         if (code === 'KeyE' && e.shiftKey && !panel && (view.actions?.length ?? 0) > 1) {
             e.preventDefault();
             if (!e.repeat)
@@ -38405,6 +39691,277 @@ function createMotorWorld(scene) {
             }
         } };
 }
+
+},
+"game/venue-layout.js": function(require, module, exports) {
+'use strict';
+
+const river = {
+    door: { x: -5, z: 103.32, yaw: 0, zone: 'river-station', label: 'Речной вокзал' },
+    centre: 258,
+    dispatcher: { x: 258, z: -2.55 },
+    display: { x: 258, z: -4.22 },
+    bus: { x: -13.4, z: 105.7 },
+    taxi: { x: 14.8, z: 104.1 },
+    passengers: [
+        { name: 'Вера', x: 255.3, z: .9, style: 5, route: 'bus', question: 'Я еду на рынок. Мне бы на автобус, на такси не хватит.', answer: 'Вера идёт к автобусу на рынок.' },
+        { name: 'Марат', x: 261.4, z: .65, style: 14, route: 'taxi', question: 'К диспетчерской на смену. До начала 15 минут. На такси есть деньги.', answer: 'Марат вышел к стоянке такси.' },
+        { name: 'Анна', x: 261.4, z: 2.5, style: 11, route: 'bus', question: 'Я обещала встретиться с Верой на рынке. Нужна та же остановка.', answer: 'Анна догоняет Веру у автобуса.' },
+    ],
+};
+const metal = {
+    door: { x: -95.75, z: 39.18, yaw: Math.PI, zone: 'metal-hall', label: 'ДК «Металлург»' },
+    centre: 283,
+    leader: { x: 283, z: -1.6 },
+    stands: [{ x: 280.55, z: -1.15 }, { x: 285.45, z: -1.15 }],
+    players: [{ x: 280.9, z: -3.4 }, { x: 285.05, z: -3.5 }],
+    opens: 18 * 60,
+    closes: 22 * 60,
+};
+
+const rehearsalOpen = minutes => minutes >= metal.opens && minutes < metal.closes;
+
+module.exports = { river, metal, rehearsalOpen };
+
+},
+"game/venues-music.js": function(require, module, exports) {
+'use strict';
+
+const metalTrack = 'dk-metal-theme';
+const metalTitle = 'Литейный вальс';
+const beat = .43;
+const melody = [
+    [0, 62, 1], [1, 65, .75], [2, 69, 1], [3, 72, 1.5], [4.5, 70, .5], [5, 69, 1],
+    [6, 67, 1.5], [7.5, 65, .5], [8, 64, 1], [9, 65, 1], [10, 69, 1], [11, 74, 1],
+    [12, 72, 1.5], [13.5, 69, .5], [14, 65, 1], [15, 67, 1], [16, 64, 1], [17, 62, 1.7],
+];
+const chords = [[50, 57, 65], [46, 53, 62], [48, 55, 64], [53, 57, 65], [50, 57, 65], [45, 52, 64]];
+
+function createMetalTheme(context, variant = 'hall') {
+    const rate = 22050;
+    const buffer = context.createBuffer(1, Math.ceil(19 * beat * rate), rate);
+    const samples = buffer.getChannelData(0);
+    function note(midi, start, length, level, reed) {
+        const frequency = 440 * 2 ** ((midi - 69) / 12);
+        const begin = Math.round(start * beat * rate);
+        const span = length * beat;
+        const end = Math.min(samples.length, begin + Math.ceil((span + .17) * rate));
+        for (let i = begin; i < end; i++) {
+            const t = (i - begin) / rate;
+            const envelope = Math.min(1, t / .038) * Math.exp(-Math.max(0, t - span) * 28);
+            const phase = Math.PI * 2 * frequency * t + .17 * Math.sin(t * 31);
+            const wave = Math.sin(phase) + (reed ? .31 * Math.sin(phase * 2) + .13 * Math.sin(phase * 3) : .12 * Math.sin(phase * 2));
+            samples[i] += level * envelope * wave;
+        }
+    }
+    for (const [start, midi, length] of melody) {
+        note(midi, start, length, .19, true);
+        if (variant === 'radio' && start >= 9)
+            note(midi - (midi === 64 ? 4 : 3), start + .025, length, .057, true);
+    }
+    chords.forEach(([bass, low, high], bar) => {
+        note(bass, bar * 3, .72, .105, false);
+        for (const pulse of [1, 2]) {
+            note(low, bar * 3 + pulse, .36, .045, false);
+            note(high, bar * 3 + pulse, .38, .038, false);
+        }
+    });
+    return buffer;
+}
+
+function createRehearsalSound() {
+    let playing;
+    const buffers = new WeakMap();
+    function stop() {
+        if (!playing)
+            return;
+        const { audio, source, level, filter } = playing;
+        const now = audio.ctx.currentTime;
+        level.gain.setTargetAtTime(0, now, .05);
+        source.stop(now + .16);
+        source.onended = () => { source.disconnect(); filter.disconnect(); level.disconnect(); };
+        playing = undefined;
+    }
+    return function update(audio, volume, inside) {
+        const context = audio?.ctx;
+        if (!context || !audio.master || audio.disposed || volume < .005) {
+            stop();
+            return;
+        }
+        if (playing && playing.audio !== audio)
+            stop();
+        if (context.state !== 'running' || audio.paused)
+            return;
+        if (!playing) {
+            if (!buffers.has(context))
+                buffers.set(context, createMetalTheme(context));
+            const source = context.createBufferSource(), filter = context.createBiquadFilter(), level = context.createGain();
+            source.buffer = buffers.get(context);
+            source.loop = true;
+            filter.type = 'lowpass';
+            level.gain.value = 0;
+            source.connect(filter).connect(level).connect(audio.mix?.media ?? audio.master);
+            source.start();
+            playing = { audio, source, filter, level };
+        }
+        const now = context.currentTime;
+        playing.filter.frequency.setTargetAtTime(inside ? 3650 : 690, now, .14);
+        playing.level.gain.setTargetAtTime(volume, now, .12);
+    };
+}
+
+module.exports = { metalTrack, metalTitle, createMetalTheme, createRehearsalSound };
+
+},
+"game/venues-view.js": function(require, module, exports) {
+'use strict';
+
+const T = require('../engine/three.module.min.js');
+const { Batches, Panels } = require('./world-batch.js');
+const { createPerson } = require('./model-people.js');
+const { groundHeight } = require('./world-layout.js');
+const { signTexture } = require('./world-textures.js');
+const { river, metal } = require('./venue-layout.js');
+
+const exitWalk = 3.4;
+const pace = 1.5;
+const indoors = () => 0;
+const distance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+
+function walk(from, to, progress) {
+    return { x: from.x + (to.x - from.x) * progress, z: from.z + (to.z - from.z) * progress,
+        yaw: Math.atan2(from.x - to.x, from.z - to.z), speed: pace };
+}
+
+function passengerPosition(passenger, route, elapsed, index, inside) {
+    const door = { x: river.centre, z: 3.65 };
+    const waitingYaw = passenger.x < river.centre ? -Math.PI / 2 : Math.PI / 2;
+    const travel = route ? Math.max(0, elapsed - route.at) : 0;
+    if (inside) {
+        if (!route) return { ...passenger, yaw: waitingYaw, speed: 0 };
+        return travel < exitWalk ? walk(passenger, door, travel / exitWalk) : null;
+    }
+    if (!route || travel < exitWalk) return null;
+    const stop = river[route.mode];
+    const waiting = { x: stop.x + (index - 1) * .52, z: stop.z + .55 + index * .09 };
+    const sidewalk = { x: river.door.x, z: river.door.z + 1.7 };
+    const first = distance(river.door, sidewalk) / pace;
+    const second = distance(sidewalk, waiting) / pace;
+    const outside = travel - exitWalk;
+    if (outside < first) return walk(river.door, sidewalk, outside / first);
+    if (outside < first + second) return walk(sidewalk, waiting, (outside - first) / second);
+    return outside < first + second + 24 ? { ...waiting, yaw: Math.PI, speed: 0 } : null;
+}
+
+function busStop(scene) {
+    const root = new T.Group(), b = new Batches(root), panels = new Panels(root);
+    const { x, z } = river.bus, y = groundHeight(x, z);
+    b.box(x, y + 1.18, z, .085, 2.36, .085, '#58767c');
+    b.box(x, y + 2.14, z, 1.05, .47, .060, '#314c59');
+    panels.place('river-replacement-bus', () => signTexture('АВТОБУС 12', 'КАНАЛЬНАЯ · РЫНОК', '#e9e2bd', '#314c59', 2.44), x, y + 2.14, z + .035, .99, .405, 0);
+    b.flush();
+    panels.flush();
+    root.name = 'Временная автобусная остановка';
+    scene.add(root);
+}
+
+function makeDisplay(scene) {
+    const display = new T.Mesh(new T.PlaneGeometry(3.85, .85), new T.MeshBasicMaterial());
+    display.name = 'Табло рейсов';
+    display.position.set(river.display.x, 2.24, river.display.z);
+    scene.add(display);
+    return display;
+}
+
+function instrument(model, player) {
+    const detail = new T.Group(), b = new Batches(detail);
+    if (player === 'accordion') {
+        detail.position.set(0, 1.12, -.27);
+        b.box(0, 0, 0, .42, .30, .16, '#6b4d46');
+        for (const side of [-1, 1]) b.box(side * .24, 0, 0, .11, .34, .18, '#452e2e');
+        for (let i = -3; i <= 3; i++) b.box(i * .052, 0, -.085, .013, .294, .026, '#c49869');
+        for (let i = -3; i <= 3; i++) b.box(-.24, i * .040, -.098, .052, .018, .021, '#e1d2a7');
+    } else {
+        detail.position.set(-.29, .60, -.24);
+        b.piece('round', 0, 0, 0, .50, .13, .65, '#b27d47', 0, 0, Math.PI / 2);
+        b.box(0, .47, -.026, .056, .68, .046, '#665040');
+        b.box(0, -.27, -.036, .025, .27, .025, '#665040');
+        for (let i = -1; i <= 1; i++) b.box(i * .012, .19, -.083, .005, .90, .006, '#d8c090');
+    }
+    b.flush();
+    model.root.add(detail);
+    return detail;
+}
+
+function musicStand(scene, position) {
+    const root = new T.Group(), b = new Batches(root);
+    root.position.set(position.x, 0, position.z);
+    b.cyl(0, .51, 0, .051, 1.02, '#544544');
+    b.box(0, .045, 0, .40, .075, .34, '#544544');
+    b.piece('box', 0, 1.06, 0, .44, .31, .055, '#64534d', 0, 0, -.48);
+    b.piece('box', 0, 1.08, .012, .33, .23, .012, '#e3ce9e', 0, 0, -.48);
+    b.flush();
+    scene.add(root);
+    return root;
+}
+
+function createVenueView(scene) {
+    const actors = new Map();
+    let display, displayText, stands, hasBusStop = false;
+    function person(id, target, position, c, style, options = {}) {
+        if (!target || !position) return;
+        let model = actors.get(id);
+        if (!model) {
+            model = createPerson(id === 'dispatcher' ? 'dispatcher' : 'resident', style);
+            target.add(model.root);
+            actors.set(id, model);
+        }
+        model.root.visible = true;
+        model.root.position.set(position.x, position.y ?? 0, position.z);
+        model.root.rotation.y = position.yaw ?? Math.PI;
+        model.update(c.dt, position.speed ?? 0, false, options);
+        return model;
+    }
+    return function update(c, station, text, rehearsal, placed) {
+        for (const model of actors.values()) model.root.visible = false;
+        if (display) display.visible = c.zone === river.door.zone;
+        stands?.forEach(stand => stand.visible = false);
+        if (c.zone === river.door.zone && c.indoorScene) {
+            display ??= makeDisplay(c.indoorScene);
+            const signature = text.join('\n');
+            if (displayText !== signature) {
+                display.material.map?.dispose();
+                display.material.map = signTexture(text[0], text[1], station.open ? '#f3c681' : '#b8dfcf', '#263f49', 3.85 / .85);
+                display.material.needsUpdate = true;
+                displayText = signature;
+            }
+            person('dispatcher', c.indoorScene, river.dispatcher, c, 3, { ground: indoors, nod: .15 });
+            if (station.open) river.passengers.forEach((p, i) => {
+                const position = passengerPosition(p, station.routes[i], c.sim.elapsed, i, true);
+                person('waiting-' + i, c.indoorScene, position, c, p.style, { ground: indoors });
+            });
+        }
+        if (c.zone === 'street' && scene && distance(c.player, river.door) < 85) {
+            if (!hasBusStop) { busStop(scene); hasBusStop = true; }
+            river.passengers.forEach((p, i) => {
+                const position = passengerPosition(p, station.routes[i], c.sim.elapsed, i, false);
+                if (position) position.y = groundHeight(position.x, position.z);
+                person('walking-' + i, scene, position, c, p.style, { ground: groundHeight });
+            });
+        }
+        if (c.zone !== metal.door.zone || !c.indoorScene || !rehearsal) return;
+        stands ??= metal.stands.map(p => musicStand(c.indoorScene, p));
+        stands.forEach((stand, i) => stand.visible = placed[i]);
+        person('leader', c.indoorScene, metal.leader, c, 12, { ground: indoors, conversation: true });
+        metal.players.forEach((p, i) => {
+            const model = person('musician-' + i, c.indoorScene, { ...p, y: .412 }, c, 17 + i, { ground: () => .412, nod: .24 + Math.sin(c.sim.elapsed * 4.9 + i) * .16 });
+            model.instrument ??= instrument(model, i === 0 ? 'accordion' : 'bass');
+            if (i === 0) model.instrument.scale.x = .98 + .10 * Math.sin(c.sim.elapsed * 3.2);
+        });
+    };
+}
+
+module.exports = { createVenueView, passengerPosition };
 
 },
 "game/voice-visemes.js": function(require, module, exports) {
