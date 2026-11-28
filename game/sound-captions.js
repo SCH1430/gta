@@ -11,7 +11,10 @@ const momentary = {
     siren: { text: 'Сирена патруля', priority: 3, range: 42, hold: 3, cooldown: 8 },
     warning: { text: 'Предупредительный сигнал', priority: 2, range: 18, hold: 2.6, cooldown: 3.5 }
 };
-const landmarkName = { substation: 'Гул подстанции', shutter: 'Дребезг роллеты', ice: 'Треск льда' };
+const landmarkName = { substation: 'Гул силовых машин', shutter: 'Дребезг роллеты', ice: 'Треск льда',
+    winch:'Тянет лебёдка парома', hydraulic:'Гудит гидравлика захвата', chain:'Цепь подъёмных ворот', dishes:'Звон посуды за окном',
+    vanStarter:'Фургон заводится на холодную', dog:'Собака за забором', door:'Хлопнула дверь подъезда', practice:'Репетиция в ДК', accordion:'Гармонь во дворе',
+    receiver:'Приёмник в гараже', flanges:'Скрип трамвая на повороте', joints:'Стук на рельсовых стыках' };
 const audible = .16;
 function directional(label, signal, near = 2.6) {
     return { text: label + ' · ' + (0, blackout_js_1.soundDirectionLabel)(signal.bearing, signal.distance, near), bearing: signal.distance < near ? undefined : signal.bearing };

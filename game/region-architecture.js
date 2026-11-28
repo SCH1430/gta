@@ -17,7 +17,7 @@ const industries = { radio: ['БЮРО СВЯЗИ', 'ЛИНИЯ 77', 'РАДИО
 function labelFor(b, index) {
     if (b.name)
         return b.name;
-    if (b.kind === 'container' || index % 9)
+    if (['container','cottage','garages'].includes(b.kind) || index % 9)
         return '';
     const signs = industries[b.district];
     return signs[(Math.floor(index / 9) + index % 5) % signs.length];
@@ -41,6 +41,37 @@ function regular(s, which, name, g, atlas) {
         const a = sides[whichSide], sn = Math.sin(a), cs = Math.cos(a), at = (whichSide % 2 ? w : d) / 2 + offset;
         trim.box(u * cs + at * sn, y, -u * sn + at * cs, whichSide % 2 ? depth : ww, hh, whichSide % 2 ? ww : depth, ink);
     };
+    if (kind==='cottage' || kind==='garages') {
+        const cottage=kind==='cottage', paint=cottage ? ['#93836a','#938776','#808670'][which%3] : '#908a7a';
+        body.box(0,h/2,0,w,h,d,paint);
+        if (cottage) {
+            const rx=w/2+.25, rz=d/2+.26, ridge=h+1.48;
+            body.quad([-rx,h,rz],[rx,h,rz],[rx,ridge,0],[-rx,ridge,0],snow);
+            body.quad([-rx,ridge,0],[rx,ridge,0],[rx,h,-rz],[-rx,h,-rz],'#b5bdba');
+            body.quad([rx,h,-rz],[rx,ridge,0],[rx,h,rz],[rx,h,rz],paint);
+            body.quad([-rx,h,rz],[-rx,ridge,0],[-rx,h,-rz],[-rx,h,-rz],paint);
+            body.box(-w*.23,h+1.14,-d*.16,.58,2.42,.58,'#896e5c');
+            for(const face of [0,1,2,3]) {
+                const span=face%2?d:w;
+                for(const fraction of [-.29,.29]) {
+                    attach(face,span*fraction,1.65,.05,1.30,1.16,.13,'#ddd2b0');
+                    attach(face,span*fraction,1.65,.13,1.10,.96,.045,'#74888a');
+                    attach(face,span*fraction,1.65,.17,.052,.98,.039,'#d9cfad');
+                }
+            }
+            attach(side,0,1.06,.08,1.09,2.12,.18,'#635b4c');
+        } else {
+            body.box(0,h+.04,0,w+.16,.12,d+.18,snow);
+            const bays=Math.max(2,Math.floor(frontSpan/3.4));
+            for (let i=0;i<bays;i++) {
+                const size=frontSpan/bays,u=(i+.5)*size-frontSpan/2;
+                attach(side,u,1.20,.06,size-.24,2.40,.15,['#6b776c','#736b5e','#8b795e'][i%3]);
+                attach(side,u,1.18,.15,.026,2.30,.025,'#554f44');
+                attach(side,u+.12,1.06,.17,.11,.11,.025,'#aaa38b');
+            }
+        }
+        return;
+    }
     const isContainer = kind === 'container', floor = isContainer ? .16 : .77;
     body.box(0, floor / 2, 0, w + .04, floor, d + .04, p.shade);
     if (isContainer) {

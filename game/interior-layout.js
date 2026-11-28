@@ -21,6 +21,15 @@ exports.stairBaseX = -49, exports.stairLanes = 5, exports.laneWidth = 1.55, expo
 const stairWalls = Array.from({ length: exports.stairLanes - 1 }, (_, i) => v('stairRail', exports.stairBaseX + (i + .5) * exports.laneWidth, i % 2 === 0 ? .71 : -.71, .11, 6.48, 1.04));
 exports.annexes = {
     ...campus.floors,
+    ...Object.fromEntries(Object.entries(require('./neighborhood-shops.js').shops).map(([id, shop]) => {
+        const x = shop.centre;
+        const items = id === 'locker' ? [v('lockers', x, -3.48, 6.4, .82, 2.0), v('dryer', x + 3.46, -.42, .24, 1.0, .86)] :
+            [v('counter', x, -2.86, 3.6, .92, 1.1)];
+        if (id === 'grocery') items.push(v('fridge',x-3.29,-3.39,1.49,.92,2.08), v('bread',x+3.38,-3.43,1.25,.77,1.0));
+        if (id === 'optician') items.push(v('frames',x-3.30,-3.55,2.25,.5,1.68));
+        if (id === 'canteen') for (const k of [-1,1]) items.push(v('cafe-table',x+k*2.83,1.18,1.47,1.74,.84));
+        return [id,room(shop.label,x,0,10,8,0,3.12,items,[lab(x,2.97,'Выход')],{x,z:2.97})];
+    })),
     basement: room('Подвал · тепловой узел', 36, 0, 12, 8, -2.75, 2.65, [
         v('manifold', 36, -3.55, 10.7, .65, 1.64), v('pump', 31.02, .12, 1.55, 1.52, .98), v('meter', 41.16, .14, .73, 1.08, 1.61)
     ], [lab(32, -2, 'Подача'), lab(36, -2, 'Стояк Б'), lab(40, -2, 'Обратка'), lab(36, 3.02, 'Лифт')], { x: 36, z: 2.85 }),
@@ -66,7 +75,11 @@ exports.annexes = {
     stairs: room('Служебная лестница', exports.stairBaseX + 2 * exports.laneWidth, 0, exports.stairLanes * exports.laneWidth, 8.4, 3.06, 24, stairWalls, [lab(exports.stairBaseX, 3.35, 'Этаж 2'), lab(exports.stairBaseX + 4 * exports.laneWidth, -3.35, 'Крыша')], { x: exports.stairBaseX, z: 3.55 }),
     lift: room('Лифт · Канальная, 23', -65, 0, 2.38, 2.55, 0, 2.56, [], [lab(-65, 0, 'Кабина')], { x: -65, z: .5 }),
 };
-const annexAt = (x, z = 0, y = 0) => campusMotion.isCampusX(x) ? campusMotion.zoneFor(x, z, y) : x > 270 ? 'metal-hall' : x > 246 ? 'river-station' : x > 220 ? 'passage' : x > 193 ? 'hydro' : x > 166 ? 'terminal' : x > 139 ? 'cafe' : x > 110 ? 'taxipark' : x < -78 ? 'roof' : x < -56 ? 'lift' : x < -30 ? 'stairs' : x > 83 ? 'dispatch' : x > 53 ? 'workshop' : x > 22 ? 'basement' : null;
+const shopZones = Object.keys(require('./neighborhood-shops.js').shops);
+function shopAt(x) {
+    return shopZones.find(id => x >= exports.annexes[id].bounds.minX && x <= exports.annexes[id].bounds.maxX);
+}
+const annexAt = (x, z = 0, y = 0) => x >= 455 && x <= 525 ? shopAt(x) ?? null : campusMotion.isCampusX(x) ? campusMotion.zoneFor(x, z, y) : x > 270 ? 'metal-hall' : x > 246 ? 'river-station' : x > 220 ? 'passage' : x > 193 ? 'hydro' : x > 166 ? 'terminal' : x > 139 ? 'cafe' : x > 110 ? 'taxipark' : x < -78 ? 'roof' : x < -56 ? 'lift' : x < -30 ? 'stairs' : x > 83 ? 'dispatch' : x > 53 ? 'workshop' : x > 22 ? 'basement' : null;
 exports.annexAt = annexAt;
 const zoneAt = (x, z = 0, y = 0) => (0, exports.annexAt)(x, z, y) ?? 'house';
 exports.zoneAt = zoneAt;

@@ -18,6 +18,9 @@ const market_quarter_layout_js_1 = require("./market-quarter-layout.js");
 const world_expansion_layout_js_1 = require("./world-expansion-layout.js");
 const { placeWalls, warmSurfaceAt } = require("./world-life-place-layout.js");
 const { neighborhoodKiosk } = require("./world-life-neighbor-layout.js");
+const { transitSolids } = require("./new-city-transit-layout.js");
+const { serviceSolids } = require("./new-city-services-layout.js");
+const { industrySolids } = require("./new-city-industry-layout.js");
 exports.places = {
     spawn: { x: -34, z: 42 }, garage: { x: -43, z: 43 },
     market: { x: 30, z: 26 }, depot: { x: 12, z: -39 },
@@ -114,7 +117,9 @@ exports.tramSupports = [
 exports.freightWagons = [-18, -6, 6].map(z => ({ x: 120.85, z, w: 2.59, d: 9.64, h: 2.99 }));
 exports.obstacles = [
     neighborhoodKiosk,
+    ...require('./district-winter-details.js').streetSolids,
     ...placeWalls,
+    ...transitSolids, ...serviceSolids, ...industrySolids,
     ...cargo_rail_js_1.cargoShedSides,
     ...Object.values(blackout_js_1.blackoutProps),
     ...exploration_layout_js_1.explorationObstacles, ...city_life_layout_js_1.serviceFence, ...city_life_layout_js_1.roadStopProps, ...market_quarter_layout_js_1.quarterWorkrooms, ...market_quarter_layout_js_1.quarterProps,

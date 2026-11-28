@@ -22,8 +22,9 @@ function pressedBody(kind, s, cab, coat, trimBatch, distant, hood) {
     const { w, front, rear, belt, r, fw, rw } = s;
     const hatch = kind === 'hatch', van = kind === 'van', coupe = kind === 'coupe';
     const frontHeight = belt - (hatch ? .17 : coupe ? .10 : .12), deck = (0, vehicle_cabin_js_1.rearDeckStart)(kind);
-    const nose = hatch ? .76 : coupe ? .69 : van ? .87 : .75, tail = hatch || van || kind === 'wagon' ? .90 : .81;
-    const frontBreak = Math.min(front + (coupe ? .33 : .23), fw - .02);
+    const nose = hatch ? .83 : coupe ? .69 : van ? .90 : kind === 'wagon' ? .81 : .74;
+    const tail = van ? .94 : hatch || kind === 'wagon' ? .91 : .79;
+    const frontBreak = Math.min(front + (hatch || van ? .16 : coupe ? .34 : .30), fw - .02);
     const stations = [[front, w * nose, frontHeight], [frontBreak, w * .966, frontHeight + .040],
         [cab.hingeZ, w, belt], [Math.min(s.d, rear - .30), w, belt], [rear - .26, w * .977, belt - .012], [rear, w * tail, belt - .067]];
     const archRadius = r + (van ? .078 : .055), lower = .33;

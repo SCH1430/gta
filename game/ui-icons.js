@@ -46,4 +46,4 @@ const lines = {
 function ico(name, size = 20) {
     return `<svg aria-hidden="true" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${lines[name] ?? ''}</svg>`;
 }
-exports.logo = '<svg aria-hidden="true" viewBox="0 0 37 36" width="37" height="36" fill="currentColor"><path d="M0 0h10v15L23 0h12L19 18l16 18H22L10 21v15H0z"/><path fill="#e8a34c" d="M28 19h8v8z"/></svg>';
+exports.logo = '<svg aria-hidden="true" viewBox="0 0 40 32" width="38" height="31"><rect x="1" y="2" width="38" height="28" rx="2" fill="#e2d9b9" stroke="#635b4d"/><path fill="#383e37" d="M6 8h13v4l-6 12H8l7-12H6zm15 0h13v4l-6 12h-5l7-12h-9z"/></svg>';

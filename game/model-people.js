@@ -63,9 +63,10 @@ function roleTool(role) {
         const pieces = new model_geometry_js_1.Batch();
         if (role === 'dispatcher') {
             pieces.box(0, 0, 0, .152, .194, .023, '#4d5e62');
-            pieces.box(0, .005, .013, .126, .150, .005, '#253132');
+            pieces.box(0, .005, .013, .138, .169, .005, '#dbd6b9');
+            pieces.box(0,.087,.018,.079,.018,.006,'#818b84');
             for (let row = 0; row < 4; row++)
-                pieces.box(-.011, .052 - row * .028, .017, .072 - .008 * (row % 2), .004, .002, row === 0 ? '#c5a573' : '#8ab9aa');
+                pieces.box(-.011, .052 - row * .028, .017, .072 - .008 * (row % 2), .004, .002, row === 0 ? '#706958' : '#989688');
             pieces.box(0, -.082, .015, .035, .006, .006, '#9ba991');
             pieces.add(model_geometry_js_1.ring, [.092, -.059, -.010], [.026, .026, .024], '#acaa8f');
             for (const x of [.088, .106])
@@ -92,7 +93,7 @@ function roleTool(role) {
     }
     const tool = item.clone();
     tool.visible = false;
-    tool.name = role === 'dispatcher' ? 'dispatch-tablet' : role === 'mechanic' ? 'garage-diagnostic-reader' : 'inna-calibration-board';
+    tool.name = role === 'dispatcher' ? 'dispatch-clipboard' : role === 'mechanic' ? 'garage-diagnostic-reader' : 'inna-calibration-board';
     return tool;
 }
 let ragTemplate;

@@ -21,17 +21,21 @@ function passengerPosition(passenger, route, elapsed, index, inside) {
     const door = { x: river.centre, z: 3.65 };
     const waitingYaw = passenger.x < river.centre ? -Math.PI / 2 : Math.PI / 2;
     const travel = route ? Math.max(0, elapsed - route.at) : 0;
+    const counter = { x: river.dispatcher.x + (index-1)*.48, z: river.dispatcher.z + .86 };
+    const exitAt = route?.cashier ? 5.8 : 0;
     if (inside) {
         if (!route) return { ...passenger, yaw: waitingYaw, speed: 0 };
-        return travel < exitWalk ? walk(passenger, door, travel / exitWalk) : null;
+        if (route.cashier && travel < 3) return walk(passenger, counter, travel / 3);
+        if (travel < exitAt) return {...counter, yaw: 0, speed: 0};
+        return travel < exitAt + exitWalk ? walk(route.cashier ? counter : passenger, door, (travel-exitAt) / exitWalk) : null;
     }
-    if (!route || travel < exitWalk) return null;
+    if (!route || travel < exitAt + exitWalk) return null;
     const stop = river[route.mode];
     const waiting = { x: stop.x + (index - 1) * .52, z: stop.z + .55 + index * .09 };
     const sidewalk = { x: river.door.x, z: river.door.z + 1.7 };
     const first = distance(river.door, sidewalk) / pace;
     const second = distance(sidewalk, waiting) / pace;
-    const outside = travel - exitWalk;
+    const outside = travel - exitWalk - exitAt;
     if (outside < first) return walk(river.door, sidewalk, outside / first);
     if (outside < first + second) return walk(sidewalk, waiting, (outside - first) / second);
     return outside < first + second + 24 ? { ...waiting, yaw: Math.PI, speed: 0 } : null;
@@ -53,6 +57,12 @@ function makeDisplay(scene) {
     const display = new T.Mesh(new T.PlaneGeometry(3.85, .85), new T.MeshBasicMaterial());
     display.name = 'Табло рейсов';
     display.position.set(river.display.x, 2.24, river.display.z);
+    const notice = new T.Mesh(new T.PlaneGeometry(.96,.62),new T.MeshBasicMaterial({
+        map:signTexture('РЕЙС ЗАДЕРЖАН','ЗАМЕНА — АВТОБУС 12','#4c4e45','#dfd7b8',1.55)
+    }));
+    notice.position.set(2.56,-.38,.013);
+    notice.rotation.z=-.035;
+    display.add(notice);
     scene.add(display);
     return display;
 }
@@ -112,10 +122,11 @@ function createVenueView(scene) {
         stands?.forEach(stand => stand.visible = false);
         if (c.zone === river.door.zone && c.indoorScene) {
             display ??= makeDisplay(c.indoorScene);
+            display.children[0].visible = station.open;
             const signature = text.join('\n');
             if (displayText !== signature) {
                 display.material.map?.dispose();
-                display.material.map = signTexture(text[0], text[1], station.open ? '#f3c681' : '#b8dfcf', '#263f49', 3.85 / .85);
+                display.material.map = signTexture(text[0], text[1], '#edc678', '#353933', 3.85 / .85);
                 display.material.needsUpdate = true;
                 displayText = signature;
             }

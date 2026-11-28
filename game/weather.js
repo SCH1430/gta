@@ -83,7 +83,7 @@ function footstepSurface(surface, x, z, weather) {
     if (surface === 'snow' && weather.temperature > .5 && weather.wet > .5)
         return 'slush';
     if (surface === 'asphalt' && roadIceAt(x, z, weather) > .26)
-        return 'ice';
+        return exports.frozenRoads.some(p => Math.hypot(x-p.x,z-p.z) < 3.0) ? 'grit' : 'ice';
     if (surface === 'asphalt' && weather.wet > .55)
         return 'wet';
     return surface;

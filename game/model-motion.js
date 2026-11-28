@@ -118,7 +118,7 @@ function animatePerson(role, variant, rig) {
         if (updateCivicItems) updateCivicItems(hood);
         const door = unit(pose.doorReach ?? 0), seat = unit(pose.seated ?? (hood?.seat ? 1 : 0));
         const cabin = pose.doorCabinKind && carCabin(pose.doorCabinKind);
-        const driving = cabin?.drivingPose, doorSide = pose.doorSide ?? -1;
+        const driving = cabin?.drivingPose, seatedLegs = pose.seatedLegs, doorSide = pose.doorSide ?? -1;
         const doorPivot = unit(pose.doorPivot ?? 0), doorBrace = unit(pose.doorBrace ?? 0);
         const innerPull = driving && pose.doorTarget ? seat * door * (.14 + .86 * smooth(pose.doorOpen ?? 1, 0, .64)) : 0;
         const slide = unit(pose.passengerSlide ?? 0) * seat;
@@ -175,9 +175,10 @@ function animatePerson(role, variant, rig) {
         waitingFor = canWait ? waitingFor + dt : 0;
         const waitPhase = (waitingFor + (Math.abs(variant) % 5) * .31) % 9.4;
         const waiting = canWait ? smooth(waitingFor, .05, .38) * (1 - move) : 0;
-        const glanceBoard = waiting * smooth(waitPhase, 3.5, 4.3) * (1 - smooth(waitPhase, 7, 7.8));
+        const habit = Math.abs(variant)%3;
+        const glanceBoard = waiting * (habit===1 ? 1 : .56) * smooth(waitPhase, 3.5, 4.3) * (1 - smooth(waitPhase, 7, 7.8));
         readBoard = T.MathUtils.damp(readBoard, glanceBoard, 6, dt);
-        const idleHands = waiting * smooth(waitPhase, .6, 1.4) * (1 - smooth(waitPhase, 3.4, 4.1));
+        const idleHands = waiting * (habit===2 ? 1 : .48) * smooth(waitPhase, .6, 1.4) * (1 - smooth(waitPhase, 3.4, 4.1));
         warmHands = T.MathUtils.damp(warmHands, pose.cold && !pose.carry ? idleHands : 0, 8, dt);
         const gust = hasHood && free > .95 && !pose.carry && !addressed && !pose.reaction ? pose.wind ?? 0 : 0;
         const windUp = smooth(gust, .48, .80) * (1 - jump) * (1 - run) * (1 - watchingImpact);
@@ -280,6 +281,7 @@ function animatePerson(role, variant, rig) {
             lowering * 0.48 +
             seat * (driving?.backAngle ?? -.19) -
             0.16 * gripCrouch - free * (gait.grade * .25 + gait.landing * .16 + gait.takeoff * .09) - doorDuck * (.24 + .31 * roofDuck) - .15 * cover - .20 * dodge - .25 * rise + .24 * fall, yawLead * free + (movement.chestYaw - movement.pelvisYaw) * swingWeight * forward - .58 * strike + dodgeSide * .25 * dodge, -movement.pelvisRoll * 1.42 * swingWeight + bank + gait.pivotLoad * .047 * free - (pose.doorSide ?? -1) * lowering * 0.13 + .16 * passing - fallSide * .21 * fall - dodgeSide * .12 * dodge, 'YXZ');
+        if (canWait && habit===0) pelvis.rotation.z += Math.sin(clock*.87)*.036*waiting;
         const squeezing = unit(pose.squeeze ?? 0), duck = unit(pose.duck ?? 0);
         spine.rotation.y += chestTurn + (squeezing * .55) + passing * .47 - pivotTwist * .8 - doorSide * (.40 * doorPivot + .28 * innerPull);
         spine.rotation.z -= doorSide * (.11 * doorBrace + .48 * innerPull);
@@ -428,9 +430,12 @@ function animatePerson(role, variant, rig) {
             const kx = -Math.acos(clamp((length * length - U * U - L * L) / (2 * U * L), -1, 1));
             const bentKnee = side === fallSide ? 1 : .65;
             const legSeat = seat * (1 - pinned[i]);
-            hips[i].rotation.x = mix(mix(hx, 1.02 * bentKnee + .18 * rise, fall), driving?.thigh ?? (1.87 - i * .018), legSeat);
+            const seatedThigh = driving?.thigh ?? seatedLegs?.thigh ?? (1.87 - i * .018);
+            const seatedShin = driving?.shins[i] ?? seatedLegs?.shin;
+            const seatedKnee = seatedShin === undefined ? -1.075 + i * .014 : seatedShin - seatedThigh;
+            hips[i].rotation.x = mix(mix(hx, 1.02 * bentKnee + .18 * rise, fall), seatedThigh, legSeat);
             hips[i].rotation.z = mix(mix(Math.atan2(lateral, yDown), side * .29 + fallSide * .23, fall), side * (driving ? .065 : .083), legSeat);
-            knees[i].rotation.x = mix(mix(kx, -1.39 * bentKnee - .12 * rise, fall), driving ? driving.shins[i] - driving.thigh : -1.075 + i * .014, legSeat);
+            knees[i].rotation.x = mix(mix(kx, -1.39 * bentKnee - .12 * rise, fall), seatedKnee, legSeat);
             restQ.copy(pelvis.quaternion).multiply(hips[i].quaternion).multiply(knees[i].quaternion).invert();
             ankles[i].quaternion.copy(restQ).multiply(bootRotation[i]);
             (0, locomotion_poses_js_1.armPose)(gait.phase + i * .5, run, arm);
@@ -590,8 +595,11 @@ function animatePerson(role, variant, rig) {
                     target.lerp(stow.set(satchelContents.x + .045, satchelContents.y + .047, satchelContents.z + .025), smooth(hand, 0.58, 0.87));
                 armTo(shoulders[i], elbows[i], target, side, reach);
             }
+            const handTarget = pose.handTargets?.[i];
+            if (handTarget)
+                armTo(shoulders[i], elbows[i], target.fromArray(handTarget), side, 1);
             if (near.visible) {
-                const gripping = (i === gripHand && handWeight > .51) || (seated && (pose.driverSeatWeight ?? 1) > .72) || carry === 'crate' || (transferring && handing && hand > .35 && hand < .77);
+                const gripping = handTarget || (i === gripHand && handWeight > .51) || (seated && (pose.driverSeatWeight ?? 1) > .72) || carry === 'crate' || (transferring && handing && hand > .35 && hand < .77);
                 rig.grip(i, carry === 'cup' && i === 1 && !seated ? 'cup' : gripping ? 'handle' : 'rest');
             }
         }

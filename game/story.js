@@ -381,7 +381,7 @@ class DistrictJobs {
                 break;
             case 69:
                 if (!s.stage)
-                    at('foyer', 'map', 'Сверить план 2060 года');
+                    at('foyer', 'map', 'Сверить план 1995 года');
                 if (s.stage === 1)
                     at('station', 'ask', 'Расспросить кондуктора');
                 if (s.stage === 2)

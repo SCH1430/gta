@@ -77,7 +77,9 @@ function headlampOptics(kind, emission, side) {
             i % 2 ? '#bdc5bf' : '#828f8d', outward);
         silver.quad(p(u, v, .83, -.015), p(x, y, .83, -.015), p(x, y, .75, -.006), p(u, v, .75, -.006),
             i % 2 ? '#9baaa6' : '#717c7d', outward);
-        glazing.tri(p(0, 0, 1, -.045), p(u, v, .953, -.026), p(x, y, .953, -.026), i % 3 === 1 ? '#d4e7e4' : '#a8c4c8', outward);
+        const aged = kind === 'hatch' || kind === 'wagon';
+        glazing.tri(p(0, 0, 1, -.045), p(u, v, .953, -.026), p(x, y, .953, -.026),
+            aged ? (i % 3 === 1 ? '#e1dac2' : '#b9b49d') : (i % 3 === 1 ? '#d4e7e4' : '#a8c4c8'), outward);
         glazing.quad(p(u, v, .95, -.026), p(x, y, .95, -.026), p(x, y, .95, -.018), p(u, v, .95, -.018), '#7f9ca0', outward);
     }
     const projectors = kind === 'sedan' || kind === 'patrol' || kind === 'towtruck' || kind === 'utility' || kind === 'pickup' ? [-.43, .43] : [0];

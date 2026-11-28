@@ -103,7 +103,7 @@ function createExploration(scene) {
     b.cyl(gauge.x, .27, gauge.z, .21, 1.91, '#9b9683');
     for (let i = 0; i < 10; i++)
         b.box(gauge.x, -.53 + i * .157, gauge.z + .128, i % 3 === 0 ? .20 : .11, .032, .022, '#6b443a');
-    sign('МАЙ 2064', 'ПАВОДОК', gauge.x, .90, gauge.z + .14, .41, .24);
+    sign('МАЙ 1999', 'ПАВОДОК', gauge.x, .90, gauge.z + .14, .41, .24);
     b.piece('round', 35.5, -.58, 70, 1.21, .23, 1.21, '#525e63');
     b.piece('round', 35.5, -.448, 70, 1.08, .049, 1.08, '#758383');
     for (let i = -2; i <= 2; i++)
@@ -153,19 +153,33 @@ function createExploration(scene) {
         sb.box(0, -1.22, 0, w + .02, .075, .13, '#586c72');
         sb.flush();
     }
-    sign('ДЕЖУРНЫЙ КИОСК', '20:00 — 08:00 · СВЯЗЬ', 68.7, 2.21, 20.35, 2.21, .42, 0, '#68523f');
-    sign('ВЕЧЕРНИЙ ПРОХОД', 'ПОСЛЕ 20:00 · ЗА РЯДАМИ', 57.8, 1.79, 15.88, 2.91, .50, Math.PI);
+    const pickup = new THREE.Group();
+    pickup.name = 'Вечерняя выдача заказов у Инны';
+    moving.add(pickup);
+    const receiptBoard = new world_batch_js_1.Batches(pickup);
+    receiptBoard.box(29.9, 1.72, 21.11, 1.45, .47, .09, '#574c3c');
+    receiptBoard.lamp(29.9, 2.02, 21.25, .37, .06, .17, '#ffe2ae');
+    receiptBoard.flush();
+    const pickupLabels = new world_batch_js_1.Panels(pickup);
+    pickupLabels.place('inna-night-pickup', () => (0, world_textures_js_1.signTexture)('ВЫДАЧА', 'ИННА · У ПРИЛАВКА', '#493f32', '#e3d6ab', 3.1),
+        29.9, 1.72, 21.17, 1.39, .45, 0);
+    pickupLabels.flush();
+    pickup.visible = false;
+    sign('ДЕЖУРНЫЙ КИОСК', 'СВЯЗЬ ПОСЛЕ ЗАКРЫТИЯ РЯДОВ', 68.7, 2.21, 20.35, 2.21, .42, 0, '#68523f');
+    sign('ВЕЧЕРНИЙ ПРОХОД', 'ПОСЛЕ 18:00 · ЗА РЯДАМИ', 57.8, 1.79, 15.88, 2.91, .50, Math.PI);
     b.flush();
     p.flush();
-    return { update(elapsed, home, _player, _tramTime, _cars, traffic, minutes = (0, city_clock_js_1.districtMinutes)(elapsed)) {
+    return { update(elapsed, home, _player, _tramTime, _cars, traffic, calendar = (0, city_clock_js_1.districtCalendarMinutes)(elapsed), pickupDue = false) {
+            const minutes = calendar % 1440;
             updateCity(home.openedGates, elapsed, traffic, minutes, _cars, _player);
             updateQuarter(elapsed, _player);
             for (const { h, m } of arms) {
                 h.rotation.z = -(minutes % 720) * Math.PI / 360;
                 m.rotation.z = -(minutes % 60) * Math.PI / 30;
             }
-            const open = (0, exploration_layout_js_1.marketLayouts)(elapsed).length > 0;
+            const open = (0, exploration_layout_js_1.marketLayouts)(elapsed, calendar).length > 0;
             tables.visible = open;
+            pickup.visible = !open && pickupDue;
             for (const s of shutters)
                 s.scale.y = open ? .075 : 1;
             radio.visible = home.loan === 'left';

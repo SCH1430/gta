@@ -58,22 +58,29 @@ function streetPlan(large) {
     const overview = region_layout_js_1.regionSites.map(s => ({ x: s.x, z: s.z, lines: districtText[s.id] ?? [region_layout_js_1.regionDistrictNames[s.district]], label: region_layout_js_1.regionLandmarks.find(l => l.x === s.stop.x && l.z === s.stop.z)?.label }));
     overview.push({ x: 0, z: -76, lines: ['Канальный', 'район'], label: 'Трамвайное депо' });
     const districts = overview.map(({ x, z, lines, label }, index) => `<g transform="translate(${x} ${z})" ${label ? `data-map-place="${escape(label)}" data-sector="${index >= 4 && index < region_layout_js_1.regionSites.length ? "outer" : "inner"}"` : ''}><text>${lines.map((s, i) => `<tspan x="0" dy="${i ? '1.04em' : '0'}">${escape(s)}</tspan>`).join('')}</text></g>`).join('');
-    return `<rect x="${minX}" y="${minZ}" width="${maxX - minX}" height="${maxZ - minZ}" fill="#1d2e2b" stroke="#65796c"/>
-    <path d="${mapGrid()}" fill="none" stroke="#344a42" stroke-width=".55"/>
-    <rect x="${minX}" y="${world_expansion_layout_js_1.canal.north}" width="${maxX - minX}" height="${world_expansion_layout_js_1.canal.south - world_expansion_layout_js_1.canal.north}" fill="#375a65"/>
-    <path d="${[...world_layout_js_1.apartments, ...Object.values(world_layout_js_1.buildings), ...world_expansion_layout_js_1.expansionBuildings, ...region_layout_js_1.regionBuildings].map(box).join('')}" fill="#43584e" stroke="#809083" stroke-width=".57"/>
-    <path d="${require("./school-site.js").schoolShell.map(box).join('')}" fill="#48667c" stroke="#a6c9dc" stroke-width=".65"/>
-    <path d="${region_layout_js_1.regionSites.map(box).join('')}" fill="#7b6c50" stroke="#e3b36f" stroke-width="1.25"/>
-    <g fill="none" stroke="#63736b" stroke-linecap="butt">${lanes()}</g>
-    <path d="${roads.map(exports.mapSegment).join('')}" fill="none" stroke="#9ba99a" stroke-width=".55" stroke-dasharray="2.4 2"/>
-    <path d="${region_layout_js_1.regionPaths.map(exports.mapSegment).join('')}" fill="none" stroke="#8cb3a0" stroke-width="1.6" stroke-dasharray="2.4 1.8"/>
-    <path d="${trail(market_quarter_layout_js_1.quarterWalkRoute) + trail(market_quarter_layout_js_1.quarterChaseWalk)}" fill="none" stroke="#8ec9ba" stroke-width="1.05" stroke-dasharray="1.3 .62"/>
+    const roadNames = roads.filter(r => Math.hypot(r.x2-r.x1,r.z2-r.z1) > 50).map(r => {
+        const x=(r.x1+r.x2)/2, z=(r.z1+r.z2)/2, vertical=Math.abs(r.z2-r.z1)>Math.abs(r.x2-r.x1);
+        return `<text transform="translate(${x} ${z}) rotate(${vertical ? -90 : 0})">${escape(r.name)}</text>`;
+    }).join('');
+    const numbers = world_layout_js_1.apartments.map(a => `<text x="${a.x}" y="${a.z+1.3}">${a.id}</text>`).join('');
+    const stops = Object.values(world_railway_js_1.tramStops);
+    const stopSigns = stops.filter(p => Number.isFinite(p.x)).map(p => `<g transform="translate(${p.x} ${p.z})"><rect x="-1.4" y="-1.4" width="2.8" height="2.8" rx=".3"/><text y=".9">Т</text></g>`).join('');
+    return `<rect x="${minX}" y="${minZ}" width="${maxX - minX}" height="${maxZ - minZ}" fill="#d6d4c9" stroke="#65796c"/>
+    <path d="${mapGrid()}" fill="none" stroke="#bebdb1" stroke-width=".55"/>
+    <rect x="${minX}" y="${world_expansion_layout_js_1.canal.north}" width="${maxX - minX}" height="${world_expansion_layout_js_1.canal.south - world_expansion_layout_js_1.canal.north}" fill="#9ebac0"/>
+    <path d="${[...world_layout_js_1.apartments, ...Object.values(world_layout_js_1.buildings), ...world_expansion_layout_js_1.expansionBuildings, ...region_layout_js_1.regionBuildings].map(box).join('')}" fill="#a99c87" stroke="#7b7367" stroke-width=".57"/>
+    <path d="${require("./school-site.js").schoolShell.map(box).join('')}" fill="#a9aba1" stroke="#6e817b" stroke-width=".65"/>
+    <path d="${region_layout_js_1.regionSites.map(box).join('')}" fill="#b0a18c" stroke="#896f50" stroke-width="1.25"/>
+    <g fill="none" stroke="#f4efdc" stroke-linecap="butt">${lanes()}</g>
+    <path d="${roads.map(exports.mapSegment).join('')}" fill="none" stroke="#b2a797" stroke-width=".55" stroke-dasharray="2.4 2"/>
+    <path d="${region_layout_js_1.regionPaths.map(exports.mapSegment).join('')}" fill="none" stroke="#6e8171" stroke-width="1.6" stroke-dasharray="2.4 1.8"/>
+    <path d="${trail(market_quarter_layout_js_1.quarterWalkRoute) + trail(market_quarter_layout_js_1.quarterChaseWalk)}" fill="none" stroke="#627b6b" stroke-width="1.05" stroke-dasharray="1.3 .62"/>
     <path d="M${market_quarter_layout_js_1.marketIceSlip} 58.5V89.2" fill="none" stroke="#d3b58a" stroke-width="1.12" stroke-dasharray="1.4 .72"/>
     <path d="M${cargo_rail_js_1.cargoTrack.west} ${cargo_rail_js_1.cargoTrack.z}H${cargo_rail_js_1.cargoTrack.east}" fill="none" stroke="#c2a187" stroke-width=".85" stroke-dasharray="1.4 .92"/>
     <path d="M${cargo_rail_js_1.cargoFootbridge.x} ${cargo_rail_js_1.cargoFootbridge.north}V${cargo_rail_js_1.cargoFootbridge.south}" fill="none" stroke="#9bcabe" stroke-width=".9"/>
     <g fill="none" stroke="#728776" stroke-width="1.9"><path d="M-87 43h39l15-14M-18 31v-9l-2-5V-24l11-13h52M-48 0h90M-48-21h41l9-7h17M-2 31V-42M42 47h38"/></g>
-    <path d="M-88 14H82" fill="none" stroke="#86948b" stroke-width="1.9"/><path d="${tram}" fill="none" stroke="#d1ab70" stroke-width=".95"/>
+    <path d="M-88 14H82" fill="none" stroke="#565d56" stroke-width="1.9"/><path d="${tram}" fill="none" stroke="#d1ab70" stroke-width=".95"/>
     <g stroke="#a8b8aa" stroke-width=".65">${world_expansion_layout_js_1.bridges.map(b => `<path d="M${b.x - 6.7} 58v32m13.4-32v32"/>`).join('')}</g>
     <g transform="translate(${house_layout_js_1.houseEntry.x} ${house_layout_js_1.houseEntry.z})" stroke="#b0e7d1" stroke-width="1.15" fill="#2c594e"><path d="m-3.2-.2 3.2-2.8L3.2-.2V3h-6.4Z"/><path d="M-.5 3V.6H1V3"/></g>
-    ${large ? `<g class="k-atlas-places" text-anchor="middle" font-family="sans-serif" fill="#e3ebe2" paint-order="stroke" stroke="#152621" stroke-linejoin="round">${named}</g><g class="k-atlas-districts" text-anchor="middle" font-family="sans-serif" font-weight="700" fill="#f1ead5" paint-order="stroke" stroke="#152621" stroke-linejoin="round">${districts}</g>` : ''}`;
+    ${large ? `<g class="k-atlas-print" text-anchor="middle"><g class="k-atlas-addresses">${numbers}</g><g class="k-atlas-street-names">${roadNames}</g><g class="k-atlas-stop-sign">${stopSigns}</g></g><g class="k-atlas-places" text-anchor="middle" font-family="sans-serif" fill="#25322d" paint-order="stroke" stroke="#eae6d9" stroke-linejoin="round">${named}</g><g class="k-atlas-districts" text-anchor="middle" font-family="sans-serif" font-weight="700" fill="#333c33" paint-order="stroke" stroke="#eae6d9" stroke-linejoin="round">${districts}</g>` : ''}`;
 }

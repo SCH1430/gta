@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const T = require('../engine/three.module.min.js');
 const { createWorldLife } = require('../game/world-life.js');
 const { groundHeight, isBlocked } = require('../game/world-layout.js');
+const { routeTo } = require('../game/ui-navigation.js');
 
 function game(t) {
     const noop = () => {};
@@ -56,6 +57,37 @@ test('world activities have walkable guide points and the crane viewpoint can be
     act('site:port-crane').choices[1].run();
     act('exit-lookout');
     assert.equal(world.lookout, null);
+});
+
+test('all fifty new models have clear atlas destinations, a local action, and visible geometry', t => {
+    const { world, scene, at, act } = game(t);
+    assert.equal(world.peopleGuides.length, 25);
+    assert.equal(world.vehicleGuides.length, 25);
+    const guides = [...world.peopleGuides, ...world.vehicleGuides];
+    assert.equal(new Set(guides.map(([label]) => label)).size, 50);
+    for (const [label, x, z] of guides) {
+        assert.ok(Number.isFinite(x) && Number.isFinite(z), label);
+        assert.equal(isBlocked(x, z, .30, false, groundHeight(x, z) + .12), false, `${label}: clear approach`);
+        const end = routeTo({ x: -32, z: 28 }, { x, z }, 'walk').path.at(-1);
+        assert.ok(end && Math.hypot(end.x - x, end.z - z) <= 1.5, `${label}: walk route reaches the approach`);
+        at(x, z, 1090);
+        let model;
+        scene.traverseVisible(node => {
+            if (node.name === label && node.userData.cityModel)
+                model = node;
+        });
+        assert.ok(model, `${label}: present in the scene`);
+        assert.equal(act('site:' + model.userData.cityModel).title, label, `${label}: inspection`);
+        let vertices = 0;
+        model.traverseVisible(node => {
+            const positions = node.isMesh && node.geometry?.getAttribute('position');
+            if (positions) {
+                assert.ok(positions.array.every(Number.isFinite), `${label}: finite vertices`);
+                vertices += positions.count;
+            }
+        });
+        assert.ok(vertices > 100, `${label}: detailed 3D model`);
+    }
 });
 
 test('tea delivery spans midnight, pays once and resumes the next shift', t => {

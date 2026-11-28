@@ -127,7 +127,7 @@ function rollingStock(meta) {
     }
     for (const s of [-1, 1]) {
         const edge = side + (style === 'box' ? .15 : style === 'tank' ? .003 : .067);
-        const title = style === 'engine' ? 'КАНАЛЬНАЯ ТЯГА' : meta.id, sub = style === 'container' ? 'КОНТЕЙНЕР · 2087' : style === 'tank' ? 'ТЕПЛОНОСИТЕЛЬ' : style === 'engine' ? meta.id : 'ГРУЗОВАЯ ВЕТКА';
+        const title = style === 'engine' ? 'КАНАЛЬНАЯ ТЯГА' : meta.id, sub = style === 'container' ? 'КОНТЕЙНЕР · 2022' : style === 'tank' ? 'ТЕПЛОНОСИТЕЛЬ' : style === 'engine' ? meta.id : 'ГРУЗОВАЯ ВЕТКА';
         const x = style === 'engine' ? -.26 : 1.65, y = style === 'engine' ? 1.71 : 2.27;
         b.box(x, y, s * (edge - .022), 1.92, .66, .071, '#3f5052');
         numbers.place(meta.id, () => (0, world_textures_js_1.signTexture)(title, sub, '#fff0bb', '#33454b', 3.0), x, y, s * (edge + .014), 1.79, .60, s > 0 ? 0 : Math.PI);
@@ -195,6 +195,10 @@ function shelter(b, p, index) {
     b.lamp(x, 2.09, z - .50, 1.68, .058, .15, light);
     for (const dx of [-1.74, 1.74])
         b.box(x + dx, 1.10, z - 1.25, .13, 2.21, .13, steel);
+    b.box(x, 1.03, z-1.30, 3.53, 2.03, .11, '#9a9a83');
+    b.box(x - 1.71, .48, z-.76, .12, .96, 1.19, '#8b8e7c');
+    b.box(x - 1.71, 1.47, z-.76, .10, .94, 1.18, '#96a8aa');
+    b.box(x - 1.71, 1.45, z-.76, .13, 1.02, .05, '#b6b59e');
     const signs = new world_batch_js_1.Panels(p);
     signs.place(site.name, () => (0, world_textures_js_1.signTexture)(site.name.toUpperCase(), 'ГРУЗОВОЙ ПОСТ · СМОТРОВАЯ', '#f0dcad', '#3f5662', 4.6), x, 1.89, z - 1.176, 3.34, .73, 0);
     signs.flush();
@@ -204,6 +208,13 @@ function crossing(parent, index) {
     parent.add(root);
     if (index < 3)
         shelter(b, root, index);
+    const deckY = cargo_rail_js_1.cargoGrade(site.x) + .102, trackZ = cargo_rail_js_1.cargoTrack.z;
+    const panels = Math.max(1, Math.ceil(site.roadWidth/1.2)), width = site.roadWidth / panels;
+    for(let i=0;i<panels;i++) {
+        const dx=site.x - site.roadWidth/2 + (i+.5)*width;
+        for(const [offset,depth] of [[-1.39,1.15],[0,1.25],[1.39,1.15]])
+            b.box(dx,deckY,trackZ+offset,width-.024,.08,depth,'#565957');
+    }
     const arms = [-1, 1].map(side => {
         const x = site.x + side * (site.roadWidth * .5 + .095), z = cargo_rail_js_1.cargoTrack.z + side * 5.15, y = (0, world_layout_js_1.groundHeight)(x, z);
         b.box(x, y + .52, z, .43, 1.09, .53, steel);

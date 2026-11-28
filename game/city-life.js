@@ -130,10 +130,10 @@ class CityLife {
             this.note(t, 'Горсвет · автовышка выехала в район «' + (0, world_layout_js_1.districtAt)(f.x, f.z) + '»');
         }
     }
-    goal(p, people, t, dt, rail, minutes = (0, city_clock_js_1.districtMinutes)(t)) {
+    goal(p, people, t, dt, rail, minutes = (0, city_clock_js_1.districtMinutes)(t), calendar = (0, city_clock_js_1.districtCalendarMinutes)(t)) {
         if (p.id.startsWith('shop-')) {
             p.ticket ??= Number(p.id.slice(5));
-            const closed = minutes < 7 * 60 || minutes >= 22 * 60;
+            const closed = !require('./market-hours.js').marketOpen(calendar);
             if (closed || p.purchase) {
                 const last = exitLoop.length - 1, i = Math.min(p.leg ?? 0, last), dest = exitLoop[i];
                 const target = i === last ? { x: dest.x + (Number(p.id.slice(5)) * .68), z: dest.z } : dest;

@@ -8,7 +8,8 @@ exports.programmes = ['fm-weather', 'fm-request', 'fm-hockey', 'radio', 'radio2'
 exports.townProgrammes = ['fm-route-restored', 'fm-lane-blocked', 'fm-lane-clear'];
 const archive = ['archive-a', 'archive-b', 'archive-c'];
 const stories = ['fm-ledger', 'fm-heat', 'fm-gauge', 'fm-power', 'fm-letter', 'fm-intro', 'fm-end', 'fm-night', 'dock-manifest', 'dock-clear', 'dock-receipt'];
-const valid = new Set([...exports.programmes, ...archive, ...stories, ...exports.townProgrammes]);
+const valid = new Set([...exports.programmes, ...archive, ...stories, ...exports.townProgrammes,
+    'canal-lost-keys','dispatch-yard-call','dispatch-yard-reply',...['snow','thaw','clear','wind'].map(w=>'canal-weather-'+w)]);
 function isProgramme(id) { return valid.has(id); }
 function nextProgramme(slot, unlocked = [], tapes = false) {
     const news = unlocked.filter(isProgramme);

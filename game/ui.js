@@ -14,7 +14,7 @@ const population_profile_js_1 = require("./population-profile.js");
 const defaults = {
     battery:false, toggleHolds:false, freeOrbit:false, keyboardLook:1, cameraStep:0, carFollow:1, bindings:{}, cameraDistance: 'normal', steerStick: false, radioStation: 'district', soundProfile: 'headphones',
     pedestrianDensity: population_profile_js_1.defaultPopulation.pedestrians, trafficDensity: population_profile_js_1.defaultPopulation.traffic,
-    sensitivity: 1, buttonSize: 1, volume: .65, minimap: true, radio: true, carSensitivity: 1, cabinSensitivity: .8, shoulder: 1, haptics: .5, impactMotion: .7, autoSprint: true, compactHud: false, leftHanded: false, subtitleSize: 1, goalSize: 1, layouts: (0, ui_layout_js_1.newLayouts)(), marks: []
+    sensitivity: 1, buttonSize: 1, volume: .65, minimap: true, radio: true, carSensitivity: 1, cabinSensitivity: .8, shoulder: 1, haptics: .5, impactMotion: .7, autoSprint: true, compactHud: true, leftHanded: false, subtitleSize: 1, goalSize: 1, layouts: (0, ui_layout_js_1.newLayouts)(), marks: []
 };
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const money = (value) => `${Math.round(value).toLocaleString('ru-RU')} ₽`;
@@ -32,11 +32,7 @@ const controlSelector = 'button,input,select,textarea,summary,[tabindex="0"]';
 const controlAttributes = ['id', 'data-action', 'data-value', 'data-setting', 'data-map-focus', 'data-map-place', 'data-color', 'data-pin-label'];
 const canFocus = el => el.offsetWidth > 0 && !el.disabled && el.tabIndex !== -1;
 const campaign = ['Последний рейс', 'Холодный пуск', 'Чужая частота'];
-const briefs = [
-    'Семён, диспетчер депо: «Последний трамвай уже на линии. Забери блок на рынке, пока вагон не дошёл до стрелки».',
-    'Мастер гаража: «Фургон встал у депо. Довези его до мастерской, пока аккумулятор ещё держит заряд».',
-    'Лёша: «Забери кассету на рынке. Если заметишь патруль, оторвись от него до встречи во дворах».',
-];
+const shiftBook = require('./shift-journal.js');
 function createUI(host, onAction) {
     const root = document.createElement('div');
     root.className = 'k-ui';
@@ -52,10 +48,10 @@ function createUI(host, onAction) {
     };
     root.innerHTML = `<div class="k-look" tabindex="0" role="group" aria-label="Игровое поле"></div><div class="k-top-shade"></div><div class="k-bottom-shade"></div>
     <header class="k-brand"><span class="k-emblem">${ui_icons_js_1.logo}</span><span class="k-title">КОНТУР<span>–77</span></span><time class="k-clock" aria-label="Игровое время" hidden></time></header>
-    <button class="k-mission" type="button" data-action="phone" title="Открыть журнал заказов">
+    <button class="k-mission" type="button" data-action="phone" title="Открыть журнал смены">
       <span class="k-mission-top"><span class="k-mission-kind">Заказ</span><span class="k-step">1 / 3</span></span>
       <strong class="k-mission-title">Последний рейс</strong>
-      <span class="k-objective"><span class="k-diamond" aria-hidden="true"></span><span class="k-objective-text">Заберите блок на рынке</span><span class="k-objective-distance" title="До цели по прямой" hidden></span></span>
+      <span class="k-objective"><span class="k-diamond" aria-hidden="true"></span><span class="k-objective-text">Заберите реле у Инны</span><span class="k-objective-distance" title="До цели по прямой" hidden></span></span>
     </button>
     <aside class="k-right-rail">
       <div class="k-tools"><div class="k-wallet" aria-label="Баланс"><span class="k-money">0 ₽</span></div>${iconButton('phone', 'phone', 'Телефон · J')}${iconButton('pause', 'pause', 'Пауза · Esc')}</div>
@@ -97,7 +93,7 @@ function createUI(host, onAction) {
         driving: false,
         missionIndex: 0,
         missionTitle: 'Последний рейс',
-        objective: 'Заберите блок на рынке',
+        objective: 'Заберите реле у Инны',
     };
     const settings = { ...defaults, impactMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : defaults.impactMotion,
         soundProfile: window.matchMedia('(pointer: coarse)').matches ? 'speaker' : 'headphones', marks: [], layouts: (0, ui_layout_js_1.newLayouts)() };
@@ -183,7 +179,7 @@ function createUI(host, onAction) {
         const mark = selected && settings.marks.find(m => m.x === selected.x && m.z === selected.z);
         const end = routeTarget();
         const summary = navEnd && navLeg ? (hasRoute() ? `${escape(navEnd.label)} · ${navMode === 'drive' ? 'на машине' : navMode === 'tram' ? 'трамвай 07' : 'пешком'} ${navLeg.metres} м${navLeg.walkMetres ? ' + ' + navLeg.walkMetres + ' м пешком' : ''}` : 'Нет доступного пути') : '';
-        return `<div class="k-map-options">${end ? `<div class="k-route-actions"><span>Маршрут · ${escape(end.label)}</span><button type="button" data-action="nav-walk">Пешком</button><button type="button" data-action="nav-drive">На машине</button><button type="button" data-action="nav-tram">Трамваем</button></div>` : ''}<div class="k-pin-info"><button type="button" data-action="pin-here">Подписать точку</button><span>${summary || 'I J K L — сдвинуть точку. Удержание пальцем — поставить метку.'}</span>${mark ? `<button type="button" data-action="pin-remove" data-value="${mark.id}">Удалить метку</button>` : ''}${navEnd ? '<button type="button" data-action="nav-clear">Сбросить путь</button>' : ''}</div></div>`;
+        return `<div class="k-map-options">${selected?.approach ? '<p class="k-map-approach">'+escape(selected.approach)+'</p>' : ''}${end ? `<div class="k-route-actions"><span>Маршрут · ${escape(end.label)}</span><button type="button" data-action="nav-walk">Пешком</button><button type="button" data-action="nav-drive">На машине</button><button type="button" data-action="nav-tram">Трамваем</button></div>` : ''}<div class="k-pin-info"><button type="button" data-action="pin-here">Подписать точку</button><span>${summary || 'I J K L — сдвинуть точку. Удержание пальцем — поставить метку.'}</span>${mark ? `<button type="button" data-action="pin-remove" data-value="${mark.id}">Удалить метку</button>` : ''}${navEnd ? '<button type="button" data-action="nav-clear">Сбросить путь</button>' : ''}</div></div>`;
     }
     function updateRoute(along = false) {
         navOrigin = { x: view.x, z: view.z };
@@ -295,7 +291,8 @@ function createUI(host, onAction) {
     function buzz(pattern) {
         if (!navigator.vibrate || settings.haptics <= 0)
             return;
-        navigator.vibrate(Math.max(5, Math.round((pattern === 'reverse' ? 35 : 20) * settings.haptics)));
+        const duration = Math.max(5, Math.round((pattern === 'reverse' ? 35 : 20) * settings.haptics));
+        navigator.vibrate(pattern === 'message' ? [duration, 80, duration] : duration);
     }
     function buzzImpact(strength) {
         if (!navigator.vibrate || settings.haptics <= 0 || strength < .12)
@@ -414,23 +411,29 @@ function createUI(host, onAction) {
         if (panel === 'layout')
             return `<div class="k-layout-toolbar"><div role="group" aria-label="Раскладка">${modes.map(m => `<button type="button" data-action="edit-${m}" aria-pressed="${editMode === m}">${m === 'foot' ? 'Пешком' : 'За рулём'}</button>`).join('')}</div><button data-action="edit-mirror">Отразить</button><button data-action="edit-reset">Сбросить</button><button data-action="settings">Готово</button></div><p class="k-layout-tip">Перетащите кнопку на нужное место.</p>`;
         if (panel === 'pause')
-            return `<div class="k-list">${panelRow('close', 'play', 'Продолжить игру')}${panelRow('phone', 'phone', 'Журнал заказов')}${panelRow('map', 'map', 'Карта района')}${view.atGarage ? panelRow('garage', 'garage', 'Открыть гараж') : ''}${panelLinks()}${panelRow('settings', 'settings', 'Настройки')}${panelRow('restart', 'checkpoint', 'С контрольной точки')}${document.fullscreenEnabled ? panelRow('full', 'full', document.fullscreenElement ? 'Выйти из полного экрана' : 'На весь экран') : ''}</div>${desktopHelp()}<div class="k-panel-status">${(0, ui_icons_js_1.ico)('signal', 15)}<span class="k-offline-status">${escape(offlineLabel)}</span></div>`;
+            return `<div class="k-list">${panelRow('close', 'play', 'Продолжить игру')}${panelRow('phone', 'phone', 'Журнал смены')}${panelRow('map', 'map', 'Карта района')}${view.atGarage ? panelRow('garage', 'garage', 'Открыть гараж') : ''}${panelLinks()}${panelRow('settings', 'settings', 'Настройки')}${panelRow('restart', 'checkpoint', 'С контрольной точки')}${document.fullscreenEnabled ? panelRow('full', 'full', document.fullscreenElement ? 'Выйти из полного экрана' : 'На весь экран') : ''}</div>${desktopHelp()}<div class="k-panel-status">${(0, ui_icons_js_1.ico)('signal', 15)}<span class="k-offline-status">${escape(offlineLabel)}</span></div>`;
         if (panel === 'settings')
             return `<div class="k-list">${panelRow('layout', 'arrows', 'Расстановка кнопок')}${panelRow('close', 'play', 'Проверить в игре')}</div>${populationRows()}${settingsRow('sensitivity', 'Камера пешком', 0.3, 2.5, 0.05)}${settingsRow('carSensitivity', 'Камера за машиной', .3, 2.5, .05)}${settingsRow('cabinSensitivity', 'Камера в салоне', .3, 2.5, .05)}${settingsRow('haptics', 'Сила вибрации', 0, 1, .05)}${settingsRow('impactMotion', 'Отдача камеры при ударе', 0, 1, .05)}${settingsRow('subtitleSize', 'Размер субтитров', .8, 1.8, .05)}${settingsRow('goalSize', 'Подписи целей', .8, 1.8, .05)}${panelRow('camera-distance', 'arrows', 'Дистанция камеры · ' + cameraNames[settings.cameraDistance])}${toggleRow('steerStick', 'Руление джойстиком')}${panelRow('next-station', 'signal', 'Радиостанция · ' + radio_stations_js_1.radioStations[settings.radioStation])}${toggleRow('autoSprint', 'Бег за внешним кольцом джойстика')}${toggleRow('leftHanded', 'Леворукая раскладка')}${toggleRow('compactHud', 'Свернуть баланс и приборы')}${settingsRow('buttonSize', 'Размер сенсорных кнопок', 0.75, 1.4, 0.05)}${settingsRow('volume', 'Громкость', 0, 1, 0.05)}${panelRow('sound-profile', 'signal', 'Звуковой режим · ' + sound_mix_js_1.soundProfileNames[settings.soundProfile])}${toggleRow('minimap', 'Мини-карта')}${toggleRow('radio', 'Автомобильное радио')}<div class="k-list">${panelRow('pause', 'left', 'В меню паузы')}</div>`;
         if (panel === 'map' && showArchive && view.archiveMap)
             return (0, interior_archive_js_1.archiveFigure)() + panelRow('archive-toggle', 'map', 'Вернуться к навигации');
         if (panel === 'map')
-            return `<div class="k-atlas-body"><div class="k-big-map">${(0, ui_map_js_1.mapTemplate)(true)}<span class="k-north">С</span>${view.inside ? '' : `<div class="k-atlas-zoom"><button type="button" data-action="atlas-out" aria-label="Отдалить карту" ${atlasZoom === 0 ? 'disabled' : ''}>−</button><button type="button" data-action="atlas-in" aria-label="Приблизить карту" ${atlasZoom === ui_map_js_1.zoomWidths.length - 1 ? 'disabled' : ''}>+</button></div>`}</div><nav class="k-atlas-index" aria-label="Ориентиры"><button type="button" data-map-focus="-1" aria-pressed="true">${view.inside ? (view.interiorPlan?.number ? 'Весь этаж' : 'Весь дом') : 'Весь город'}</button>${(0, ui_map_js_1.atlasPlaces)(atlasState()).map((p, i) => `<button type="button" data-map-focus="${i}" aria-pressed="false">${p.area ? `<small>${escape(p.area)}</small>` : ''}${escape(p.label)}</button>`).join('')}</nav></div>${atlasControls()}${view.archiveMap ? panelRow('archive-toggle', 'map', 'Архивная схема дворов') : ''}<div class="k-legend"><span><i class="k-you"></i>Вы</span><span><i class="k-goal"></i>Цель</span>${view.wanted ? '<span><i class="k-scan"></i>Патруль</span>' : ''}<strong>${escape(view.district)}</strong></div>`;
+            return `${view.inside ? '' : '<p class="k-atlas-edition">Канальск · муниципальный план · зима 2022</p>'}<div class="k-atlas-body"><div class="k-big-map">${(0, ui_map_js_1.mapTemplate)(true)}<span class="k-north">С</span>${view.inside ? '' : `<div class="k-atlas-zoom"><button type="button" data-action="atlas-out" aria-label="Отдалить карту" ${atlasZoom === 0 ? 'disabled' : ''}>−</button><button type="button" data-action="atlas-in" aria-label="Приблизить карту" ${atlasZoom === ui_map_js_1.zoomWidths.length - 1 ? 'disabled' : ''}>+</button></div>`}</div><nav class="k-atlas-index" aria-label="Ориентиры"><button type="button" data-map-focus="-1" aria-pressed="true">${view.inside ? (view.interiorPlan?.number ? 'Весь этаж' : 'Весь дом') : 'Весь город'}</button>${(0, ui_map_js_1.atlasPlaces)(atlasState()).map((p, i) => `<button type="button" data-map-focus="${i}" aria-pressed="false">${p.area ? `<small>${escape(p.area)}</small>` : ''}${escape(p.label)}</button>`).join('')}</nav></div>${atlasControls()}${view.archiveMap ? panelRow('archive-toggle', 'map', 'Архивная схема дворов') : ''}<div class="k-legend"><span><i class="k-you"></i>Вы</span><span><i class="k-goal"></i>Цель</span>${view.wanted ? '<span><i class="k-scan"></i>Патруль</span>' : ''}<strong>${escape(view.district)}</strong></div>`;
         if (panel === 'garage')
             return drawGarage();
         const idx = view.missionIndex;
         const campaignOrder = view.campaignObjective ?? { title: view.missionTitle, goal: view.objective, reward: view.reward };
-        return `<div class="k-list k-phone-services">${panelLinks()}</div><div class="k-phone-location">${(0, ui_icons_js_1.ico)('signal', 14)}<span>ДИСПЕТЧЕРСКАЯ СЕТЬ</span><b>77</b></div><div class="k-orders">${campaign
-            .map((name, i) => {
-            const active = i === idx, done = i < (view.completed ?? idx);
-            return `<div class="k-order ${active ? 'active' : ''} ${done ? 'done' : ''}"><span class="k-order-icon">${(0, ui_icons_js_1.ico)(done ? 'check' : i === 0 ? 'route' : i === 1 ? 'car' : 'mapPin', 23)}</span><div><small>${done ? 'ЗАВЕРШЁН' : active ? 'АКТИВНЫЙ ЗАКАЗ' : 'В ОЧЕРЕДИ'}</small><strong>${escape(active ? campaignOrder.title : name)}</strong>${active ? `<p>${escape(briefs[i])}</p><p class="k-phone-goal">${escape(campaignOrder.goal)}</p>` : ''}</div>${active && campaignOrder.reward ? `<b>+${money(campaignOrder.reward)}</b>` : ''}</div>`;
-        })
-            .join('')}</div>${idx < 3 ? `<div class="k-list">${panelRow('map', 'map', 'Показать на карте')}${panelRow('restart', 'checkpoint', 'С контрольной точки')}</div>` : ''}`;
+        const messages = shiftBook.correspondence(view.shiftMessages ?? [], escape);
+        const records = campaign.map((name, i) => {
+            const active = i === idx, done = i < idx, order = shiftBook.orders[i];
+            const reward = view.campaignPay?.[i] ?? (active ? campaignOrder.reward : 0);
+            const paper = active || done ? shiftBook.documentSheet(i, name, reward, done, escape) : '';
+            return `<section class="k-order ${active ? 'active' : done ? 'done' : ''}"><div><small>${done ? 'Исполнено' : active ? 'Текущий заказ' : 'В очереди'} · ${escape(order.caller)}</small><strong>${escape(name)}</strong>${active ? '<p>'+escape(campaignOrder.goal)+'</p>' : ''}${paper}</div></section>`;
+        }).join('');
+        return `<div class="k-handset-bar"><time>${escape(view.clock ?? '')}</time><b>${money(view.money)}</b></div>
+            <h3>Звонки и сообщения</h3><div class="k-handset-log">${messages || '<p>Новых сообщений пока нет.</p>'}</div>
+            <h3>Заказы смены</h3><div class="k-orders">${records}</div>
+            ${idx < 3 ? panelRow('map','map','Адрес текущего заказа') + panelRow('restart','checkpoint','С контрольной точки') : ''}
+            <details class="k-book-models"><summary>Справочник и службы</summary><div class="k-list k-phone-services">${panelLinks()}</div></details>`;
     }
     function focusPanel(previous) {
         const controls = [...dialogContent.querySelectorAll(controlSelector)].filter(canFocus);
@@ -447,8 +450,8 @@ function createUI(host, onAction) {
             pause: ['КОНТУР-77 · ВЕРСИЯ 3.3', 'Пауза'],
             layout: ['УПРАВЛЕНИЕ', 'Расстановка кнопок'], alternatives: ['РЯДОМ', 'Выбор действия'],
             laptop:['УПРАВЛЕНИЕ','Ноутбук и клавиши'], settings: ['СИСТЕМА', 'Настройки'],
-            map: ['НАВИГАЦИЯ', view.inside ? (view.interiorId && view.interiorId !== 'house' ? (view.interiorPlan?.name ?? view.district) : 'План дома № 23') : 'Карта города'],
-            phone: ['ТЕЛЕФОН', 'Журнал заказов'],
+            map: ['ГОРОДСКОЙ АТЛАС', view.inside ? (view.interiorId && view.interiorId !== 'house' ? (view.interiorPlan?.name ?? view.district) : 'План дома № 23') : 'Карта города'],
+            phone: ['ТЕЛЕФОН', 'Журнал смены'],
             garage: ['КАНАЛЬНЫЕ ГАРАЖИ', 'Мастерская'],
         };
         dialog.classList.toggle('k-atlas', panel === 'map');
@@ -1054,9 +1057,9 @@ function createUI(host, onAction) {
             setText(missionDistance, metres(Math.hypot(view.x - view.target.x, view.z - view.target.z)));
         const campaignActive = view.missionIndex < campaign.length;
         step.hidden = !view.sideStage && !campaignActive;
-        setText(step, view.sideStage ? `Этап ${view.sideStage.step} / ${view.sideStage.total}` : `${view.missionIndex + 1} / ${campaign.length}`);
+        setText(step, view.sideStage ? `Этап ${view.sideStage.step} / ${view.sideStage.total}` : `${(view.campaignStage ?? 0) + 1} / ${[3,4,3][view.missionIndex] ?? 3}`);
         mission.dataset.action = view.sidePanel ?? (view.sideStage ? 'district-jobs' : 'phone');
-        mission.title = view.sidePanel === 'outer-tour' ? 'Открыть журнал объезда' : view.sideStage ? 'Открыть заказы района' : 'Открыть журнал заказов';
+        mission.title = view.sidePanel === 'outer-tour' ? 'Открыть журнал объезда' : view.sideStage ? 'Открыть заказы района' : 'Открыть журнал смены';
         setText(missionKind, view.sideStage ? 'Районный заказ' : campaignActive ? 'Заказ' : 'Свободная смена');
         const primary = view.actions?.[0];
         const label = primary?.choiceLabel ?? primary?.label ?? view.hint;
@@ -1159,6 +1162,15 @@ function createUI(host, onAction) {
             atlasZoom = ui_map_js_1.atlasDistrictZoom;
             drawPanel();
         },
+        openingRoute(point, from) {
+            if (navEnd) return;
+            navOrigin = {x:from.x,z:from.z};
+            navEnd = point;
+            navMode = 'walk';
+            navLeg = (0, ui_navigation_js_1.routeTo)(navOrigin, navEnd, navMode);
+            mapRoute = { ...navLeg, mode: navMode };
+        },
+        messageFeedback() { buzz('message'); },
         clearRoute(point) {
             if (navEnd && (point === undefined || point && navEnd.x === point.x && navEnd.z === point.z)) {
                 navEnd = null;

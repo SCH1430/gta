@@ -104,7 +104,7 @@ function regionalAtlas(names) {
         s.fillText(title.toUpperCase(), x + 14, y + 37, tw - 28);
         s.font = 'bold 11px K77Body, sans-serif';
         s.fillStyle = '#d1dbd8';
-        s.fillText(p.name + '   /   КАНАЛЬСК  2087', x + 16, y + 54, tw - 28);
+        s.fillText(p.name + '   /   КАНАЛЬСК  2022', x + 16, y + 54, tw - 28);
         captions.set(title, uv(x + 1, y + 1, tw - 2, th - 2, signs));
     }
     return { wallMap: mapOf(walls), signMap: mapOf(signs), facades, captions };

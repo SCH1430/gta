@@ -98,7 +98,7 @@ function paintMap(svg, state) {
     if (routesShown.get(paths) !== route) {
         routesShown.set(paths, route);
         const line = (points, color, dash = '') => points.length ? `<path d="${points.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(2) + ' ' + p.z.toFixed(2)).join(' ')}" stroke="${color}" stroke-width="${large ? 2 : 1.4}" vector-effect="non-scaling-stroke" stroke-dasharray="${dash}"/>` : '';
-        paths.innerHTML = route ? line(route.path, route.mode === 'drive' ? '#efa959' : '#99dfcb', route.mode !== 'drive' ? '.4 3' : '') + line(route.lastMile, '#99dfcb', '.4 3') + (route.tram ? line(route.tram,'#f4cf7a') + route.tram.filter((p,i)=>i%2===0).map(p=>`<path d="M-1.25 0H1.25" transform="translate(${p.x} ${p.z}) rotate(${p.yaw*180/Math.PI})" stroke="#f4cf7a" stroke-width=".45"/>`).join('') : '') : '';
+        paths.innerHTML = route ? line(route.path, route.mode === 'drive' ? '#a64525' : '#29674f', route.mode !== 'drive' ? '.4 3' : '') + line(route.lastMile, '#29674f', '.4 3') + (route.tram ? line(route.tram,'#71513a') + route.tram.filter((p,i)=>i%2===0).map(p=>`<path d="M-1.25 0H1.25" transform="translate(${p.x} ${p.z}) rotate(${p.yaw*180/Math.PI})" stroke="#71513a" stroke-width=".45"/>`).join('') : '') : '';
     }
     const pins = one('.k-map-marks'), marks = inside ? undefined : state.marks;
     const destinations = large && !inside ? state.districtDestinations : undefined;

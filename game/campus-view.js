@@ -312,6 +312,17 @@ function createCampus(scene) {
             right.b.box(px,fy+1.77,z,1.60,1.84,.067,'#a98d6e');
             imageCard(right,'exhibit-'+id,()=>exhibitionPrint(id),px,fy+1.77,z+.037,0,1,1.45,1.69,135,158);
         }
+        sign(right,'ЗИМНИЕ СЕКЦИИ','ПН/СР 16:00 · ХОККЕЙ    ВТ/ЧТ 15:30 · ЛЫЖИ',wing,x+6.6,fy+.78,z+.08,0,1,3.58,.51);
+        const entryZ=campus.floors.school1.entrance.z;
+        const entryCell=cellAt(x,entryZ,fy);
+        entryCell.b.box(x,fy+.021,entryZ,2.4,.034,1.3,'#504d44');
+        for(let k=0;k<17;k++) entryCell.b.box(x-1.11+k*.138,fy+.044,entryZ,.030,.019,1.21,'#716d60');
+        const hooks=cellAt(x-8.0,z+.45,fy).b;
+        hooks.box(x-7.1,fy+.87,z+.16,3.1,.10,.17,'#8e7760');
+        for(let k=0;k<9;k++){
+            hooks.box(x-8.43+k*.33,fy+.86,z+.27,.035,.12,.11,'#686f69');
+            sign(c,String(41+k),'',wing,x-8.43+k*.33,fy+.99,z+.24,0,1,.19,.12);
+        }
         overhead(plan,x,a.z-5.7,'ГАЛЕРЕИ И УЧЕБНЫЕ КОРПУСА','ПРЯМО  ↑',wing,'x',3.53);
     }
     function fitOut(plan,a){

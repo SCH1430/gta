@@ -690,6 +690,19 @@
   display: grid;
   gap: 3px;
 }
+.k-book-models summary {
+  min-height: 42px;
+  padding: 10px 11px;
+  border: 1px solid #8c9b832d;
+  background: #22312b;
+  cursor: pointer;
+}
+.k-book-models summary::marker {
+  color: var(--k-amber);
+}
+.k-book-models[open] .k-book-row {
+  margin-top: 3px;
+}
 .k-panel-row {
   display: flex;
   gap: 11px;
@@ -1431,7 +1444,7 @@
  .k-dialog.k-atlas{width:min(780px,97vw)}.k-atlas-body{grid-template-columns:minmax(0,1fr) minmax(150px,.43fr);gap:8px}
  .k-atlas .k-big-map,.k-atlas-index{height:clamp(145px,calc(100dvh - 157px),285px);max-height:none}
 }
-.k-atlas-districts [data-sector="outer"] { fill: #ffd59a; }
+.k-atlas-districts [data-sector="outer"] { fill: #5b4630; }
 
 @media (pointer: coarse), (max-width: 900px) {
   .k-ui.k-driving.k-steer-stick .k-steer { display: none; }
@@ -1478,3 +1491,39 @@
   .k-hardware-input:not(.k-layout-mode) .k-desktop-keys { gap: 7px; bottom: 8px; }
   .k-hardware-input .k-desktop-keys .k-mouse-key { display: none; }
 }
+
+/* Dispatch paperwork and municipal atlas. */
+.k-ui { --k-amber: #ebbc7d; --k-mint: #c5c9be; --k-hud-panel: #262822f5; }
+.k-dialog { background: #242822; }
+.k-dialog-head { background: #30352f; }
+.k-dialog-head h2, .k-ui .k-mission-title { font-family: K77Body, Arial, sans-serif; }
+.k-title { border: 1px solid #c5c8b8; padding: 2px 5px; letter-spacing: .045em; }
+.k-compact-hud .k-brand, .k-hardware-input.k-compact-hud:not(.k-layout-mode) .k-desktop-keys { display: none; }
+.k-handset-bar, .k-handset-entry header { display: flex; justify-content: space-between; gap: 10px; }
+.k-handset-bar { border-bottom: 1px solid #71776a; padding-bottom: 8px; }
+.k-handset-entry { padding: 10px 12px; background: #32362f; border-bottom: 1px solid #51564a; }
+.k-handset-entry small, .k-handset-entry time { color: #ccd0c4; font-size: .84em; }
+.k-handset-entry p { margin: 4px 0 0; }
+.k-handset-log { max-height: 16em; overflow: auto; }
+.k-order > div { width: 100%; }
+.k-order-paper summary { padding: 10px 0; cursor:pointer; text-decoration: underline; }
+.k-order-paper article { padding: 14px; background: #e9e4d3; color: #232721; font: 16px/1.45 K77Body,Arial,sans-serif; }
+.k-order-paper article small { color: #545348; }
+.k-order-paper article h3 { margin: .3em 0 .8em; }
+.k-order-paper dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+.k-order-paper dd { margin: 0; }
+.k-order-paper dt { color: #555548; }
+.k-entry-photo { margin: 0 0 12px; background: #e9e4d3; color: #24281f; padding: 10px; }
+.k-entry-photo img { width: 100%; height: auto; display:block; margin-bottom: 6px; }
+.k-radio-lcd { display: grid; gap: 2px; margin-bottom: 12px; padding: 10px 16px; background: #b9c0a1; color: #242b21; border: 6px solid #424641; font: 600 18px/1.4 monospace; }
+.k-atlas-edition, .k-map-approach { margin: 3px 0 7px; font-size: .9em; }
+.k-atlas-print { display:none; fill:#30382e; font-family: Arial,sans-serif; }
+.k-geo[data-zoom="3"] .k-atlas-print, .k-geo[data-zoom="4"] .k-atlas-print { display:inline; }
+.k-atlas-addresses { font-size:2.5px; font-weight:bold; }
+.k-atlas-street-names { font-size:2px; paint-order:stroke; stroke:#ece8d8; stroke-width:.55; }
+.k-atlas-stop-sign rect { fill:#3f625a; }
+.k-atlas-stop-sign text { fill:white; font-size:2.4px; }
+
+.k-geo[data-mode="street"] .k-map-player path { fill:#3d6880; stroke:#fff9e8; }
+.k-atlas .k-legend .k-you { background:#7896ac; }
+.k-handset-log, .k-order-paper { overflow-wrap:anywhere; }

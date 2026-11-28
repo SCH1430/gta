@@ -12,7 +12,8 @@ exports.garageMasonry = garageMasonry;
 exports.cabinetPlate = cabinetPlate;
 exports.garageDoor = garageDoor;
 exports.signTexture = signTexture;
-exports.opticMural = opticMural;
+exports.handTicket = handTicket;
+exports.tramMosaic = tramMosaic;
 const THREE = require("../engine/three.module.min.js");
 const world_layout_js_1 = require("./world-layout.js");
 const puddles_js_1 = require("./puddles.js");
@@ -208,20 +209,13 @@ function districtFloor() {
         const z = zroad ? (side ? 30 : -46) + (rnd() - .5) * 10 : rnd() * 117 - 66;
         rect(x, z, rnd() * 2 + .1, rnd() * .21 + .04, rnd() > .5 ? 'rgba(138,159,181,.12)' : 'rgba(12,24,41,.10)');
     }
-    for (const [x, z, col] of [[28, 23, '118,231,224'], [35, 22, '243,125,83'], [-44, 44, '235,171,88'], [-8.15, 18.5, '123,225,183']]) {
-        pool(x, z, 6, .95, 'rgba(' + col + ',.30)', 'rgba(' + col + ',0)');
-    }
-    pool(-8.15, 25.5, 7.2, 1.40, 'rgba(102,185,164,.18)', 'rgba(102,185,164,0)');
-    for (let i = 0; i < 48; i++) {
-        const z = 18 + rnd() * 12.8, x = -8.15 + (rnd() - .5) * (1.7 + (z - 18) * .35);
-        rect(x, z, .2 + rnd() * 1.65, .04 + rnd() * .085, 'rgba(161,215,187,' + (.09 + rnd() * .19) + ')');
-    }
-    for (const [x, z, r, tint] of [[-45.2, 42, 3.8, '111,233,235'], [-46, 48.6, 2.5, '255,88,77'], [28, 23.8, 3.5, '97,233,223'], [35.3, 24.2, 2.6, '255,104,96']]) {
-        pool(x, z, r, 1.28, 'rgba(' + tint + ',.36)', 'rgba(' + tint + ',0)');
-        for (let k = 0; k < 42; k++) {
-            const d = (rnd() - .5) * 5.1;
-            rect(x + (rnd() - .5) * (2 + Math.abs(d) * .32), z + d, .15 + rnd() * .80, .035 + rnd() * .067, 'rgba(' + tint + ',' + (.065 + rnd() * .19) + ')');
-        }
+    // Slush collects in wheel ruts and ploughed ridges on the Kanálnaya carriageway.
+    for (let i = 0; i < 620; i++) {
+        const x = -81 + rnd() * 163;
+        const nearKerb = i % 3 === 0, side = i % 2 ? 1 : -1;
+        const z = 30 + side * (nearKerb ? 4.8 : 2.1) + (rnd() - .5) * .65;
+        rect(x, z, .15 + rnd() * .87, .035 + rnd() * .12,
+            nearKerb ? 'rgba(171,166,153,.39)' : 'rgba(145,141,131,.22)');
     }
     puddles_js_1.districtPuddles.forEach(([x, z, rx, rz, angle, light], i) => (0, graphics_pavement_js_1.paintMeltwater)(c, x, z, rx, rz, angle, light, 739 + i * 101));
     for (const [x, z, a] of [[-33.2, 34.8, 1.57], [-23, 34.8, 1.57], [38.7, 25, 1.57], [41.2, -13, 0], [-54.8, -27, 0], [17, -51, 1.57]])
@@ -295,6 +289,18 @@ function districtFloor() {
     }
     canalWalk.paintWalk(c, random(1946));
     canalWalk.paintExitTracks(c);
+    // Two shovelled walks meet the salted road. The shortcut by the beds stays single-file.
+    line(-36,16,-36,21.4,1.45,'rgba(124,120,104,.47)');
+    line(-36,21.4,-32,23.2,1.36,'rgba(127,121,106,.44)');
+    line(-25,37.4,-17,40.3,.56,'rgba(148,145,130,.49)');
+    for(let i=0;i<21;i++) {
+        const f=i/20;
+        rect(-25+8*f+(i%2)*.11,37.4+2.9*f,.105,.23,'rgba(103,102,91,.55)');
+    }
+    for(let i=0;i<95;i++) {
+        const x=24+rnd()*17,z=22.8+rnd()*.62;
+        rect(x,z,.065+rnd()*.18,.036+rnd()*.09,'rgba(125,115,91,.56)');
+    }
     canalWalk.paintMarketBay(c, random(3229));
     rect(0, 74, 200, 23, '#7596a9');
     for (let i = 0; i < 390; i++) {
@@ -366,6 +372,15 @@ function occupiedPane(kind) {
         c.moveTo(0, 0); c.lineTo(cream ? 19 : 10, 0); c.lineTo(8, 53); c.lineTo(0, 60); c.fill();
         c.fillRect(cream ? 35 : 44, 0, 3.2, 64);
         if (cream) c.fillRect(0, 20, 80, 2.3);
+        if (kind === 'reading') {
+            c.fillStyle = '#564c42'; c.fillRect(20, 36, 2, 23);
+            c.fillStyle = '#e7ce9c'; c.beginPath();
+            c.moveTo(11, 38); c.lineTo(32, 38); c.lineTo(27, 27); c.lineTo(15, 27); c.fill();
+        }
+        if (kind === 'kitchen') {
+            c.fillStyle = '#a89d77'; c.fillRect(2, 8, 22, 18); c.fillRect(27, 8, 17, 18);
+            c.fillStyle = '#766d58'; c.fillRect(0, 48, 67, 5);
+        }
         c.fillStyle = '#8e7e6c';
         c.fillRect(53, 51, 12, 7); c.fillRect(56, 44, 5, 7);
         c.fillStyle = '#a39178';
@@ -409,6 +424,10 @@ function facade(cols, rows, seed, routeFace = false, stairCol = -1) {
             c.save();
             c.translate(x * 64, y * 68);
             fill(0, 0, 64, 68, 'rgba(' + (rnd() > .48 ? '29,41,53' : '240,219,187') + ',' + (.025 + rnd() * .095) + ')');
+            if ((x*3+y*7+seed)%17===0) {
+                fill(2.8,3,59,63, 'rgba(197,191,166,.32)');
+                fill(3,3,59,1.1,'rgba(219,210,190,.65)');
+            }
             fill(0, 0, 64, 1.5, '#535e6a');
             fill(0, 1.5, 64, .9, 'rgba(205,203,190,.56)');
             fill(0, 0, 1.4, 68, '#56616c');
@@ -705,6 +724,22 @@ function garageDoor(bay) {
         }
     return texture(element);
 }
+function handTicket(item, price) {
+    const { context: c, element } = canvas(300, 150);
+    c.fillStyle='#dfd3ac';
+    c.fillRect(0,0,300,150);
+    c.strokeStyle='#a29a80'; c.lineWidth=2;
+    c.strokeRect(6,5,288,137);
+    c.translate(150,77); c.rotate(-.025); c.textAlign='center';
+    c.fillStyle='#474a72';
+    c.font='italic 29px Georgia, serif';
+    c.fillText(item,0,-15,274);
+    c.font='bold italic 47px Georgia, serif';
+    c.fillText(price+' ₽',0,42,264);
+    const map=texture(element);
+    map.userData.signText=item+' · '+price+' ₽';
+    return map;
+}
 function signTexture(title, sub, ink, back, ratio, number = '') {
     const w = 768, h = Math.max(110, Math.round(w / ratio)), { context: c, element } = canvas(w, h);
     c.fillStyle = back;
@@ -735,100 +770,44 @@ function signTexture(title, sub, ink, back, ratio, number = '') {
     map.userData.signText = [title, sub, number].filter(Boolean).join(' · ');
     return map;
 }
-function opticMural() {
-    const { context: c, element } = canvas(512, 600), rnd = random(2407);
-    c.fillStyle = '#254c54';
+function tramMosaic() {
+    const { context: c, element } = canvas(512, 600), rnd = random(1986);
+    c.fillStyle = '#d2c6a6';
     c.fillRect(0, 0, 512, 600);
-    c.fillStyle = '#2d5660';
-    c.fillRect(21, 18, 470, 564);
-    c.strokeStyle = '#6b9790';
-    c.lineWidth = 2;
-    c.strokeRect(32, 29, 448, 542);
-    for (let i = 0; i < 1100; i++) {
-        c.fillStyle = i % 2 ? 'rgba(211,219,181,.07)' : 'rgba(12,29,40,.12)';
-        c.fillRect(21 + rnd() * 471, 20 + rnd() * 562, 1 + rnd() * 4, 1 + rnd() * 2);
+    const shades = ['#a7b7ad', '#8caaad', '#789298', '#d6bf96'];
+    for (let i = 0; i < 4; i++) {
+        c.fillStyle = shades[i];
+        c.fillRect(14, 20 + i * 105, 484, 115);
     }
-    c.fillStyle = '#a8c8b6';
-    c.font = 'bold 24px K77Display';
-    c.fillText('ГОРОДСКАЯ ОПТИКА', 52, 80);
-    c.textAlign = 'right';
-    c.fillStyle = '#f2b76f';
-    c.fillText('24', 460, 80);
-    c.textAlign = 'left';
-    const cx = 256, cy = 278;
-    c.lineCap = 'round';
-    c.lineJoin = 'round';
-    c.strokeStyle = '#a4e1cb';
-    c.lineWidth = 19;
-    c.beginPath();
-    c.moveTo(54, cy);
-    c.bezierCurveTo(152, 145, 335, 128, 457, cy);
-    c.bezierCurveTo(344, 408, 167, 427, 54, cy);
-    c.closePath();
+    // The pale winter sun, truss bridge and two-colour tram form three bands of colour.
+    c.fillStyle = '#dfb46e'; c.beginPath(); c.arc(364, 101, 48, 0, 2 * Math.PI); c.fill();
+    c.fillStyle = '#677672';
+    for (let n = 0; n < 9; n++) {
+        const h = 30 + rnd() * 68;
+        c.fillRect(14 + n * 56, 236 - h, 34 + rnd() * 17, h);
+    }
+    c.fillStyle = '#718d96'; c.fillRect(14, 312, 484, 140);
+    c.fillStyle = '#3f514f'; c.fillRect(14, 300, 484, 16);
+    c.strokeStyle = '#556961'; c.lineWidth = 11; c.beginPath();
+    c.moveTo(14, 298);
+    for (let n = 1; n <= 10; n++) c.lineTo(14 + n * 48, n % 2 ? 361 : 298);
     c.stroke();
-    c.fillStyle = '#21444d';
-    c.beginPath();
-    c.arc(cx, cy, 103, 0, 2 * Math.PI);
-    c.fill();
-    c.lineWidth = 15;
-    c.strokeStyle = '#75c5b5';
-    c.stroke();
-    for (let i = 0; i < 16; i++) {
-        const a = i * Math.PI / 8;
-        c.strokeStyle = i % 4 ? '#4c8c89' : '#e8b479';
-        c.lineWidth = i % 4 ? 4 : 7;
-        c.beginPath();
-        c.moveTo(cx + Math.cos(a) * 88, cy + Math.sin(a) * 88);
-        c.lineTo(cx + Math.cos(a) * 75, cy + Math.sin(a) * 75);
-        c.stroke();
-    }
-    c.strokeStyle = '#edb473';
-    c.lineWidth = 11;
-    c.beginPath();
-    c.arc(cx, cy, 57, -.72, 5.12);
-    c.stroke();
-    c.fillStyle = '#94dfcd';
-    c.beginPath();
-    c.arc(cx, cy, 35, 0, 2 * Math.PI);
-    c.fill();
-    c.fillStyle = '#e0f3dc';
-    c.beginPath();
-    c.arc(cx + 10, cy - 13, 9, 0, 2 * Math.PI);
-    c.fill();
-    c.strokeStyle = '#bb9c73';
-    c.lineWidth = 5;
-    for (const s of [-1, 1]) {
-        c.beginPath();
-        c.moveTo(cx + s * 61, cy - 100);
-        c.lineTo(cx + s * 105, cy - 143);
-        c.lineTo(cx + s * 143, cy - 143);
-        c.stroke();
-        c.fillStyle = '#ebc28b';
-        c.beginPath();
-        c.arc(cx + s * 146, cy - 143, 6, 0, 2 * Math.PI);
-        c.fill();
-        c.beginPath();
-        c.moveTo(cx + s * 91, cy + 94);
-        c.lineTo(cx + s * 125, cy + 125);
-        c.lineTo(cx + s * 161, cy + 125);
-        c.stroke();
-    }
-    c.fillStyle = '#9bdbbf';
-    c.font = 'bold 45px K77Display';
-    c.fillText('СЕРВИС ЗРЕНИЯ', 49, 492, 414);
-    c.fillStyle = '#e0b881';
-    c.font = 'bold 21px K77Display';
-    c.fillText('РЕМОНТ СЕНСОРОВ', 51, 533);
-    for (let i = 0; i < 7; i++) {
-        c.fillStyle = i < 4 ? '#b9976e' : '#638784';
-        c.fillRect(338 + i * 16, 515, 9, 17);
-    }
-    for (const x of [30, 482])
-        for (const y of [27, 574]) {
-            c.fillStyle = '#aab3a5';
-            c.beginPath();
-            c.arc(x, y, 3.7, 0, Math.PI * 2);
-            c.fill();
+    c.fillStyle = '#d4c39b'; c.fillRect(101, 221, 273, 69);
+    c.fillStyle = '#9b553d'; c.fillRect(101, 269, 273, 22);
+    c.fillStyle = '#485d59';
+    for (let n = 0; n < 7; n++) c.fillRect(109 + n * 38, 231, 31, 29);
+    c.fillStyle = '#ebe0bb'; c.font = 'bold 24px sans-serif'; c.fillText('07', 346, 251, 24);
+    c.strokeStyle = '#4a5651'; c.lineWidth = 5; c.beginPath();
+    c.moveTo(195, 221); c.lineTo(226, 194); c.lineTo(247, 209); c.lineTo(225, 221); c.stroke();
+    c.fillStyle = '#d4c39b'; c.fillRect(14, 452, 484, 128);
+    c.fillStyle = '#485950'; c.font = 'bold 34px sans-serif'; c.fillText('ВАГОННЫЙ МОСТ', 35, 508, 442);
+    c.font = '22px sans-serif'; c.fillText('КАНАЛЬСК   ·   1986', 37, 548);
+    for (let y = 0; y < 600; y += 8) {
+        for (let x = (y % 16 ? -4 : 0); x < 512; x += 10) {
+            c.fillStyle = rnd() > .52 ? 'rgba(255,244,206,.08)' : 'rgba(53,45,31,.10)';
+            c.fillRect(x, y, 9, 7);
+            c.fillStyle = 'rgba(120,111,90,.28)'; c.fillRect(x, y + 7, 10, 1); c.fillRect(x + 9, y, 1, 7);
         }
+    }
     return texture(element);
 }

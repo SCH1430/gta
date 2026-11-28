@@ -2,6 +2,7 @@
 const T = require("../engine/three.module.min.js");
 const { snowRoofAt } = require("./camera-volume.js");
 const { groundHeight } = require("./world-layout.js");
+const { bridges, canal } = require('./world-expansion-layout.js');
 const { specs } = require("./vehicle-cabin.js");
 
 function softFlake() {
@@ -67,22 +68,25 @@ function createSnowfall(scene, budget) {
     });
     const pose = new T.Object3D(), forward = new T.Vector3(), ink = new T.Color();
     const shade = new T.Color(), shadeNight = new T.Color('#aab8cc'), shadeDay = new T.Color('#e2e9ee');
-    const streetInk = new T.Color('#ffdfa4'), crossingInk = new T.Color('#dcf0ff');
+    const streetInk = new T.Color('#ffdfa4'), crossingInk = new T.Color('#eeeae1');
     const nearbyCars = [];
     let driftX = 0, driftZ = 0, drop = 0;
     return function update(dt, now, camera, weather, limits, daylight, lamps, cars) {
-        const total = weather.snow > .015 ? Math.min(budget,Math.ceil(limits.flakes * weather.snow)) : 0;
+        const eye = camera.position;
+        const crossing = eye.z >= canal.north && eye.z <= canal.south && bridges.some(b => Math.abs(eye.x - b.x) < 8);
+        const courtyard = eye.x > -42 && eye.x < 0 && eye.z > -17 && eye.z < 18;
+        const windExposure = crossing ? 1.35 : courtyard ? .55 : 1;
+        const total = weather.snow > .015 ? Math.min(budget,Math.ceil(limits.flakes * weather.snow * windExposure)) : 0;
         if (!total) { near.visible = far.visible = false; return; }
         const nearTarget = Math.ceil(total*.44);
         const wet = Math.min(1,Math.max(0,weather.wetSnow ?? 0));
-        driftX += weather.gustX*3.65*dt; driftZ += weather.gustZ*3.65*dt;
+        driftX += weather.gustX*windExposure*3.65*dt; driftZ += weather.gustZ*windExposure*3.65*dt;
         drop += dt*(1+wet*.70);
         shade.copy(shadeNight).lerp(shadeDay,daylight);
         near.material.opacity = .72 + .16 * weather.snow;
         far.material.opacity = .44 + weather.snow * .28;
         far.material.size = .083 + .031 * wet;
         camera.getWorldDirection(forward);
-        const eye = camera.position;
         nearbyCars.length = 0;
         for (const car of cars) {
             if (Math.abs(car.x-eye.x)<32 && Math.abs(car.z-eye.z)<32 && specs[car.kind])

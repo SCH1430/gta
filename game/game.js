@@ -133,6 +133,12 @@ async function start(boot, listen) {
     canvas.insertAdjacentElement('afterend', threshold);
     const follow = new camera_js_1.FollowCamera(Number.isFinite(saved?.yaw) ? saved.yaw : sim.hero.yaw);
     const camera = follow.camera;
+    const guidePhoto = require('./notebook-atlas.js').createGuidePhotos(renderer, canvas, scene, world, camera,
+        () => sim.home.inside && house ? house.scene : scene);
+    const { ShiftJournal } = require('./shift-journal.js');
+    let journal = new ShiftJournal(saved?.shiftJournal);
+    const firstMarket = { x:30, z:26, label:'Прилавок Инны' };
+    const campaignPay = sim_js_1.campaign.map(order => order.reward);
     let portrait = null;
     const portraitEye = new THREE.Vector3(), portraitDirection = new THREE.Vector3(), framing = new THREE.Vector3();
     let previousPortrait = null;
@@ -162,12 +168,15 @@ async function start(boot, listen) {
             return true;
         },
         weather:conditions ?? (0, weather_js_1.weatherAt)(sim.elapsed, clockMinutes()),
-        scene, camera, ui, world, follow, hero, people, cars, audio, garage, jobs, parcels, zone:sim.home.zone, indoorScene:house?.scene, interiorScene:house?.scene
+        scene, camera, ui, world, follow, guidePhoto, hero, people, cars, audio, garage, jobs, parcels, zone:sim.home.zone, indoorScene:house?.scene, interiorScene:house?.scene
     }), () => persist());
     districtPlay.restore(saved?.districtPlay);
     ui.update({ districtDestinations: districtPlay.destinations });
     audio.onDialogueResume = text => ui.notify(text);
-    audio.onDistrictBulletin = text => ui.notify(text);
+    audio.onDistrictBulletin = text => {
+        journal.add('Депо · эфир', text, calendarMinutes());
+        ui.notify(text);
+    };
     const hud = document.querySelector('#hud');
     const showSound = (0, sound_guide_js_1.createSoundGuide)(hud);
     const soundCaptions = new sound_captions_js_1.SoundCaptions();
@@ -215,7 +224,7 @@ async function start(boot, listen) {
     applyPopulationSettings();
     if (!storage_js_1.canSaveGame())
         ui.notify('Не удалось загрузить профиль. Автосохранение приостановлено. Откройте «Сохранения и диагностика».');
-    const snapshot = () => mainSession ? { ...mainSession, settings: { ...ui.settings }, graphics: graphics.mode } : ({ version: 1, game: sim.snapshot(), settings: { ...ui.settings }, yaw: follow.yaw, districtJobs: jobs.save(), outerTour: tour.save(), garage: garage.save(), parcels: parcels.save(), districtPlay: districtPlay.save(), graphics: graphics.mode });
+    const snapshot = () => mainSession ? { ...mainSession, settings: { ...ui.settings }, graphics: graphics.mode } : ({ version: 1, game: sim.snapshot(), settings: { ...ui.settings }, yaw: follow.yaw, districtJobs: jobs.save(), outerTour: tour.save(), garage: garage.save(), parcels: parcels.save(), districtPlay: districtPlay.save(), shiftJournal: journal.save(), graphics: graphics.mode });
     const jobFrame = (dt = 0) => ({ x: sim.player.x, z: sim.player.z, yaw: follow.yaw, space: sim.home.zone, car: sim.activeCar() ?? null, vehicles: sim.cars, busy: !!sim.transition || !!sim.home.door || sim.tramRider.onboard, wanted: sim.wanted, elapsed: sim.elapsed, clockMinutes: clockMinutes(), heroSpeed: sim.player.speed, heroY: sim.player.y, tramTime: sim.tramTime, campaignMission: sim.mission, cargo: sim.cargoRail.passage, dt });
     const trialCamera = new THREE.PerspectiveCamera();
     const sampleHome = new residence_js_1.Residence();
@@ -286,6 +295,13 @@ async function start(boot, listen) {
     ui.registerPanel('fleet', 'Автопарк', () => (0, fleet_guide_js_1.fleetGuide)(sim.cars, sim.player, sim.driven));
     ui.registerPanel('district-jobs', 'Заказы района', () => (0, story_ui_js_1.jobBoard)(jobs, jobFrame()));
     const escaped = (v) => v.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    const callsigns = ['Депо', 'Участок', 'Вышка'];
+    let radioChannel = 0, radioAnswer = '';
+    ui.registerPanel('shift-radio', 'Рация смены', () => {
+        const reply = radioAnswer ? '<p role="status">'+escaped(radioAnswer)+'</p>' : '';
+        return '<div class="k-radio-lcd"><span>КАНАЛ 0'+(radioChannel + 1)+'</span><strong>'+callsigns[radioChannel]+'</strong></div>'+reply+
+            '<div class="k-list"><button class="k-panel-row" data-action="shift-tune">Сменить канал</button><button class="k-panel-row" data-action="shift-call">Нажать тангенту · запросить сводку</button></div>';
+    });
     ui.registerPanel('reports', 'Сводка дежурной смены', () => sim.cityLife.incidents.length ? sim.cityLife.incidents.slice().reverse().map(i => '<p>' + escaped(i.text) + '</p>').join('') : '<p>В районе пока спокойно.</p>');
     if (storage_js_1.recoveryNotice)
         ui.notify(storage_js_1.recoveryNotice);
@@ -300,10 +316,17 @@ async function start(boot, listen) {
         });
     }
     let audioStarted = false;
+    function phoneSignal() {
+        audio.tone(165, 135, .11, .065, 'triangle');
+        audio.tone(165, 135, .11, .055, 'triangle', .18);
+        ui.messageFeedback();
+    }
     function unlock() {
         audio.unlock();
-        if (!audioStarted && sim.mission === 0 && sim.stage === 0)
-            audio.voice('order');
+        if (!audioStarted && !mainSession && sim.mission === 0 && sim.stage === 0) {
+            phoneSignal();
+            ui.notify('Канальск · февраль 2022. Семён оставил сообщение о последнем рейсе.');
+        }
         audioStarted = true;
     }
     window.addEventListener('pointerdown', unlock, { capture: true });
@@ -346,6 +369,22 @@ async function start(boot, listen) {
     }
     function action(id, value) {
         if (id.startsWith('district:') && districtPlay.act(id)) return;
+        if (id === 'shift-tune' || id === 'shift-call') {
+            if (id === 'shift-tune') { radioChannel = (radioChannel + 1) % callsigns.length; radioAnswer = ''; }
+            else {
+                const rail = (0, world_railway_js_1.linePose)(sim.tramTime);
+                const weather = (0, weather_js_1.weatherAt)(sim.elapsed,clockMinutes());
+                const bulletins = districtPlay.radio();
+                radioAnswer = radioChannel === 0 ? (rail.visible ? 'Вагон на линии. ' + sim.tramRider.stopName(sim.tramTime) : 'Вагон сейчас в депо.') :
+                    radioChannel === 1 ? (bulletins.find(b => b.subtitle)?.subtitle || 'Текущий участок · ' + sim.district()) :
+                    'По метеопосту ' + Math.round(weather.temperature) + ' °C.';
+                audio.burst(2100,.055,.07);
+                audio.tone(640,600,.08,.035,'sine',.12);
+                journal.add(callsigns[radioChannel]+' · эфир',radioAnswer,calendarMinutes());
+            }
+            ui.refreshPanel();
+            return;
+        }
         if (id === 'quarter-trial') {
             startQuarterTrial();
             return;
@@ -406,6 +445,7 @@ async function start(boot, listen) {
                 parcels = new parcel_hands_js_1.ParcelHands();
                 garage.setTime(Math.round(ride.hour * 60), (0, city_clock_js_1.districtMinutes)(ride.sim.elapsed));
                 districtPlay.restore();
+                journal = new ShiftJournal({ opening:3 });
                 swapWorld(ride.sim);
                 return;
             }
@@ -417,6 +457,7 @@ async function start(boot, listen) {
                 garage = new garage_log_js_1.GarageLog(original.garage, original.game.savedCar?.id);
                 parcels = new parcel_hands_js_1.ParcelHands(original.parcels);
                 districtPlay.restore(original.districtPlay);
+                journal = new ShiftJournal(original.shiftJournal);
                 swapWorld(new sim_js_1.Simulation(original.game), original.yaw);
                 return;
             }
@@ -573,7 +614,7 @@ async function start(boot, listen) {
             return;
         }
         if (id.startsWith('home:')) {
-            const r = sim.home.act(id, sim.hero, sim.elapsed, p => (0, collision_js_1.clearDisc)(p, .31, (0, world_layout_js_1.groundHeight)(p.x, p.z), sim.cars) && !sim.people.some(n => !n.onboard && Math.hypot(n.x - p.x, n.z - p.z) < .55), clockMinutes());
+            const r = sim.home.act(id, sim.hero, sim.elapsed, p => (0, collision_js_1.clearDisc)(p, .31, (0, world_layout_js_1.groundHeight)(p.x, p.z), sim.cars) && !sim.people.some(n => !n.onboard && Math.hypot(n.x - p.x, n.z - p.z) < .55), calendarMinutes());
             if (r) {
                 if ('untilHour' in r && typeof r.untilHour === 'number')
                     garage.setTime(r.untilHour * 60, clockMinutes());
@@ -768,6 +809,8 @@ async function start(boot, listen) {
                 const person = sim.people.find(p => p.id === speaker);
                 const position = person ? (0, blackout_js_1.soundDirection)('voice', { ...sim.player, yaw: soundBearing() }, person, 20) : undefined;
                 const scene = { phone: !!position && position.distance > 5.2, pan: position?.pan, distance: position?.distance, subtitle };
+                if (scene.phone && journal.add(event.who || 'Диспетчер', event.text, calendarMinutes(), true))
+                    phoneSignal();
                 if (clip)
                     audio.voice(clip, speaker, scene);
                 if (person && clip && !(0, dialogue_js_1.dialogueDelivery)(clip, scene).phone && !sim.home.inside && !sim.driven && (position?.distance ?? Infinity) < 3.2)
@@ -805,7 +848,7 @@ async function start(boot, listen) {
         if (districtPlay.lookout)
             return districtPlay.actions();
         const base = sim.interactionOptions().map(label => ({ id: 'interact', label, value: label }));
-        const more = sim.driven || sim.transition || sim.tramRider.onboard ? [] : sim.home.options(sim.hero, sim.elapsed, clockMinutes());
+        const more = sim.driven || sim.transition || sim.tramRider.onboard ? [] : sim.home.options(sim.hero, sim.elapsed, calendarMinutes());
         const stop = availableTourStop(), visit = stop && tour.canInteract(tourFrame()) ? [{ id: 'tour-check', label: stop.action }] : [];
         const carry = sim.driven || sim.transition || sim.home.inside || sim.tramRider.onboard ? [] : parcels.actions(sim.hero, sim.cars, parcelRear, storyBlock());
         const rest = canWait() ? [{ id: 'rest-hour', label: 'Подождать час' }] : [];
@@ -831,7 +874,8 @@ async function start(boot, listen) {
         const pursuitInfo = sim.pursuitStatus;
         showRoadAdvisory(active ? (0, road_advisory_js_1.roadAhead)(active, conditions, sim.cargoRail.blocksTraffic(active)) : '');
         const description = pursuitInfo.vehicle;
-        ui.update({ tramTime: sim.tramRider.onboard ? sim.tramTime : null,
+        if (!mainSession && journal.order(sim.mission, calendarMinutes()) && audioStarted) phoneSignal();
+        ui.update({ shiftMessages: journal.messages, campaignPay, campaignStage:sim.stage, tramTime: sim.tramRider.onboard ? sim.tramTime : null,
             pursuitVehicle: description ? { name: vehicle_cabin_js_1.vehicleNames[description.kind], color: description.color, abandoned: description.abandoned } : undefined, pursuitOnFoot: pursuitInfo.onFoot, campaignObjective, sidePanel: stop ? 'outer-tour' : undefined, sideStage: stop ? { step: tour.stage + 1, total: tour.total } : jobs.active ? { step: jobs.active.stage + 1, total: (0, story_catalog_js_1.districtJob)(jobs.active.id).steps.length } : undefined, archiveMap: sim.home.archiveMap, actions: opts, clock, interiorId: sim.home.zone, interiorPlan: sim.home.inside ? (0, interior_layout_js_1.interiorAtlas)(sim.home.zone) : undefined, cockpit: !!active && sim.motorPool.cockpit, inside: sim.home.inside, x: sim.player.x, z: sim.player.z, heading: sim.player.yaw, driving: !!active, money: sim.money, wanted: sim.wanted, missionIndex: sim.mission,
             missionTitle: objective.title, objective: objective.goal, reward: objective.reward, hint: opts[0]?.label, target: targetPoint(), district: sim.district(),
             search: sim.search, pursuit: pursuitInfo, population: sim.home.inside ? null : sim.populationStatus, lastContact: pursuitInfo.lastSeen, police: sim.wanted ? [...sim.cars.filter(patrolLight), ...sim.footPatrols] : [], atGarage: sim.atGarage(), speed: active?.speed ?? 0,
@@ -875,6 +919,7 @@ async function start(boot, listen) {
                 drive: sim.activeCar() ? { yaw: sim.activeCar().yaw, speed: sim.activeCar().speed } : null
             }) });
     }
+    let soundedAtTurn = false;
     function updateAudio(dt, paused) {
         const c = sim.activeCar(), player = sim.player, conditions = (0, weather_js_1.weatherAt)(sim.elapsed, clockMinutes());
         if (!paused)
@@ -895,7 +940,7 @@ async function start(boot, listen) {
                 side = (dx * Math.cos(direction) - dz * Math.sin(direction)) / Math.max(range, .1);
             }
         const kit = c ? (0, vehicle_systems_js_1.equipment)(c) : undefined;
-        const road = c && kit ? {
+        const road = c && kit ? { vehicleId:c.id,
             kind: c.kind, surface: (0, weather_js_1.footstepSurface)((0, world_layout_js_1.surfaceAt)(c.x, c.z), c.x, c.z, conditions), accelerator: Number(ui.input.gas ?? 0), interior: sim.motorPool.cockpit, enclosure: sim.transition ? 0 : kit.windowsOpen ? .18 : sim.motorPool.cockpit ? 1 : .58,
             load: Math.min(1, (kit.load + kit.towedMass) / 600), punctures: kit.punctures, cargo: kit.cargo, turn: c.steer, shock: Math.min(1, kit.shock / 8),
             wearLeft: Math.max(kit.dents.leftSide ?? 0, kit.dents.frontLeft ?? 0, kit.dents.rearLeft ?? 0, kit.wheelDamage?.[0] ?? 0, kit.wheelDamage?.[2] ?? 0, kit.leftMirror ? .16 : 0),
@@ -904,7 +949,13 @@ async function start(boot, listen) {
         } : undefined;
         const power = (0, blackout_js_1.blackoutField)(jobs.blackoutPhase, listener.x, listener.z);
         const clue = (0, blackout_js_1.blackoutCues)(jobs.blackoutPhase, { ...listener, space: sim.home.zone }, sim.elapsed, sim.tramTime, nearbyPatrol);
-        const landmarks = paused ? [] : (0, local_soundscape_js_1.landmarkSoundField)(listener, sim.elapsed, conditions, power);
+        const soundMinutes = clockMinutes(), tramSoundPose = (0, world_railway_js_1.linePose)(sim.tramTime);
+        const enteringCurve = tramSoundPose.visible && Math.abs(tramSoundPose.speed) > 1 && tramSoundPose.z > 9 && tramSoundPose.z < 24;
+        if (!paused) {
+            if (enteringCurve && !soundedAtTurn) ringTram(tramSoundPose);
+            soundedAtTurn = enteringCurve;
+        }
+        const landmarks = paused ? [] : (0, local_soundscape_js_1.landmarkSoundField)(listener, sim.elapsed, conditions, power, soundMinutes, tramSoundPose);
         const cargoRail = sim.home.inside ? undefined : sim.cargoRail.soundAt({ ...player, yaw: direction }) ?? undefined;
         const sealed = sim.home.inside ? 1 - sim.home.open * .65 : road?.enclosure ?? 0;
         const dialogueNoise = (0, dialogue_js_1.dialogueNoiseAt)(listener, (0, world_railway_js_1.linePose)(sim.tramTime), cargoRail?.distance, Math.abs(cargoRail?.speed ?? 0) / 4, sealed);
@@ -924,6 +975,7 @@ async function start(boot, listen) {
             roomMix: sim.home.acoustics(sim.hero, sim.elapsed), broadcast: jobs.broadcast, archive: jobs.archive, townNews, districtRadio: districtPlay.radio,
             inside: sim.home.inside, tramTime: sim.tramTime, district: sim.district(), driving: !!c, speed: c?.speed ?? player.speed,
             wanted: sim.wanted, moving: Math.abs(player.speed) > .15, running: player.speed > 3.5, paused, road, weather: conditions,
+            minutes: soundMinutes, depotKeysReturned: !!sim.depotKeysReturned,
             pursuit: { tracking: sim.wanted > 0 && !sim.search, distance, side, phase: sim.pursuitStatus.phase }, soundGuide: clue.sources, blackout: power, landmarks, cargoRail, dialogueNoise });
     }
     document.addEventListener('visibilitychange', () => {
@@ -1060,12 +1112,12 @@ async function start(boot, listen) {
         const { frame, camera: shot, cars: vehicles, focus } = replay;
         const conditions = (0, weather_js_1.weatherAt)(frame.time, frame.clock);
         world.setTramCabin(false);
-        world.update(frame.time, frame.tram, focus, sim.brokenFixtures, frame.power, conditions.daylight);
+        world.update(frame.time, frame.tram, focus, sim.brokenFixtures, frame.power, conditions.daylight, frame.calendar ?? frame.clock);
         motorWorld.updateCrashDebris(replay.crashes, frame.time, focus);
         motorWorld.updateFences(frame.fences ?? sim.motorPool.props, frame.time);
         recordedFreight.restore(frame.freight);
         freightView.update(recordedFreight, frame.time, focus);
-        weather(dt, focus, !!frame.driven, vehicles, [], frame.time, shot, sim.brokenFixtures, graphics.quality, car => frame.cars.some(c => c.id === car.id && c.active), { weather: conditions, wanted: frame.wanted, fast: Math.abs(focus.speed) > 11, clock: frame.clock, blackout: frame.power });
+        weather(dt, focus, !!frame.driven, vehicles, [], frame.time, shot, sim.brokenFixtures, graphics.quality, car => frame.cars.some(c => c.id === car.id && c.active), { weather: conditions, wanted: frame.wanted, fast: Math.abs(focus.speed) > 11, clock: frame.calendar ?? frame.clock, blackout: frame.power });
         world.cull(shot);
         renderer.render(scene, shot);
         replayView.afterDraw();
@@ -1103,7 +1155,7 @@ async function start(boot, listen) {
         follow.look(look.x, look.y);
         const input = { ...ui.input, cameraYaw: follow.yaw, populationYaw: follow.yaw + (ui.input.rear ? Math.PI : 0) };
         const before = { x: sim.player.x, z: sim.player.z }, wasDriving = sim.activeCar(), zoneBefore = sim.home.zone;
-        sim.clockOffset = garage.wait;
+        sim.clockOffset = garage.calendarWait;
         sim.tick(dt, input);
         prunePopulationModels();
         if (!sim.tramRider.onboard && !sim.transition && zoneBefore === sim.home.zone) {
@@ -1136,6 +1188,21 @@ async function start(boot, listen) {
         world.setTramCabin(sim.tramRider.onboard);
         const floor = inside ? indoorFloor : heroFloor, conditions = (0, weather_js_1.weatherAt)(sim.elapsed, clockMinutes());
         districtPlay.update(dt, conditions);
+        const opening = !mainSession && journal.walk(sim, calendarMinutes());
+        if (opening) {
+            if (opening.route) {
+                if (opening.text) phoneSignal();
+                ui.openingRoute(firstMarket, sim.player);
+            }
+            if (opening.bell) {
+                const turn = { x:17, z:15 };
+                const direction = (0, blackout_js_1.soundDirection)('bell', { ...sim.player, yaw:soundBearing() }, turn, 45);
+                audio.tramBell(direction.pan, .45);
+                soundCaptions.pulse('bell', sim.elapsed, turn);
+            }
+            if (opening.arrived) ui.clearRoute(firstMarket);
+            if (opening.text) ui.notify(opening.text);
+        }
         const streetLookout = districtPlay.lookout, lookout = streetLookout ?? sim.home.lookout;
         const outside = !inside || !!lookout, focus = lookout ? { ...lookout, speed: 0 } : p;
         const transfer = sim.transition, exchange = sim.handoffRole;
@@ -1162,7 +1229,9 @@ async function start(boot, listen) {
                 if (!inside)
                     tracks.footprint(sole, sim.elapsed);
                 const schoolPlan = inside && interior_layout_js_1.annexes[sim.home.zone];
-                const indoorSurface = schoolPlan?.number ? (schoolPlan.number === 1 ? 'school-tile' : 'school-vinyl') : 'concrete';
+                const mat = inside && (sim.home.zone === 'house' && sole.y < .45 && Math.abs(sole.x+.85)<.82 && sole.z>5.68 ||
+                    schoolPlan?.number === 1 && Math.hypot(sole.x-schoolPlan.entrance.x,sole.z-schoolPlan.entrance.z)<1.15);
+                const indoorSurface = mat ? 'rubber' : schoolPlan?.number ? (schoolPlan.number === 1 ? 'school-tile' : 'school-vinyl') : 'concrete';
                 audio.footstep(inside ? indoorSurface : (0, weather_js_1.footstepSurface)((0, world_layout_js_1.surfaceAt)(sole.x, sole.z), sole.x, sole.z, conditions), p.speed > 3.5);
             }
         }
@@ -1276,13 +1345,13 @@ async function start(boot, listen) {
         if (inside)
             house.update(dt, sim.home.open, sim.home, sim.cars, sim.mission, sim.elapsed, sim.tramTime, jobs.effects);
         if (outside) {
-            explore.update(sim.elapsed, sim.home, focus, sim.tramTime, sim.cars, sim.cityTraffic, sim.cityMinutes);
+            explore.update(sim.elapsed, sim.home, focus, sim.tramTime, sim.cars, sim.cityTraffic, sim.cityCalendarMinutes, sim.stage === 0 && (sim.mission === 0 || sim.mission === 2));
             const shutter = garage.shutter === undefined ? sim.cityLife.shutter : Number(garage.shutter);
             roll = THREE.MathUtils.damp(roll, shutter, 5.2, dt);
             crew.update(sim.cityLife.repair, sim.elapsed, roll);
             motorWorld.update(sim, dt);
             tracks.update(sim.elapsed, focus, sim.cars, graphics.quality, conditions);
-            if (world.update(sim.elapsed, sim.tramTime, focus, sim.brokenFixtures, jobs.blackoutPhase, conditions.daylight).bell)
+            if (world.update(sim.elapsed, sim.tramTime, focus, sim.brokenFixtures, jobs.blackoutPhase, conditions.daylight, calendarMinutes(), conditions.wet).bell)
                 ringTram(rail);
             freightView.update(sim.cargoRail, sim.elapsed, focus);
         }
@@ -1357,7 +1426,7 @@ async function start(boot, listen) {
         if (contactShadow.root.visible)
             contactShadow.update(hero.getFootContacts(), hero.root.scale.x, floor);
         if (outside)
-            weather(dt, focus, !!car || !!lookout || sim.tramRider.onboard, sim.cars, sim.people, sim.elapsed, camera, sim.brokenFixtures, graphics.quality, patrolLight, { weather: conditions, wanted: sim.wanted, fast: Math.abs(car?.speed ?? 0) > 11, clock: clockMinutes(), blackout: jobs.blackoutPhase });
+            weather(dt, focus, !!car || !!lookout || sim.tramRider.onboard, sim.cars, sim.people, sim.elapsed, camera, sim.brokenFixtures, graphics.quality, patrolLight, { weather: conditions, wanted: sim.wanted, fast: Math.abs(car?.speed ?? 0) > 11, clock: calendarMinutes(), blackout: jobs.blackoutPhase });
         updateAudio(dt, false);
         if (now - lastHud >= 100) {
             syncHUD();
@@ -1381,7 +1450,7 @@ async function start(boot, listen) {
         if (outside)
             world.cull(camera);
         if (!inside && !sim.tramRider.onboard)
-            recorder.capture({ time: sim.elapsed, clock: clockMinutes(), tram: sim.tramTime, wanted: sim.wanted,
+            recorder.capture({ time: sim.elapsed, clock: calendarMinutes(), tram: sim.tramTime, wanted: sim.wanted,
                 power: jobs.blackoutPhase, freight: sim.cargoRail.poses.length ? sim.cargoRail.save() : undefined, hero: sim.hero, driven: sim.driven, transfer: sim.transition, cars: sim.cars, people: sim.people, props: sim.motorPool.props, patrol: patrolLight, signal: trafficLight, impacts: replayImpacts, impactLean: c => sim.impactLean(c) });
         replayImpacts.length = 0;
         const drawStart = performance.now();

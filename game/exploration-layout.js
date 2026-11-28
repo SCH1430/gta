@@ -6,6 +6,7 @@ exports.marketPassBlocked = marketPassBlocked;
 const city_clock_js_1 = require("./city-clock.js");
 const { river, metal } = require('./venue-layout.js');
 exports.entrances = {
+    ...Object.fromEntries(Object.entries(require('./neighborhood-shops.js').shops).map(([zone, shop]) => [zone, { x: shop.x, z: shop.z, yaw: shop.yaw, label: shop.label, zone }])),
     school1: require('./school-site.js').schoolOutside,
     house: { x: -34.96, z: 17, yaw: Math.PI, zone: 'house', label: 'Дом № 23' },
     workshop: { x: 28, z: 14.82, yaw: 0, zone: 'workshop', label: 'Мастерская Инны' },
@@ -18,17 +19,20 @@ exports.entrances = {
     'metal-hall': metal.door,
     passage: { x: -34.96, z: 3.4, yaw: Math.PI, zone: 'passage', label: 'Сквозной проход дома № 23' }
 };
-exports.serviceEntries = ['taxipark', 'cafe', 'terminal', 'hydro', 'river-station', 'metal-hall', 'school1'];
+exports.serviceEntries = ['taxipark', 'cafe', 'terminal', 'hydro', 'river-station', 'metal-hall', 'school1', ...Object.keys(require('./neighborhood-shops.js').shops)];
 exports.passageFront = { x: -33.1, z: 16.95, yaw: 0 };
 exports.bankFinds = [
     { id: 'box', x: -115, z: 72.8, name: 'Ящик рыбака', description: 'В жестяном ящике — пробковый поплавок, карта глубин и билет на старый трамвай.' },
-    { id: 'flood', x: -33.70, z: 79.8, name: 'Отметки паводка', description: 'На столбе три риски. Верхняя подписана «Май 2064». Ниже — след талой воды.' },
+    { id: 'flood', x: -33.70, z: 79.8, name: 'Отметки паводка', description: 'На столбе три риски. Верхняя подписана «Май 1999». Ниже — след талой воды.' },
     { id: 'pump', x: 35.5, z: 70, name: 'Люк старой насосной', description: 'Под закрытым люком гудит вода. На табличке сохранился номер шлюза.' }
 ];
 exports.marketTables = [54, 64, 73].map(x => ({ x, z: 14.7, w: .92, d: 1.9, h: .87 }));
 const empty = [];
-function marketLayouts(elapsed) { const minute = (0, city_clock_js_1.districtMinutes)(elapsed); return minute >= 8 * 60 && minute < 20 * 60 ? exports.marketTables : empty; }
-function marketPassBlocked(x, z, r, elapsed) { return marketLayouts(elapsed).some(p => Math.abs(x - p.x) < p.w / 2 + r && Math.abs(z - p.z) < p.d / 2 + r); }
+const { marketOpen } = require('./market-hours.js');
+function marketLayouts(elapsed, calendar = (0, city_clock_js_1.districtCalendarMinutes)(elapsed)) {
+    return marketOpen(calendar) ? exports.marketTables : empty;
+}
+function marketPassBlocked(x, z, r, elapsed, calendar) { return marketLayouts(elapsed, calendar).some(p => Math.abs(x - p.x) < p.w / 2 + r && Math.abs(z - p.z) < p.d / 2 + r); }
 exports.swapCabinet = { x: -38.2, z: 17.1 };
 exports.entranceIntercom = { x: -34.01, z: 16.53 };
 exports.explorationObstacles = [

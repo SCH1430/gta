@@ -217,7 +217,13 @@ function districtLots() {
     placeFrontages(lots, true);
     return lots;
 }
-exports.regionBuildings = districtLots().map(schoolSite.accommodateCampus);
+function outerHousing(lot, index) {
+    if (lot.name || !['northpark','water','mill'].includes(lot.district) ||
+        Math.max(Math.abs(lot.x),Math.abs(lot.z)) < 330 || index%4 > 1) return lot;
+    return index%4===0 ? {...lot, kind:'cottage',w:Math.min(lot.w,10),d:Math.min(lot.d,8.5),h:3.15}
+        : {...lot, kind:'garages',d:Math.min(lot.d,7.3),h:2.80};
+}
+exports.regionBuildings = districtLots().map(schoolSite.accommodateCampus).map(outerHousing);
 exports.regionObstacles = [...exports.regionBuildings, ...exports.regionSites, ...outer_site_layout_js_1.outerSiteProps, ...schoolSite.schoolShell, schoolSite.schoolBench, schoolSite.schoolPlanter];
 const rowOfLights = (z, xs) => xs.map(x => ({ x, z, face: 0 }));
 const sideLights = (x, zs, face) => zs.map(z => ({ x, z, face }));

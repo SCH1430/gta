@@ -36,6 +36,35 @@ test('the venue entrances, interior saves and exits work with real collision', (
     }
 });
 
+test('neighborhood shops can be reached on foot, entered, saved and left at their own door', () => {
+    const { shops } = require('../game/neighborhood-shops.js');
+    const { routeTo } = require('../game/ui-navigation.js');
+    const { annexes, annexAt } = require('../game/interior-layout.js');
+    const clear = p => clearDisc(p, .31, groundHeight(p.x,p.z), []);
+    for (const [zone,shop] of Object.entries(shops)) {
+        const dest = routeTo({x:-32,z:28}, shop, 'walk').path.at(-1);
+        assert.ok(Math.hypot(dest.x-shop.x,dest.z-shop.z)<=1.5,shop.label);
+        const street={...shop}, home=new Residence();
+        assert.ok(clear(street),zone);
+        assert.equal(home.act('home:door-'+zone,street,0,clear,17*60).text,shop.label);
+        assert.equal(annexAt(annexes[zone].entrance.x),zone);
+        const saved=new Residence();
+        saved.restore(home.save());
+        assert.equal(saved.zone,zone);
+        assert.ok(saved.act('home:exit-annex',street,0,clear,17*60));
+        assert.deepEqual([street.x,street.z],[shop.x,shop.z]);
+    }
+});
+
+test('market tables follow the Friday and weekend opening hours after waiting', () => {
+    const {marketLayouts,marketPassBlocked}=require('../game/exploration-layout.js');
+    const friday=390, saturday=1440+390;
+    assert.equal(marketLayouts(0,friday).length,0);
+    const [table]=marketLayouts(0,saturday);
+    assert.equal(marketPassBlocked(table.x,table.z,.31,0,saturday),true);
+    assert.equal(marketPassBlocked(table.x,table.z,.31,0,saturday-390+1080),false);
+});
+
 test('a delayed river service sends passengers to their actual replacement stops', () => {
     const { venues, context, notices, notes, pins } = fixture(river.door.zone, river.passengers[0]);
     venues.act('schedule', context);

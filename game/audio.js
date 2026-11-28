@@ -83,6 +83,15 @@ function shoeSample(ctx, surface, variant) {
                 value = .19 * thud + .11 * skid * tread + .34 * (high * grains + (mid - low) * .4) * tread;
                 break;
             }
+            case 'grit': {
+                grains = grains*.82 + (noise>.91 ? .44 : 0);
+                value = .16*thud + (.12*mid + .49*grains*high)*tread;
+                break;
+            }
+            case 'rubber': {
+                value = .27*thud + .15*low*tread + .029*mid*roll;
+                break;
+            }
             case 'wet': {
                 const splash = .36 * high * (tread + .5 * Math.exp(-t * 21) * attack) * (.63 + .37 * Math.sin(8 * tau * 11));
                 value = .13 * thud + .65 * splash + .28 * low * tread;
@@ -316,7 +325,7 @@ class GameAudio {
         if (!pending) {
             pending = name === 'dk-metal-theme'
                 ? Promise.resolve().then(() => require('./venues-music.js').createMetalTheme(ctx, 'radio'))
-                : (0, local_assets_js_1.decodeAudioAsset)(ctx, 'audio/' + name + (name === 'fm-vodosbros' ? '.wav' : '.mp3'));
+                : (0, local_assets_js_1.decodeAudioAsset)(ctx, 'audio/' + name + (name.startsWith('canal-weather-') || ['fm-vodosbros', 'shift-siding', 'canal-lost-keys', 'dispatch-yard-call', 'dispatch-yard-reply'].includes(name) ? '.wav' : '.mp3'));
             this.clips.set(name, pending);
             pending.catch(() => this.clips.delete(name));
         }
@@ -525,6 +534,10 @@ class GameAudio {
             positional.connect(voiceGain);
         }
         const source = ctx.createBufferSource(), fade = gainNode(ctx, positional ?? voiceGain);
+        if (line.station && this.station === 'dispatch' && !line.resumed) {
+            this.burst(1850,.040,.062,0,.75,this.radioGate);
+            this.tone(1240,810,.031,.031,'square',.019,this.radioGate);
+        }
         this.speech = source;
         this.speechFade = fade;
         source.buffer = line.buffer;
@@ -546,6 +559,8 @@ class GameAudio {
         };
         this.mix?.setVoice(this.playingSpeech);
         source.start(line.started, line.offset);
+        if (line.station && !line.resumed && radio_stations_js_1.streetBulletins[line.id])
+            this.onDistrictBulletin?.(radio_stations_js_1.streetBulletins[line.id]);
         if (line.resumed) {
             line.resumed = false;
             if (line.subtitle)
@@ -649,6 +664,11 @@ class GameAudio {
     }
     effect(id) {
         switch (id) {
+            case 'cargo-glass':
+                this.tone(1680, 1650, .16, .047, 'sine');
+                this.tone(2440, 2410, .14, .027, 'sine', .05);
+                this.burst(450, .075, .055);
+                break;
             case 'horn':
                 this.tone(330, 326, .44, .14, 'sawtooth');
                 this.tone(411, 408, .43, .09, 'triangle');
@@ -747,13 +767,14 @@ class GameAudio {
         const market = /рынок|спектр|market/i.test(state.district);
         const depot = /депо|depot/i.test(state.district);
         const industrial = state.district === 'Северная ТЭЦ' || state.district === 'Литейный квартал' || state.district === 'Старый карьер';
+        const late = state.minutes >= 23*60+30 || state.minutes < 5*60+30;
         const shipping = state.district === 'Южный порт' || state.district === 'Сухой док', station = state.district === 'Грузовая станция';
         const exterior = (0, street_audio_js_1.streetSound)(state.district, state.weather);
         this.windGain.gain.setTargetAtTime(exterior.noise + .10 * air.bridge + .012 * Math.sin(this.elapsed * .41), at, .5);
         this.windFilter.frequency.setTargetAtTime(exterior.filter + speed * 8 + air.bridge * 1150, at, .38);
         this.hum.frequency.setTargetAtTime(state.inside ? 49.7 : depot ? 98 : market ? 109.8 : exterior.drone, at, .3);
         const power = 1 - Math.max(0, Math.min(1, state.blackout ?? 0)) * .84;
-        this.humGain.gain.setTargetAtTime((state.inside ? .012 : industrial ? .042 : depot ? .047 : market ? .021 : exterior.low) * power, at, .5);
+        this.humGain.gain.setTargetAtTime((state.inside ? .012 : industrial ? .042 : depot ? .047 : market ? .021 : exterior.low) * power * (late && !industrial ? .38 : 1), at, .5);
         this.roadEcho.gain.setTargetAtTime(air.concrete * .76, at, .18);
         this.updateStreetMix(state, speed, at);
         this.directionalAudio?.(state.soundGuide ?? [], at, speaking);
@@ -792,7 +813,7 @@ class GameAudio {
             const talk = this.station === 'dispatch';
             if (!state.wanted && (talk ? at >= this.nextBroadcast : this.breakDue)) {
                 this.breakDue = false;
-                const bulletin = (0, radio_stations_js_1.stationBulletin)(this.station, this.slot++, state.broadcast, state.archive);
+                const bulletin = (0, radio_stations_js_1.stationBulletin)(this.station, this.slot++, state.broadcast, state.archive, state);
                 if (bulletin.length) {
                     this.nextBroadcast = at + 17;
                     this.broadcast(bulletin, .74 + open * .11, true);
@@ -860,9 +881,9 @@ class GameAudio {
         }
         this.ambienceClock -= delta;
         if (this.ambienceClock < 0 && !state.inside && !state.driving && !state.wanted && !this.isSpeaking) {
-            if (depot && delayed)
+            if (depot && delayed && !late)
                 this.say('stop', .43, { incidental: true });
-            else if (market)
+            else if (market && !late && state.minutes < 18*60)
                 this.say('market_amb', .43, { incidental: true });
             this.ambienceClock = 28;
         }

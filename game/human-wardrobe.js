@@ -296,6 +296,7 @@ function upperBody(role, fit) {
             bag.stroke([[-.067, .258, .251], [.051, .271, .255], [.120, .280, .251]], .006, '#303c3c', 0, true);
             bag.panel([[[-.080, .229, .253], [-.023, .234, .259]], [[-.080, .245, .253], [-.023, .251, .259]]], '#ada184', 0, true);
             bag.stroke([[-.071, .237, .256], [-.041, .241, .261]], .0026, '#47483e', 0, true);
+            bag.stroke([[-.067,.263,.249],[.046,.275,.254],[.112,.277,.246]],.006,'#c7c9bf');
             const bagMesh = bag.mesh('courier-canvas-bag');
             bagMesh.scale.set(.84, .84, .80);
             bagMesh.position.set(.0874, -.0914, .0032);
@@ -428,7 +429,9 @@ function limbs(side, fit, role, socket) {
     aBend.loft(arms.slice(7, 13), l.main, 1, 24, .90);
     lower.loft(shift(arms.slice(12), .251), l.main, 1, 24, .90, undefined, true);
     const cuff = scale([[-.172, .037, .041, .040, 0, -.006], [-.184, .037, .042, .039, 0, -.008], [-.196, .033, .037, .036, 0, -.008]], arm);
-    lower.loft(cuff, role === 'mechanic' ? l.shirt : l.shade, role === 'mechanic' ? 0 : 2, 16, .91, undefined, true);
+    const wornCuff = utility || fit.variant % 4 === 0;
+    const cuffColor = role === 'mechanic' ? l.shirt : l.shade;
+    lower.loft(cuff, wornCuff ? (0,human_cloth_js_1.tint)(cuffColor,.68) : cuffColor, role === 'mechanic' ? 0 : 2, 16, .91, undefined, true);
     if (role === 'hero')
         lower.loft(scale([[-.165, .040, .045, .043, 0, -.005], [-.175, .039, .044, .042, 0, -.007]], arm), l.accent, 3, 16, .91);
     const forePanels = (rows, color, back, rise) => lower.fittedPatch(rows, (x, y, d) => {

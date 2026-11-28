@@ -54,6 +54,18 @@ const rattlePresets = {
 };
 exports.vehicleRattleRate = 24000;
 function vehicleRattleSample(kind) {
+    if (kind.startsWith('starter-')) {
+        const diesel = kind==='starter-diesel', duration=diesel?1.54:1.11;
+        const data = new Float32Array(Math.round(exports.vehicleRattleRate*duration));
+        let phase=0;
+        for(let i=0;i<data.length;i++){
+            const t=i/exports.vehicleRattleRate;
+            phase+=2*Math.PI*(72+72*clamp((t/(duration*.73)-.56)*2.5)+14*Math.sin(41*t))/exports.vehicleRattleRate;
+            const pulse=.32+.68*Math.max(0,Math.cos(t*(diesel?43:53)));
+            data[i]=(Math.sin(phase)*.42+Math.sin(2.7*phase)*.20+Math.sin(6*phase)*.08)*pulse*Math.min(1,t*70,(duration-t)*9);
+        }
+        return data;
+    }
     const preset = rattlePresets[kind];
     const data = new Float32Array(Math.ceil(preset.duration * exports.vehicleRattleRate));
     let seed = preset.body + 1533, low = 0, mid = 0;
@@ -97,7 +109,8 @@ function createVehicleAudio(ctx, destination) {
         oscillator.start();
     const waves = new Map();
     const samples = new Map();
-    let current, split = 0, nextTrim = 0, nextDamage = 0, nextCargo = 0, nextIce = 0;
+    const lastStart = new Map();
+    let current, presentCar, split = 0, nextTrim = 0, nextDamage = 0, nextCargo = 0, nextIce = 0;
     function play(kind, level, pan, at) {
         let sample = samples.get(kind);
         if (!sample) {
@@ -125,7 +138,12 @@ function createVehicleAudio(ctx, destination) {
     return {
         output,
         update(road, frame, speed, train, duck, lift, at) {
-            const kind = road?.kind;
+            const kind = road?.kind, car = road?.vehicleId ?? kind;
+            if (car && presentCar !== car && speed < 1 && !motors[kind]?.electric && at-(lastStart.get(car)??-Infinity)>75) {
+                play(['pickup','suv','utility'].includes(kind)?'starter-diesel':'starter-petrol',.30*duck,-.09,at);
+                lastStart.set(car,at);
+            }
+            presentCar=car;
             if (kind !== current) {
                 current = kind;
                 if (kind) {

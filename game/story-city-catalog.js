@@ -64,7 +64,7 @@ function isCourse(id) { return Object.hasOwn(exports.cityCourses, id); }
 exports.courierRoad = [{ x: 46, z: 100 }, { x: 46, z: 65 }, { x: 46, z: 30 }, { x: 46, z: -8 }, { x: 46, z: -39 }];
 exports.courierWalk = [{ x: 44, z: -40 }, { x: 39, z: -42 }, { x: 35, z: -39 }, { x: 35, z: -21 }, { x: 28, z: -15 }];
 exports.archiveSpots = ['archive0', 'archive1', 'archive2'];
-exports.archiveNames = ['Лента метеопоста 2060', 'Сменный журнал арены 2073', 'Снимок старой лесной линии 2059'];
+exports.archiveNames = ['Лента метеопоста 1995', 'Сменный журнал арены 2008', 'Снимок старой лесной линии 1994'];
 exports.eventSpots = [
     { id: 88, place: 'roadsideHeat', label: 'Помочь у перегретой машины' },
     { id: 89, place: 'parcelFind', label: 'Поднять посылку из снега' },

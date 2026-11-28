@@ -73,8 +73,23 @@ function deliveryPoint(scene, point, i) {
         thermos(flasks, (j - (i < 0 ? 1 : 0)) * .240, 1.028, -.026, ['#9c5e4d', '#517776', '#718451'][j]);
     const delivered = flasks.mesh();
     group.add(body.mesh(), delivered);
+    let foundCase;
+    if(i===0) {
+        const cup = new Batch();
+        cup.add(require('./model-geometry.js').tube,[.37,1.10,-.06],[.13,.15,.13],'#d3c6a6');
+        cup.box(.44,1.12,-.06,.039,.083,.039,'#d3c6a6');
+        require('./model-geometry.js').stencil(cup,'07',[.37,1.11,.012],.007,'#566755');
+        group.add(cup.mesh());
+        const keys=new Batch();
+        keys.box(-.37,1.055,.05,.19,.051,.11,'#4d6047');
+        keys.box(-.36,1.071,.065,.16,.023,.10,'#687e53');
+        keys.rod([-.28,1.073,.03],[-.19,1.073,.06],.009,'#aea78b');
+        keys.add(require('./model-geometry.js').ring,[-.25,1.078,.035],[.026,.023,.023],'#bdbca6',[Math.PI/2,0,0]);
+        foundCase=keys.mesh(); group.add(foundCase);
+    }
     let actor;
     return (c, active, served) => {
+        if(foundCase) foundCase.visible=!c.sim.depotKeysReturned;
         delivered.visible = i < 0 ? active : served;
         if (i < 0)
             return;
@@ -349,7 +364,9 @@ function createNeighbors(scene) {
     }
     function serve(c, i) {
         if (!nightShift(c) || delivery?.shift !== shiftOf(c) || delivery.step !== i) {
-            c.show(stops[i].name, 'Дежурный пост. Ночная развозка начинается в кафе «Горячий лёд» после 19:00.');
+            const greeted = delivery?.step>i && delivery.shift===shiftOf(c);
+            c.show(stops[i].name, greeted ? ['Семён поднимает кружку с номером 07. «Согрелся, спасибо. Как там дорога?»','«Узнала по термосу. Чай горячий, вся смена довольна!»','«Опять к нам? На эстакаде тебя уже знают. За чай спасибо».'][i]
+                : 'Дежурный пост. Ночная развозка начинается в кафе «Горячий лёд» после 19:00.');
             return;
         }
         delivery.step++;

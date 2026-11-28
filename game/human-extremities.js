@@ -374,6 +374,19 @@ function sculptBoot(side, fit, role) {
         const tag = palette(field || worker || sport ? fit.style.accent : '#9a9477');
         s.tube([[-.014, .147, .063], [0, .153, .065], [.014, .147, .063]], high ? .003 : .0025, tag, 4);
     }
+    if (((fit.variant ?? 0) + (side > 0 ? 1 : 0)) % 3 !== 0) {
+        const salt = palette('#b6ada0');
+        for (const sign of [-1,1]) {
+            const stripe=[];
+            for(let i=0;i<6;i++) {
+                const angle=.13+.055*Math.sin(phase+i*1.4);
+                const p=uppers(-.115+i*.025,sign>0?angle:Math.PI-angle,.0008);
+                p[0]+=sign*.0015;
+                stripe.push(p);
+            }
+            s.tube(stripe,.0018,salt,4);
+        }
+    }
     const mesh = s.mesh('lace-up-winter-boot');
     mesh.userData.outfitDye = 'boots';
     const crust = new Sculpt(side);

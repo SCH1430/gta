@@ -43,6 +43,7 @@ function acousticMix({ inside, room, doorOpen, doorDistance, lookout, train, cab
 const T = require("../engine/three.module.min.js");
 const { snowRoofAt } = require("./camera-volume.js");
 const { groundHeight } = require("./world-layout.js");
+const { bridges, canal } = require('./world-expansion-layout.js');
 const { specs } = require("./vehicle-cabin.js");
 
 function softFlake() {
@@ -108,22 +109,25 @@ function createSnowfall(scene, budget) {
     });
     const pose = new T.Object3D(), forward = new T.Vector3(), ink = new T.Color();
     const shade = new T.Color(), shadeNight = new T.Color('#aab8cc'), shadeDay = new T.Color('#e2e9ee');
-    const streetInk = new T.Color('#ffdfa4'), crossingInk = new T.Color('#dcf0ff');
+    const streetInk = new T.Color('#ffdfa4'), crossingInk = new T.Color('#eeeae1');
     const nearbyCars = [];
     let driftX = 0, driftZ = 0, drop = 0;
     return function update(dt, now, camera, weather, limits, daylight, lamps, cars) {
-        const total = weather.snow > .015 ? Math.min(budget,Math.ceil(limits.flakes * weather.snow)) : 0;
+        const eye = camera.position;
+        const crossing = eye.z >= canal.north && eye.z <= canal.south && bridges.some(b => Math.abs(eye.x - b.x) < 8);
+        const courtyard = eye.x > -42 && eye.x < 0 && eye.z > -17 && eye.z < 18;
+        const windExposure = crossing ? 1.35 : courtyard ? .55 : 1;
+        const total = weather.snow > .015 ? Math.min(budget,Math.ceil(limits.flakes * weather.snow * windExposure)) : 0;
         if (!total) { near.visible = far.visible = false; return; }
         const nearTarget = Math.ceil(total*.44);
         const wet = Math.min(1,Math.max(0,weather.wetSnow ?? 0));
-        driftX += weather.gustX*3.65*dt; driftZ += weather.gustZ*3.65*dt;
+        driftX += weather.gustX*windExposure*3.65*dt; driftZ += weather.gustZ*windExposure*3.65*dt;
         drop += dt*(1+wet*.70);
         shade.copy(shadeNight).lerp(shadeDay,daylight);
         near.material.opacity = .72 + .16 * weather.snow;
         far.material.opacity = .44 + weather.snow * .28;
         far.material.size = .083 + .031 * wet;
         camera.getWorldDirection(forward);
-        const eye = camera.position;
         nearbyCars.length = 0;
         for (const car of cars) {
             if (Math.abs(car.x-eye.x)<32 && Math.abs(car.z-eye.z)<32 && specs[car.kind])
@@ -249,11 +253,11 @@ function streetHalos(scene, snowLamps) {
     const marks = [];
     for (const f of fixtures_js_1.fixtures)
         if (f.kind === 'lamp') {
-            marks.push({ id: f.id, grid: f, x: f.x + Math.sin(f.face) * 2.14, y: (0, world_layout_js_1.groundHeight)(f.x, f.z) + 6.08, z: f.z + Math.cos(f.face) * 2.14, size: 2.46, color: f.crosswalk ? '#c0e4ff' : '#ffc075' });
+            marks.push({ id: f.id, grid: f, x: f.x + Math.sin(f.face) * 2.14, y: (0, world_layout_js_1.groundHeight)(f.x, f.z) + 6.08, z: f.z + Math.cos(f.face) * 2.14, size: 1.35, color: winter_light_js_1.lampPalette[winter_light_js_1.lampFamily(f)][0] });
         }
     for (const stall of [world_layout_js_1.buildings.kiosk, world_layout_js_1.buildings.booth])
-        marks.push({ x: stall.x, y: 2.448, z: stall.z + stall.d * .5 + 1.51, size: 1.55, color: '#b5eed3' });
-    marks.push({ x: 25, y: 21.77, z: -29, size: 1.75, color: '#ff6847' });
+        marks.push({ x: stall.x, y: 2.448, z: stall.z + stall.d * .5 + 1.51, size: .81, market: true, color: '#ffdfad' });
+    marks.push({ x: 25, y: 21.77, z: -29, size: .75, color: '#ff6847' });
     const tex = document.createElement('canvas');
     tex.width = tex.height = 64;
     const c = tex.getContext('2d'), g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
@@ -274,18 +278,18 @@ function streetHalos(scene, snowLamps) {
     const tinted = marks.map(mark => ({ ...mark, ink: new THREE.Color(mark.color) }));
     const crossings = tinted.filter(p => p.grid?.crosswalk);
     // One shadowless source lights the people and vehicles at the crossing in view.
-    const sideLight = new THREE.SpotLight('#c0e4ff', 0, 24, .57, .78, 2);
+    const sideLight = new THREE.SpotLight('#f1eae1', 0, 24, .57, .78, 2);
     sideLight.name = 'Боковой свет пешеходного перехода';
     scene.add(sideLight, sideLight.target);
     scene.userData.crossingLight = sideLight;
     const eyeObserver = new THREE.Vector3();
     scene.userData.eyeObserver = eyeObserver;
-    return (cam, broken, radius, quality, power, daylight) => {
+    return (cam, broken, radius, quality, power, daylight, moisture, marketLit) => {
         eyeObserver.copy(cam.position);
         const evening = THREE.MathUtils.smoothstep(1 - daylight, .12, .84);
         snowLamps.length = 0;
-        m.opacity = .16 + .69 * evening;
-        mist.material.opacity = evening;
+        m.opacity = (.08 + evening * .47) * (.30 + .70 * moisture);
+        mist.material.opacity = evening * moisture * .65;
         let nearest, rangeSq = 48 * 48;
         for (const p of crossings) {
             const { x, z } = p.grid.crosswalk;
@@ -308,14 +312,15 @@ function streetHalos(scene, snowLamps) {
         for (const p of tinted) {
             const dx = cam.position.x - p.x, dz = cam.position.z - p.z, distanceSq = dx * dx + dz * dz;
             const grid = p.grid ?? p;
-            if (p.id && broken[p.id] || distanceSq > radius * radius || (0, blackout_js_1.blackoutFixture)(power, grid.x, grid.z))
+            if (p.market && !marketLit || p.id && broken[p.id] || distanceSq > radius * radius || (0, blackout_js_1.blackoutFixture)(power, grid.x, grid.z))
                 continue;
             if (evening > .01 && p.grid && distanceSq < 36 * 36) snowLamps.push(p);
             pose.position.set(p.x, p.y, p.z);
             viewDir.copy(cam.position).sub(pose.position).normalize();
             pose.position.addScaledVector(viewDir, .23);
             pose.quaternion.copy(cam.quaternion);
-            pose.scale.set(p.size * 1.28, p.size, 1);
+            const size = p.size * (1 + .48 * moisture * Math.max(0, 1 - distanceSq / 625));
+            pose.scale.set(size, size, 1);
             pose.updateMatrix();
             batch.setMatrixAt(n, pose.matrix);
             batch.setColorAt(n++, p.ink);
@@ -352,8 +357,8 @@ function rainMap() {
     return map;
 }
 function createAtmosphere(scene) {
-    scene.background = new THREE.Color(0x586f8d);
-    const fog = new THREE.Fog(0x586c84, 55, 244);
+    scene.background = new THREE.Color(0x767b7b);
+    const fog = new THREE.Fog(0x626769, 55, 244);
     scene.fog = fog;
     new THREE.TextureLoader().load((0, local_assets_js_1.assetUrl)('sky/november.webp'), t => {
         t.mapping = THREE.EquirectangularReflectionMapping;
@@ -405,7 +410,9 @@ function createAtmosphere(scene) {
     drops.frustumCulled = false;
     drops.visible = false;
     scene.add(drops);
-    const nightFog = new THREE.Color(0x586c84), dayFog = new THREE.Color(0xa4b7c5), rainFog = new THREE.Color(0x708897);
+    const nightFog = new THREE.Color(0x626769), dayFog = new THREE.Color(0xbac0bd), rainFog = new THREE.Color(0x909693);
+    const coldSky = new THREE.Color(0xd6dfe4), dawnSky = new THREE.Color(0xf9d5aa);
+    const dawnFog = new THREE.Color(0xd3c8b8), { marketOpen } = require('./market-hours.js');
     return function update(dt, hero, driven, cars, people, elapsed, camera, broken = fixtures_js_1.intact, quality = 2, isPatrolActive, options = {}) {
         const conditions = options.weather ?? (0, weather_js_1.weatherAt)(elapsed);
         const tier = (0, weather_js_1.effectsQuality)(quality, (options.wanted ?? 0) > 0, !!options.fast);
@@ -415,8 +422,15 @@ function createAtmosphere(scene) {
         const shade = (0, blackout_js_1.blackoutField)(phase, hero.x, hero.z);
         const roadFocus = driven ? THREE.MathUtils.clamp((Math.abs(hero.speed) - 3) / 12, 0, 1) : 0;
         fog.color.copy(nightFog).lerp(dayFog, daylight * .92).lerp(rainFog, conditions.rain * .33);
-        fog.near = 64 - 29 * conditions.mist + roadFocus * (10 - 3 * conditions.mist);
-        fog.far = Math.max(141 + 22 * roadFocus, 259 - 142 * conditions.mist);
+        const calendar = options.clock ?? (1065 + elapsed / 2);
+        const hour = (calendar % 1440) / 60;
+        const dawn = Math.max(0, 1 - Math.abs(hour - 7.35) / 1.3);
+        fog.color.lerp(dawnFog, dawn * .56);
+        key.color.copy(coldSky).lerp(dawnSky, dawn);
+        key.position.set(64 + 17 * dawn, 39 - 24 * dawn, -28);
+        const canalAir = 1 - THREE.MathUtils.smoothstep(Math.abs(hero.z - 74), 12, 91);
+        fog.near = 70 - 14 * canalAir - 29 * conditions.mist + roadFocus * (10 - 3 * conditions.mist);
+        fog.far = Math.max(141 + 22 * roadFocus, 266 - 22 * canalAir - 142 * conditions.mist);
         skyLight.intensity = (1.13 + daylight * .65 - conditions.rain * .24) * (1 - .21 * shade);
         key.intensity = (1.39 + daylight * .8 - conditions.rain * .38) * (1 - .27 * shade);
         rim.intensity = (.89 - .37 * daylight) * (1 - .55 * shade);
@@ -427,16 +441,21 @@ function createAtmosphere(scene) {
         rainGeo.setDrawRange(0, dropCount);
         drops.visible = conditions.rain > .015;
         drops.material.opacity = .20 + .34 * conditions.rain;
-        updateHalos(camera, broken, limits.halo, tier, phase, daylight);
+        updateHalos(camera, broken, limits.halo, tier, phase, daylight, Math.min(1, conditions.snow + conditions.rain), marketOpen(calendar));
         updateWeather(dt, cars, camera, tier, conditions);
         updateIce(conditions, camera);
         updateRoadLights(cars, camera, elapsed, tier, isPatrolActive, conditions.wet, daylight, driven ? hero : undefined);
         shadows.count = 0;
-        if (!driven)
+        const castDawnShadow = person => {
+            if(dawn>.05) stamp(shadows,person.x-1.28*dawn,person.z+.44*dawn,-1.23,.60,1.1+3.1*dawn);
+        };
+        if (!driven) {
             stamp(shadows, hero.x, hero.z, hero.yaw, .95, 1.5);
+            castDawnShadow(hero);
+        }
         for (const p of people)
             if (!p.onboard && (p.x - camera.position.x) ** 2 + (p.z - camera.position.z) ** 2 < 110 ** 2)
-                stamp(shadows, p.x, p.z, p.yaw, .89, 1.16);
+                { stamp(shadows, p.x, p.z, p.yaw, .89, 1.16); castDawnShadow(p); }
         for (const c of cars) {
             if ((c.x - camera.position.x) ** 2 + (c.z - camera.position.z) ** 2 > 145 ** 2)
                 continue;
@@ -548,6 +567,15 @@ function shoeSample(ctx, surface, variant) {
                 const skid = t > .01 ? Math.sin(tau * (891 + 173 * Math.exp(-11 * t))) * Math.exp(-t * 18) * attack : 0;
                 grains = grains * .83 + (noise > .986 ? .73 : 0);
                 value = .19 * thud + .11 * skid * tread + .34 * (high * grains + (mid - low) * .4) * tread;
+                break;
+            }
+            case 'grit': {
+                grains = grains*.82 + (noise>.91 ? .44 : 0);
+                value = .16*thud + (.12*mid + .49*grains*high)*tread;
+                break;
+            }
+            case 'rubber': {
+                value = .27*thud + .15*low*tread + .029*mid*roll;
                 break;
             }
             case 'wet': {
@@ -783,7 +811,7 @@ class GameAudio {
         if (!pending) {
             pending = name === 'dk-metal-theme'
                 ? Promise.resolve().then(() => require('./venues-music.js').createMetalTheme(ctx, 'radio'))
-                : (0, local_assets_js_1.decodeAudioAsset)(ctx, 'audio/' + name + (name === 'fm-vodosbros' ? '.wav' : '.mp3'));
+                : (0, local_assets_js_1.decodeAudioAsset)(ctx, 'audio/' + name + (name.startsWith('canal-weather-') || ['fm-vodosbros', 'shift-siding', 'canal-lost-keys', 'dispatch-yard-call', 'dispatch-yard-reply'].includes(name) ? '.wav' : '.mp3'));
             this.clips.set(name, pending);
             pending.catch(() => this.clips.delete(name));
         }
@@ -992,6 +1020,10 @@ class GameAudio {
             positional.connect(voiceGain);
         }
         const source = ctx.createBufferSource(), fade = gainNode(ctx, positional ?? voiceGain);
+        if (line.station && this.station === 'dispatch' && !line.resumed) {
+            this.burst(1850,.040,.062,0,.75,this.radioGate);
+            this.tone(1240,810,.031,.031,'square',.019,this.radioGate);
+        }
         this.speech = source;
         this.speechFade = fade;
         source.buffer = line.buffer;
@@ -1013,6 +1045,8 @@ class GameAudio {
         };
         this.mix?.setVoice(this.playingSpeech);
         source.start(line.started, line.offset);
+        if (line.station && !line.resumed && radio_stations_js_1.streetBulletins[line.id])
+            this.onDistrictBulletin?.(radio_stations_js_1.streetBulletins[line.id]);
         if (line.resumed) {
             line.resumed = false;
             if (line.subtitle)
@@ -1116,6 +1150,11 @@ class GameAudio {
     }
     effect(id) {
         switch (id) {
+            case 'cargo-glass':
+                this.tone(1680, 1650, .16, .047, 'sine');
+                this.tone(2440, 2410, .14, .027, 'sine', .05);
+                this.burst(450, .075, .055);
+                break;
             case 'horn':
                 this.tone(330, 326, .44, .14, 'sawtooth');
                 this.tone(411, 408, .43, .09, 'triangle');
@@ -1214,13 +1253,14 @@ class GameAudio {
         const market = /рынок|спектр|market/i.test(state.district);
         const depot = /депо|depot/i.test(state.district);
         const industrial = state.district === 'Северная ТЭЦ' || state.district === 'Литейный квартал' || state.district === 'Старый карьер';
+        const late = state.minutes >= 23*60+30 || state.minutes < 5*60+30;
         const shipping = state.district === 'Южный порт' || state.district === 'Сухой док', station = state.district === 'Грузовая станция';
         const exterior = (0, street_audio_js_1.streetSound)(state.district, state.weather);
         this.windGain.gain.setTargetAtTime(exterior.noise + .10 * air.bridge + .012 * Math.sin(this.elapsed * .41), at, .5);
         this.windFilter.frequency.setTargetAtTime(exterior.filter + speed * 8 + air.bridge * 1150, at, .38);
         this.hum.frequency.setTargetAtTime(state.inside ? 49.7 : depot ? 98 : market ? 109.8 : exterior.drone, at, .3);
         const power = 1 - Math.max(0, Math.min(1, state.blackout ?? 0)) * .84;
-        this.humGain.gain.setTargetAtTime((state.inside ? .012 : industrial ? .042 : depot ? .047 : market ? .021 : exterior.low) * power, at, .5);
+        this.humGain.gain.setTargetAtTime((state.inside ? .012 : industrial ? .042 : depot ? .047 : market ? .021 : exterior.low) * power * (late && !industrial ? .38 : 1), at, .5);
         this.roadEcho.gain.setTargetAtTime(air.concrete * .76, at, .18);
         this.updateStreetMix(state, speed, at);
         this.directionalAudio?.(state.soundGuide ?? [], at, speaking);
@@ -1259,7 +1299,7 @@ class GameAudio {
             const talk = this.station === 'dispatch';
             if (!state.wanted && (talk ? at >= this.nextBroadcast : this.breakDue)) {
                 this.breakDue = false;
-                const bulletin = (0, radio_stations_js_1.stationBulletin)(this.station, this.slot++, state.broadcast, state.archive);
+                const bulletin = (0, radio_stations_js_1.stationBulletin)(this.station, this.slot++, state.broadcast, state.archive, state);
                 if (bulletin.length) {
                     this.nextBroadcast = at + 17;
                     this.broadcast(bulletin, .74 + open * .11, true);
@@ -1327,9 +1367,9 @@ class GameAudio {
         }
         this.ambienceClock -= delta;
         if (this.ambienceClock < 0 && !state.inside && !state.driving && !state.wanted && !this.isSpeaking) {
-            if (depot && delayed)
+            if (depot && delayed && !late)
                 this.say('stop', .43, { incidental: true });
-            else if (market)
+            else if (market && !late && state.minutes < 18*60)
                 this.say('market_amb', .43, { incidental: true });
             this.ambienceClock = 28;
         }
@@ -1575,7 +1615,8 @@ exports.programmes = ['fm-weather', 'fm-request', 'fm-hockey', 'radio', 'radio2'
 exports.townProgrammes = ['fm-route-restored', 'fm-lane-blocked', 'fm-lane-clear'];
 const archive = ['archive-a', 'archive-b', 'archive-c'];
 const stories = ['fm-ledger', 'fm-heat', 'fm-gauge', 'fm-power', 'fm-letter', 'fm-intro', 'fm-end', 'fm-night', 'dock-manifest', 'dock-clear', 'dock-receipt'];
-const valid = new Set([...exports.programmes, ...archive, ...stories, ...exports.townProgrammes]);
+const valid = new Set([...exports.programmes, ...archive, ...stories, ...exports.townProgrammes,
+    'canal-lost-keys','dispatch-yard-call','dispatch-yard-reply',...['snow','thaw','clear','wind'].map(w=>'canal-weather-'+w)]);
 function isProgramme(id) { return valid.has(id); }
 function nextProgramme(slot, unlocked = [], tapes = false) {
     const news = unlocked.filter(isProgramme);
@@ -2898,6 +2939,17 @@ function createCampus(scene) {
             right.b.box(px,fy+1.77,z,1.60,1.84,.067,'#a98d6e');
             imageCard(right,'exhibit-'+id,()=>exhibitionPrint(id),px,fy+1.77,z+.037,0,1,1.45,1.69,135,158);
         }
+        sign(right,'ЗИМНИЕ СЕКЦИИ','ПН/СР 16:00 · ХОККЕЙ    ВТ/ЧТ 15:30 · ЛЫЖИ',wing,x+6.6,fy+.78,z+.08,0,1,3.58,.51);
+        const entryZ=campus.floors.school1.entrance.z;
+        const entryCell=cellAt(x,entryZ,fy);
+        entryCell.b.box(x,fy+.021,entryZ,2.4,.034,1.3,'#504d44');
+        for(let k=0;k<17;k++) entryCell.b.box(x-1.11+k*.138,fy+.044,entryZ,.030,.019,1.21,'#716d60');
+        const hooks=cellAt(x-8.0,z+.45,fy).b;
+        hooks.box(x-7.1,fy+.87,z+.16,3.1,.10,.17,'#8e7760');
+        for(let k=0;k<9;k++){
+            hooks.box(x-8.43+k*.33,fy+.86,z+.27,.035,.12,.11,'#686f69');
+            sign(c,String(41+k),'',wing,x-8.43+k*.33,fy+.99,z+.24,0,1,.19,.12);
+        }
         overhead(plan,x,a.z-5.7,'ГАЛЕРЕИ И УЧЕБНЫЕ КОРПУСА','ПРЯМО  ↑',wing,'x',3.53);
     }
     function fitOut(plan,a){
@@ -3485,7 +3537,7 @@ function rollingStock(meta) {
     }
     for (const s of [-1, 1]) {
         const edge = side + (style === 'box' ? .15 : style === 'tank' ? .003 : .067);
-        const title = style === 'engine' ? 'КАНАЛЬНАЯ ТЯГА' : meta.id, sub = style === 'container' ? 'КОНТЕЙНЕР · 2087' : style === 'tank' ? 'ТЕПЛОНОСИТЕЛЬ' : style === 'engine' ? meta.id : 'ГРУЗОВАЯ ВЕТКА';
+        const title = style === 'engine' ? 'КАНАЛЬНАЯ ТЯГА' : meta.id, sub = style === 'container' ? 'КОНТЕЙНЕР · 2022' : style === 'tank' ? 'ТЕПЛОНОСИТЕЛЬ' : style === 'engine' ? meta.id : 'ГРУЗОВАЯ ВЕТКА';
         const x = style === 'engine' ? -.26 : 1.65, y = style === 'engine' ? 1.71 : 2.27;
         b.box(x, y, s * (edge - .022), 1.92, .66, .071, '#3f5052');
         numbers.place(meta.id, () => (0, world_textures_js_1.signTexture)(title, sub, '#fff0bb', '#33454b', 3.0), x, y, s * (edge + .014), 1.79, .60, s > 0 ? 0 : Math.PI);
@@ -3553,6 +3605,10 @@ function shelter(b, p, index) {
     b.lamp(x, 2.09, z - .50, 1.68, .058, .15, light);
     for (const dx of [-1.74, 1.74])
         b.box(x + dx, 1.10, z - 1.25, .13, 2.21, .13, steel);
+    b.box(x, 1.03, z-1.30, 3.53, 2.03, .11, '#9a9a83');
+    b.box(x - 1.71, .48, z-.76, .12, .96, 1.19, '#8b8e7c');
+    b.box(x - 1.71, 1.47, z-.76, .10, .94, 1.18, '#96a8aa');
+    b.box(x - 1.71, 1.45, z-.76, .13, 1.02, .05, '#b6b59e');
     const signs = new world_batch_js_1.Panels(p);
     signs.place(site.name, () => (0, world_textures_js_1.signTexture)(site.name.toUpperCase(), 'ГРУЗОВОЙ ПОСТ · СМОТРОВАЯ', '#f0dcad', '#3f5662', 4.6), x, 1.89, z - 1.176, 3.34, .73, 0);
     signs.flush();
@@ -3562,6 +3618,13 @@ function crossing(parent, index) {
     parent.add(root);
     if (index < 3)
         shelter(b, root, index);
+    const deckY = cargo_rail_js_1.cargoGrade(site.x) + .102, trackZ = cargo_rail_js_1.cargoTrack.z;
+    const panels = Math.max(1, Math.ceil(site.roadWidth/1.2)), width = site.roadWidth / panels;
+    for(let i=0;i<panels;i++) {
+        const dx=site.x - site.roadWidth/2 + (i+.5)*width;
+        for(const [offset,depth] of [[-1.39,1.15],[0,1.25],[1.39,1.15]])
+            b.box(dx,deckY,trackZ+offset,width-.024,.08,depth,'#565957');
+    }
     const arms = [-1, 1].map(side => {
         const x = site.x + side * (site.roadWidth * .5 + .095), z = cargo_rail_js_1.cargoTrack.z + side * 5.15, y = (0, world_layout_js_1.groundHeight)(x, z);
         b.box(x, y + .52, z, .43, 1.09, .53, steel);
@@ -4580,10 +4643,10 @@ class CityLife {
             this.note(t, 'Горсвет · автовышка выехала в район «' + (0, world_layout_js_1.districtAt)(f.x, f.z) + '»');
         }
     }
-    goal(p, people, t, dt, rail, minutes = (0, city_clock_js_1.districtMinutes)(t)) {
+    goal(p, people, t, dt, rail, minutes = (0, city_clock_js_1.districtMinutes)(t), calendar = (0, city_clock_js_1.districtCalendarMinutes)(t)) {
         if (p.id.startsWith('shop-')) {
             p.ticket ??= Number(p.id.slice(5));
-            const closed = minutes < 7 * 60 || minutes >= 22 * 60;
+            const closed = !require('./market-hours.js').marketOpen(calendar);
             if (closed || p.purchase) {
                 const last = exitLoop.length - 1, i = Math.min(p.leg ?? 0, last), dest = exitLoop[i];
                 const target = i === last ? { x: dest.x + (Number(p.id.slice(5)) * .68), z: dest.z } : dest;
@@ -5293,6 +5356,7 @@ exports.bindCargoRail = bindCargoRail;
 exports.bindCityGates = bindCityGates;
 exports.closedCityGates = closedCityGates;
 exports.bindMarketTables = bindMarketTables;
+exports.bindThawBarrier = bindThawBarrier;
 exports.bindStreetProps = bindStreetProps;
 exports.settledFeet = settledFeet;
 exports.headRoom = headRoom;
@@ -5347,6 +5411,12 @@ const quarterBoxes = [...market_quarter_layout_js_1.quarterVolumes.floors.map(s 
 }));
 const localQuarter = (0, static_box_index_js_1.indexStaticBoxes)(quarterBoxes, world_layout_js_1.bounds, s => s, 7, 4);
 const states = new WeakMap();
+const thawClosures = new WeakSet();
+const thawRail = {...rect({x:-30.5,z:16.6,w:2.79,d:.14}), top:world_layout_js_1.groundHeight(-30.5,16.6)+.93};
+function bindThawBarrier(cars, closed, occupied) {
+    if (!closed) thawClosures.delete(cars);
+    else if (!occupied) thawClosures.add(cars);
+}
 function setBrokenFixtures(cars, broken) { states.set(cars, broken); }
 function fixtureBrokenFor(cars, id) { return !!states.get(cars)?.[id]; }
 const repairBodies = new WeakMap();
@@ -5521,6 +5591,8 @@ function candidates(a, b, r, y, cars, ignore, vehicle = false, alsoIgnore) {
     for (const s of tables.get(cars) ?? [])
         if (overlaps(s) && (vehicle || y < s.top))
             list.push(s);
+    if (thawClosures.has(cars) && overlaps(thawRail) && (vehicle || y < thawRail.top))
+        list.push(thawRail);
     for (const p of contents.get(cars) ?? []) {
         if (p.broken && p.kind !== 'picket' || p.x + p.w / 2 < minX || p.x - p.w / 2 > maxX || p.z + p.d / 2 + p.h < minZ || p.z - p.d / 2 - p.h > maxZ)
             continue;
@@ -7630,8 +7702,9 @@ const { houseClearance } = require("./house-layout.js");
 const outskirts = require("./district-outskirts.js");
 const deliveries = require("./district-deliveries.js");
 const venues = require("./district-venues.js");
+const winterShifts = require('./winter-shifts.js');
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
-const destinationGuides = [...outskirts.guides, ...deliveries.guides, ...venues.guides];
+const destinationGuides = [...outskirts.guides, ...deliveries.guides, ...venues.guides, ...winterShifts.guides];
 const baseGuides = [
     ['Канальные гаражи', -40, 42, 'Машины, инструмент и мастерская'],
     ['Поворот у «Спектра»', 38.35, 36.35, 'Кнопка пешеходного перехода'],
@@ -7685,9 +7758,14 @@ exports.createDistrictPlay = function(scene, ui, context, persist) {
         outskirts: outskirts.createDistrictOutskirts(scene),
         deliveries: deliveries.createDistrictDeliveries(scene),
         venues: venues.createDistrictVenues(scene),
+        winter: winterShifts.createWinterShifts(scene),
         world: worldLife
     };
-    const guides = [...baseGuides, ...worldLife.guides], atlasGuides = [...destinationGuides, ...worldLife.guides];
+    const models = [...worldLife.peopleGuides, ...worldLife.vehicleGuides];
+    const atlas = require('./notebook-atlas.js');
+    const approaches = new Map(models.map(p => [p, atlas.approach({ x: p[1], z: p[2] })]));
+    let photoIndex = -1, photo = null;
+    const guides = [...baseGuides, ...worldLife.guides, ...models], atlasGuides = [...destinationGuides, ...worldLife.guides, ...models];
     let notes, parking, driven, selection, menuTitle, menuBody;
     function restore(data) {
         notes = Array.isArray(data?.notes) ? data.notes.filter(n => typeof n === 'string').slice(-64).map(n=>n.slice(0,320)) : [];
@@ -7697,7 +7775,13 @@ exports.createDistrictPlay = function(scene, ui, context, persist) {
     }
     function record(text) {
         const clean = String(text ?? '').trim().slice(0, 320);
-        if (clean && notes.at(-1) !== clean) { notes.push(clean); if (notes.length > 64) notes.shift(); }
+        if (clean && notes.at(-1) !== clean) {
+            notes.push(clean);
+            if (notes.length > 64) notes.shift();
+            const sound = context(0).audio;
+            sound?.burst(2600, .13, .042);
+            sound?.burst(3900, .085, .024, .09);
+        }
     }
     function choose(title, items, body = '') {
         menuTitle = String(title);
@@ -7726,23 +7810,33 @@ exports.createDistrictPlay = function(scene, ui, context, persist) {
         const c = ctx(), goal = c.jobs.current() ?? c.sim.objective();
         const obligations = Object.values(modules).flatMap(mod=>mod.agenda?.(c) ?? []);
         const nearby = here(c), button = (action,label,sub='') => '<button type="button" class="k-panel-row k-book-row" data-action="'+escape(action)+'"><span>'+escape(label)+(sub?'<small>'+escape(sub)+'</small>':'')+'</span><b aria-hidden="true">›</b></button>';
+        const rows = (list, offset = 0) => list.map((p, i) => button('district:guide:' + (offset + i), p[0], [p[3], approaches.get(p)].filter(Boolean).join(' · '))).join('');
+        const firstModel = baseGuides.length + worldLife.guides.length;
         return '<div class="k-list k-city-book"><h3>Открытое дело</h3><p>'+escape(goal?.title)+' · '+escape(goal?.goal ?? c.sim.objective().goal)+'</p>'+
             (obligations.length ? '<h3>Договорённости</h3>'+obligations.map(o=>'<p><strong>'+escape(o.title)+'</strong><br>'+escape(o.goal)+'</p>').join('') : '')+
             (notes.length ? '<h3>Последняя запись</h3><p>'+escape(notes.at(-1))+'</p>' : '')+
             (parking ? '<p>Последняя стоянка · '+escape(nav.districtAt(parking.x,parking.z))+'</p>'+button('district:park','Показать машину') : '')+
             '<h3>Рядом</h3>'+ (nearby.map(a=>button(a.id,a.label)).join('') || '<p>Здесь пока нет дворовых дел.</p>')+
-            '<h3>Куда пойти</h3>'+baseGuides.map((p,i)=>button('district:guide:'+i,p[0],p[3])).join('')+
-            '<h3>Жизнь города</h3>'+worldLife.guides.map((p,i)=>button('district:guide:'+(i+baseGuides.length),p[0],p[3])).join('')+
+            '<h3>Новые модели</h3><details class="k-book-models"><summary>Персонажи · '+worldLife.peopleGuides.length+'</summary>'+rows(worldLife.peopleGuides, firstModel)+'</details>'+
+            '<details class="k-book-models"><summary>Машины и техника · '+worldLife.vehicleGuides.length+'</summary>'+rows(worldLife.vehicleGuides, firstModel + worldLife.peopleGuides.length)+'</details>'+
+            '<details class="k-book-models"><summary>Фотографии входов</summary>'+atlas.views.map((v,i) => button('district:photo:'+i,v.name,v.caption)).join('')+'</details>'+
+            '<h3>Куда пойти</h3>'+rows(baseGuides)+
+            '<h3>Жизнь города</h3>'+rows(worldLife.guides, baseGuides.length)+
             (notes.length>1 ? '<details><summary>Предыдущие записи</summary>'+notes.slice(0,-1).reverse().map(n=>'<p>'+escape(n)+'</p>').join('')+'</details>' : '')+'</div>';
     }
     ui.registerPanel('district-book','Городской блокнот',notebook);
+    ui.registerPanel('district-photo', 'Фотография входа', () => {
+        const v = atlas.views[photoIndex];
+        if (!v) return '';
+        return '<figure class="k-entry-photo">'+(photo ? '<img src="'+photo+'" alt="'+escape(v.caption)+'">' : '')+'<figcaption><strong>'+escape(v.name)+'</strong><br>'+escape(v.caption)+'</figcaption></figure><button class="k-panel-row" data-action="district-book">В блокнот</button>';
+    }, true);
     ui.registerPanel('district-choice',() => menuTitle.length <= 42 ? menuTitle : 'Городской блокнот',
         () => '<div class="k-list k-city-book">'+(menuTitle.length>42?'<p>'+escape(menuTitle)+'</p>':'')+
             menuBody.split('\n').filter(Boolean).map(line=>'<p>'+escape(line)+'</p>').join('')+
             selection.map((a,i)=>'<button type="button" class="k-panel-row k-book-row" data-action="district:pick:'+i+'"><span>'+escape(a.label)+'</span><b aria-hidden="true">›</b></button>').join('')+'</div>', true);
     return {restore, save() {
         return {notes:notes.slice(),parking,...Object.fromEntries(Object.entries(modules).map(([key,mod])=>[key,mod.save?.()]))};
-    }, destinations: atlasGuides.map(([label, x, z]) => ({ label, x, z, area: nav.districtAt(x, z) })),
+    }, destinations: atlasGuides.map(p => ({ label:p[0], x:p[1], z:p[2], area:nav.districtAt(p[1],p[2]), approach:approaches.get(p) })),
     get lookout() { return worldLife.lookout; },
     radio() {
         const c = ctx();
@@ -7760,6 +7854,11 @@ exports.createDistrictPlay = function(scene, ui, context, persist) {
         if (!id.startsWith('district:')) return false;
         const rest = id.slice(9), sep = rest.indexOf(':'), key = sep < 0 ? rest : rest.slice(0,sep), local = rest.slice(sep+1);
         if (key === 'pick') { const item = selection[Number(local)]; if (item) { ui.close(); selection=[]; item.run(); } }
+        else if (key === 'photo' && atlas.views[Number(local)]) {
+            photoIndex = Number(local);
+            photo = ctx().guidePhoto(photoIndex);
+            ui.open('district-photo');
+        }
         else if (key === 'guide') { if (guides[Number(local)]) guide(guides[Number(local)]); }
         else if (key === 'park' && parking) {
             const car = ctx().sim.cars.find(v=>v.id===parking.id) ?? parking;
@@ -7928,6 +8027,18 @@ function createDistrictVenues(scene) {
     }
 
     function update(c) {
+        // After the first announcements the cashier routes any passengers the player hasn't helped.
+        if (c.minutes >= 1105 && c.minutes < passengerShiftEnd) {
+            if (station.day !== dayOf(c)) station = initialStation(dayOf(c));
+            river.passengers.forEach((p, i) => {
+                const minute = 1105 + i * 3;
+                if (station.routes[i] || c.minutes < minute) return;
+                station.routes[i] = { mode: p.route, at: Math.max(0, c.sim.elapsed - (c.minutes - minute) * 2), cashier: true };
+                if (c.zone === river.door.zone && c.minutes === minute)
+                    c.notify(p.name + ' у кассы: «' + p.question + '» Марина показывает выход к ' + (p.route === 'bus' ? 'автобусу 12.' : 'стоянке такси.'));
+                c.persist?.();
+            });
+        }
         const shift = stationState(c);
         const rehearsal = rehearsalOpen(c.minutes);
         const inside = c.zone === metal.door.zone;
@@ -7963,7 +8074,7 @@ function createDistrictVenues(scene) {
         station = initialStation(Number.isSafeInteger(raw?.station?.day) ? raw.station.day : -1);
         station.routes = river.passengers.map((passenger, i) => {
             const route = raw?.station?.routes?.[i];
-            return route?.mode === passenger.route && isTime(route.at) ? { mode: route.mode, at: route.at } : null;
+            return route?.mode === passenger.route && isTime(route.at) ? { mode: route.mode, at: route.at, ...(route.cashier ? {cashier:true} : {}) } : null;
         });
         spoke = raw?.spoke === true;
         stands = [0, 1].map(i => spoke && raw?.stands?.[i] === true);
@@ -7984,6 +8095,107 @@ function createDistrictVenues(scene) {
 module.exports = { createDistrictVenues, guides };
 
 },
+"game/district-winter-details.js": function(require, module, exports) {
+'use strict';
+
+const carStops = [-37.4, -34.8, -32.2].map(x => ({ x, z: 18.75, w: .13, d: .13, h: .81 }));
+const booth = { x: -157.8, z: 102.9, w: 2.45, d: 2.32, h: 2.54 };
+const fence = { x: -162.8, z: 101.73, w: 7.5, d: .09, h: 2.08 };
+const streetSolids = [...carStops, booth, fence];
+
+function canalHouses(b, sign, layout) {
+    for (const a of layout.apartments) {
+        const e = layout.apartmentEntry(a), front = e.front, base = e.steps * e.rise;
+        const panelX = e.x + .68;
+        b.box(panelX, 1.41 + base, front + .40, .16, .30, .037, '#77796e');
+        for (let row = 0; row < 4; row++) {
+            for (let col = 0; col < 3; col++)
+                b.box(panelX + (col-1)*.036, 1.46 + base - row*.038, front + .424, .019, .019, .009, '#444940');
+        }
+        const drainX = a.x + a.w / 2 - .22;
+        b.beam(drainX, .32, front+.12, drainX, .13, front+.47, .15, '#737973');
+        const iceZ = front + .84, ground = layout.groundHeight(drainX, iceZ);
+        b.piece('stone', drainX, ground+.021, iceZ, .97, .052, 1.48, '#a7b4b7');
+        for (let j = 0; j < 4; j++)
+            b.beam(drainX + j*.067-.10, .25, front+.46, drainX + j*.067-.10, .05 + (j%3)*.04, front+.48, .035, '#cdd6d5');
+        if ([23,31,19].includes(a.id)) {
+            const x = a.x + a.w*.31, z = front+.29;
+            sign('ФАБРИЧНАЯ УЛ.',String(a.id-4), '#c6c3ad','#6f7769', x,2.38,z,1.12,.39);
+            sign('КАНАЛЬНАЯ',String(a.id), '#ece7d1','#39546a', x,2.92,z,1.29,.43);
+            b.box(e.x-1.47,1.52,front+.27,.81,.84,.083,'#806e57');
+            for (const [i,title] of ['СОБРАНИЕ','ИЩУ КЛЮЧИ','САНТЕХНИК','КОТ'].entries()) {
+                const cx=e.x-1.67+(i%2)*.40, y=1.70-Math.floor(i/2)*.34;
+                sign(title,i===1?'КВ. 18':'ТЕЛ. 13-47', '#4e504a',i%2?'#d2c69f':'#e7e2cf', cx,y,front+.322,.35,.29);
+            }
+        }
+    }
+    for (const p of carStops) {
+        const y = layout.groundHeight(p.x,p.z);
+        b.cyl(p.x,y+.405,p.z,p.w,p.h,'#7c827b');
+        b.cyl(p.x,y+.61,p.z,.14,.10,'#b9ad8f');
+    }
+    // A resident's folding barrier sits flat in the adjoining parking space.
+    b.box(-29.3,.075,18.72,.90,.09,.42,'#787971');
+    b.box(-29.3,.14,18.68,.80,.05,.06,'#ac8b52');
+}
+
+function entrances(b, sign) {
+    b.box(35.8,1.14,54.69,1.12,2.24,.17,'#797763');
+    b.box(35.8,1.55,54.789,.86,.94,.025,'#98a7a0');
+    b.box(36.19,1.08,54.82,.033,.21,.045,'#dad1b7');
+    sign('ПРОДУКТЫ','ХЛЕБ · МОЛОКО', '#f0e6c7','#5d715f',35.8,2.60,54.76,2.37,.56);
+    sign('ПРОДУКТЫ →','ВХОД СО ДВОРА', '#e6ddbe','#666e58',39.7,1.97,43.43,1.56,.54,Math.PI);
+    sign('ПРИЧАЛ','СТОЛОВАЯ · ВХОД', '#5f604d','#e4ddbd',-6,1.64,45.85,1.04,.43,Math.PI);
+    b.box(-4.94,1.21,-26.90,.16,2.38,1.22,'#667369');
+    b.box(-4.84,1.13,-26.49,.06,.24,.045,'#b0b6a9');
+    sign('РАЗДЕВАЛКА','ДЕПО · II СМЕНА', '#ece7d2','#636e61',-4.84,2.61,-26.9,1.45,.43,Math.PI/2);
+}
+
+function quay(b,sign,layout) {
+    const {x,z,w,d} = booth, base = layout.groundHeight(x,z);
+    b.box(x,base+1.21,z,w,2.42,d,'#a09d88');
+    b.box(x,base+2.48,z,w+.26,.12,d+.30,'#7d8174');
+    b.box(x,base+2.56,z,w+.29,.08,d+.32,'#ccd0c9');
+    b.box(x,base+1.53,z+d*.5+.02,1.62,.80,.04,'#6c8183');
+    b.box(x,base+1.53,z+d*.5+.048,.041,.81,.022,'#b9b5a3');
+    sign('ПРОХОДНАЯ','ПОРТ · ВЪЕЗД ПО ПРОПУСКАМ','#ede1bc','#676955',x,base+2.11,z+d*.5+.036,2.08,.31);
+    for (let i=0; i<=4; i++) {
+        const px=fence.x-fence.w*.5+i*fence.w/4;
+        b.box(px,base+1.04,fence.z,.084,2.08,.09,'#676e68');
+        if(i===4) continue;
+        const next=px+fence.w/4;
+        for(let k=0;k<6;k++) {
+            const rise=k*.31, run=Math.min(1.85,1.90-rise);
+            b.beam(px,.10+rise+base,fence.z,px+run,base+.10+rise+run,fence.z,.022,'#82887e');
+            b.beam(next,.10+rise+base,fence.z,next-run,base+.10+rise+run,fence.z,.022,'#82887e');
+        }
+    }
+    const sx=-137, sz=106, floor=layout.groundHeight(sx,sz);
+    b.box(sx,floor+.035,sz,3.5,.06,9.2,'#767d77');
+    for (const side of [-1,1]) {
+        b.box(sx+side*1.64,floor+.073,sz,.09,.02,9.18,'#ddd1ac');
+        b.box(sx+5.5+side*1.81,floor+.017,sz,.09,.02,9.65,'#d6cfb5');
+    }
+    for (let k=0;k<10;k++) b.box(sx,floor+.076,sz-4.05+k*.90,3.40,.016,.029,'#5f6663');
+    sign('ВЕСОВАЯ','ОЖИДАНИЕ СПРАВА', '#e1dfc8','#505e58',x+w*.5+.015,base+1.72,z,1.42,.39,Math.PI/2);
+    for (const px of [-41,-36.5,-32]) {
+        const pz=61.03,y=layout.groundHeight(px,pz);
+        b.box(px,y+.03,pz,.38,.055,.27,'#74766b');
+        for(let k=0;k<8;k++) {
+            const a=k*Math.PI/8, n=(k+1)*Math.PI/8;
+            b.beam(px+.14*Math.cos(a),y+.065+.15*Math.sin(a),pz,px+.14*Math.cos(n),y+.065+.15*Math.sin(n),pz,.048,'#695f53');
+        }
+    }
+}
+
+function addDistrictDetails(b, sign, layout) {
+    canalHouses(b, sign, layout);
+    entrances(b, sign);
+    quay(b, sign, layout);
+}
+module.exports = { addDistrictDetails, streetSolids };
+
+},
 "game/exploration-layout.js": function(require, module, exports) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -7993,6 +8205,7 @@ exports.marketPassBlocked = marketPassBlocked;
 const city_clock_js_1 = require("./city-clock.js");
 const { river, metal } = require('./venue-layout.js');
 exports.entrances = {
+    ...Object.fromEntries(Object.entries(require('./neighborhood-shops.js').shops).map(([zone, shop]) => [zone, { x: shop.x, z: shop.z, yaw: shop.yaw, label: shop.label, zone }])),
     school1: require('./school-site.js').schoolOutside,
     house: { x: -34.96, z: 17, yaw: Math.PI, zone: 'house', label: 'Дом № 23' },
     workshop: { x: 28, z: 14.82, yaw: 0, zone: 'workshop', label: 'Мастерская Инны' },
@@ -8005,17 +8218,20 @@ exports.entrances = {
     'metal-hall': metal.door,
     passage: { x: -34.96, z: 3.4, yaw: Math.PI, zone: 'passage', label: 'Сквозной проход дома № 23' }
 };
-exports.serviceEntries = ['taxipark', 'cafe', 'terminal', 'hydro', 'river-station', 'metal-hall', 'school1'];
+exports.serviceEntries = ['taxipark', 'cafe', 'terminal', 'hydro', 'river-station', 'metal-hall', 'school1', ...Object.keys(require('./neighborhood-shops.js').shops)];
 exports.passageFront = { x: -33.1, z: 16.95, yaw: 0 };
 exports.bankFinds = [
     { id: 'box', x: -115, z: 72.8, name: 'Ящик рыбака', description: 'В жестяном ящике — пробковый поплавок, карта глубин и билет на старый трамвай.' },
-    { id: 'flood', x: -33.70, z: 79.8, name: 'Отметки паводка', description: 'На столбе три риски. Верхняя подписана «Май 2064». Ниже — след талой воды.' },
+    { id: 'flood', x: -33.70, z: 79.8, name: 'Отметки паводка', description: 'На столбе три риски. Верхняя подписана «Май 1999». Ниже — след талой воды.' },
     { id: 'pump', x: 35.5, z: 70, name: 'Люк старой насосной', description: 'Под закрытым люком гудит вода. На табличке сохранился номер шлюза.' }
 ];
 exports.marketTables = [54, 64, 73].map(x => ({ x, z: 14.7, w: .92, d: 1.9, h: .87 }));
 const empty = [];
-function marketLayouts(elapsed) { const minute = (0, city_clock_js_1.districtMinutes)(elapsed); return minute >= 8 * 60 && minute < 20 * 60 ? exports.marketTables : empty; }
-function marketPassBlocked(x, z, r, elapsed) { return marketLayouts(elapsed).some(p => Math.abs(x - p.x) < p.w / 2 + r && Math.abs(z - p.z) < p.d / 2 + r); }
+const { marketOpen } = require('./market-hours.js');
+function marketLayouts(elapsed, calendar = (0, city_clock_js_1.districtCalendarMinutes)(elapsed)) {
+    return marketOpen(calendar) ? exports.marketTables : empty;
+}
+function marketPassBlocked(x, z, r, elapsed, calendar) { return marketLayouts(elapsed, calendar).some(p => Math.abs(x - p.x) < p.w / 2 + r && Math.abs(z - p.z) < p.d / 2 + r); }
 exports.swapCabinet = { x: -38.2, z: 17.1 };
 exports.entranceIntercom = { x: -34.01, z: 16.53 };
 exports.explorationObstacles = [
@@ -8131,7 +8347,7 @@ function createExploration(scene) {
     b.cyl(gauge.x, .27, gauge.z, .21, 1.91, '#9b9683');
     for (let i = 0; i < 10; i++)
         b.box(gauge.x, -.53 + i * .157, gauge.z + .128, i % 3 === 0 ? .20 : .11, .032, .022, '#6b443a');
-    sign('МАЙ 2064', 'ПАВОДОК', gauge.x, .90, gauge.z + .14, .41, .24);
+    sign('МАЙ 1999', 'ПАВОДОК', gauge.x, .90, gauge.z + .14, .41, .24);
     b.piece('round', 35.5, -.58, 70, 1.21, .23, 1.21, '#525e63');
     b.piece('round', 35.5, -.448, 70, 1.08, .049, 1.08, '#758383');
     for (let i = -2; i <= 2; i++)
@@ -8181,19 +8397,33 @@ function createExploration(scene) {
         sb.box(0, -1.22, 0, w + .02, .075, .13, '#586c72');
         sb.flush();
     }
-    sign('ДЕЖУРНЫЙ КИОСК', '20:00 — 08:00 · СВЯЗЬ', 68.7, 2.21, 20.35, 2.21, .42, 0, '#68523f');
-    sign('ВЕЧЕРНИЙ ПРОХОД', 'ПОСЛЕ 20:00 · ЗА РЯДАМИ', 57.8, 1.79, 15.88, 2.91, .50, Math.PI);
+    const pickup = new THREE.Group();
+    pickup.name = 'Вечерняя выдача заказов у Инны';
+    moving.add(pickup);
+    const receiptBoard = new world_batch_js_1.Batches(pickup);
+    receiptBoard.box(29.9, 1.72, 21.11, 1.45, .47, .09, '#574c3c');
+    receiptBoard.lamp(29.9, 2.02, 21.25, .37, .06, .17, '#ffe2ae');
+    receiptBoard.flush();
+    const pickupLabels = new world_batch_js_1.Panels(pickup);
+    pickupLabels.place('inna-night-pickup', () => (0, world_textures_js_1.signTexture)('ВЫДАЧА', 'ИННА · У ПРИЛАВКА', '#493f32', '#e3d6ab', 3.1),
+        29.9, 1.72, 21.17, 1.39, .45, 0);
+    pickupLabels.flush();
+    pickup.visible = false;
+    sign('ДЕЖУРНЫЙ КИОСК', 'СВЯЗЬ ПОСЛЕ ЗАКРЫТИЯ РЯДОВ', 68.7, 2.21, 20.35, 2.21, .42, 0, '#68523f');
+    sign('ВЕЧЕРНИЙ ПРОХОД', 'ПОСЛЕ 18:00 · ЗА РЯДАМИ', 57.8, 1.79, 15.88, 2.91, .50, Math.PI);
     b.flush();
     p.flush();
-    return { update(elapsed, home, _player, _tramTime, _cars, traffic, minutes = (0, city_clock_js_1.districtMinutes)(elapsed)) {
+    return { update(elapsed, home, _player, _tramTime, _cars, traffic, calendar = (0, city_clock_js_1.districtCalendarMinutes)(elapsed), pickupDue = false) {
+            const minutes = calendar % 1440;
             updateCity(home.openedGates, elapsed, traffic, minutes, _cars, _player);
             updateQuarter(elapsed, _player);
             for (const { h, m } of arms) {
                 h.rotation.z = -(minutes % 720) * Math.PI / 360;
                 m.rotation.z = -(minutes % 60) * Math.PI / 30;
             }
-            const open = (0, exploration_layout_js_1.marketLayouts)(elapsed).length > 0;
+            const open = (0, exploration_layout_js_1.marketLayouts)(elapsed, calendar).length > 0;
             tables.visible = open;
+            pickup.visible = !open && pickupDue;
             for (const s of shutters)
                 s.scale.y = open ? .075 : 1;
             radio.visible = home.loan === 'left';
@@ -8454,8 +8684,9 @@ class Instances {
     }
 }
 const lampInk = new T.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
-const sodiumBulb = new T.Color('#ffe2a0'), sodiumPool = new T.Color('#ff9645');
-const crossingBulb = new T.Color('#ddf2ff'), crossingPool = new T.Color('#abd9f5');
+const { lampFamily, lampPalette } = require('./winter-light.js');
+const fixturePalette = Object.fromEntries(Object.entries(lampPalette).map(([family, pair]) =>
+    [family, pair.map(ink=>new T.Color(ink))]));
 const signalInk = new T.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
 const debrisMat = new T.MeshLambertMaterial({ color: 0xffffff });
 const red = new T.Color('#ff6750'), green = new T.Color('#75e4b6'), dark = new T.Color('#39484d');
@@ -8516,8 +8747,8 @@ function createFixtures(scene) {
     }
     return {
         state: () => ({ ...info }),
-        update(elapsed, broken = fixtures_js_1.intact, focus, power = 'normal', daylight = 0) {
-            pools.mesh.material.opacity = .05 + .79 * (1 - daylight);
+        update(elapsed, broken = fixtures_js_1.intact, focus, power = 'normal', daylight = 0, wet = .65) {
+            pools.mesh.material.opacity = (.05 + .76 * (1 - daylight)) * (.43 + .57*wet);
             const x = focus?.x ?? 0, z = focus?.z ?? 0, phase = ((0, world_layout_js_1.signalGreen)('x', elapsed) ? 1 : 0) + ((0, world_layout_js_1.signalGreen)('z', elapsed) ? 2 : 0);
             const changed = broken !== old || elapsed < last;
             const cutChanged = cut !== (power !== 'normal');
@@ -8557,11 +8788,11 @@ function createFixtures(scene) {
                 if (near)
                     shoes.push(local.makeScale(.40, .105, .40).setPosition(f.x, base + .048, f.z));
                 if (powered) {
-                    lamps.push(part(m, 0, lampHeight - .105, 2.14, .39, .037, .81), f.crosswalk ? crossingBulb : sodiumBulb);
+                    lamps.push(part(m, 0, lampHeight - .105, 2.14, .39, .037, .81), fixturePalette[lampFamily(f)][0]);
                     if (d < 57 ** 2) {
                         const sine = Math.sin(f.face), cosine = Math.cos(f.face);
                         const px = f.crosswalk?.x ?? f.x + sine * 3.55, pz = f.crosswalk?.z ?? f.z + cosine * 3.55;
-                        const ink = f.crosswalk ? crossingPool : sodiumPool;
+                        const ink = fixturePalette[lampFamily(f)][1];
                         temp.position.set(px, (0, world_layout_js_1.groundHeight)(px, pz) + .039, pz);
                         temp.rotation.set(0, f.face, 0);
                         temp.scale.set(f.crosswalk ? 7.2 : 6.4, 1, f.crosswalk ? 12.5 : 9.0);
@@ -8578,6 +8809,14 @@ function createFixtures(scene) {
                     const go = (0, world_layout_js_1.signalGreen)(f.axis, elapsed);
                     lenses.push(part(m, 0, 3.21, .206, 1, 1, 1), !disabled && !go ? red : dark);
                     lenses.push(part(m, 0, 2.78, .206, 1, 1, 1), !disabled && go ? green : dark);
+                    if (!disabled && !record && near) {
+                        const px=f.x+Math.sin(f.face)*1.45, pz=f.z+Math.cos(f.face)*1.45;
+                        temp.position.set(px, (0, world_layout_js_1.groundHeight)(px,pz)+.041,pz);
+                        temp.rotation.set(0,f.face,0);
+                        temp.scale.set(.60,1,2.75);
+                        temp.updateMatrix();
+                        pools.push(temp.matrix, go ? green : red);
+                    }
                 }
                 if (record) {
                     const age = Math.max(0, elapsed - record.at);
@@ -8690,6 +8929,47 @@ function fleetGuide(cars, player, driven) {
         return `<article><small>${profile.category}</small><h3>${vehicle_cabin_js_1.vehicleNames[kind]}</h3><p>${profile.description}</p>${parked ? `<button type="button" class="k-job-btn" data-action="fleet-find" data-value="${kind}">На карте · ${range} м</button>` : '<small>Поблизости нет стоянки</small>'}</article>`;
     }).join('')}</div>`;
 }
+
+},
+"game/fleet-placard.js": function(require, module, exports) {
+'use strict';
+const T = require('../engine/three.module.min.js');
+const stock = new Map(), sheet = new T.PlaneGeometry(1,1);
+
+function placard(root, lines, position, size, angle = 0) {
+    const text = lines.join('\n');
+    let material = stock.get(text);
+    if (!material) {
+        const paper = document.createElement('canvas');
+        paper.width = 384;
+        paper.height = 112;
+        const brush = paper.getContext('2d');
+        brush.fillStyle = '#dddac9';
+        brush.fillRect(0,0,paper.width,paper.height);
+        brush.strokeStyle = '#535951';
+        brush.lineWidth = 3;
+        brush.strokeRect(5,5,374,102);
+        brush.fillStyle = '#303733';
+        brush.textAlign = 'center';
+        brush.font = 'bold 32px Arial';
+        brush.fillText(lines[0],192,49,356);
+        brush.font = '24px Arial';
+        brush.fillText(lines[1],192,85,356);
+        const map = new T.CanvasTexture(paper);
+        map.colorSpace = T.SRGBColorSpace;
+        material = new T.MeshLambertMaterial({map});
+        stock.set(text,material);
+    }
+    const sign = new T.Mesh(sheet, material);
+    sign.name = lines[0];
+    sign.position.fromArray(position);
+    sign.rotation.y = angle;
+    sign.scale.set(size[0],size[1],1);
+    root.add(sign);
+    (root.userData.readableSigns ??= []).push({x:position[0],y:position[1],z:position[2],w:size[0],h:size[1],angle,text});
+}
+
+module.exports = {placard};
 
 },
 "game/foot-patrol.js": function(require, module, exports) {
@@ -9301,6 +9581,12 @@ async function start(boot, listen) {
     canvas.insertAdjacentElement('afterend', threshold);
     const follow = new camera_js_1.FollowCamera(Number.isFinite(saved?.yaw) ? saved.yaw : sim.hero.yaw);
     const camera = follow.camera;
+    const guidePhoto = require('./notebook-atlas.js').createGuidePhotos(renderer, canvas, scene, world, camera,
+        () => sim.home.inside && house ? house.scene : scene);
+    const { ShiftJournal } = require('./shift-journal.js');
+    let journal = new ShiftJournal(saved?.shiftJournal);
+    const firstMarket = { x:30, z:26, label:'Прилавок Инны' };
+    const campaignPay = sim_js_1.campaign.map(order => order.reward);
     let portrait = null;
     const portraitEye = new THREE.Vector3(), portraitDirection = new THREE.Vector3(), framing = new THREE.Vector3();
     let previousPortrait = null;
@@ -9330,12 +9616,15 @@ async function start(boot, listen) {
             return true;
         },
         weather:conditions ?? (0, weather_js_1.weatherAt)(sim.elapsed, clockMinutes()),
-        scene, camera, ui, world, follow, hero, people, cars, audio, garage, jobs, parcels, zone:sim.home.zone, indoorScene:house?.scene, interiorScene:house?.scene
+        scene, camera, ui, world, follow, guidePhoto, hero, people, cars, audio, garage, jobs, parcels, zone:sim.home.zone, indoorScene:house?.scene, interiorScene:house?.scene
     }), () => persist());
     districtPlay.restore(saved?.districtPlay);
     ui.update({ districtDestinations: districtPlay.destinations });
     audio.onDialogueResume = text => ui.notify(text);
-    audio.onDistrictBulletin = text => ui.notify(text);
+    audio.onDistrictBulletin = text => {
+        journal.add('Депо · эфир', text, calendarMinutes());
+        ui.notify(text);
+    };
     const hud = document.querySelector('#hud');
     const showSound = (0, sound_guide_js_1.createSoundGuide)(hud);
     const soundCaptions = new sound_captions_js_1.SoundCaptions();
@@ -9383,7 +9672,7 @@ async function start(boot, listen) {
     applyPopulationSettings();
     if (!storage_js_1.canSaveGame())
         ui.notify('Не удалось загрузить профиль. Автосохранение приостановлено. Откройте «Сохранения и диагностика».');
-    const snapshot = () => mainSession ? { ...mainSession, settings: { ...ui.settings }, graphics: graphics.mode } : ({ version: 1, game: sim.snapshot(), settings: { ...ui.settings }, yaw: follow.yaw, districtJobs: jobs.save(), outerTour: tour.save(), garage: garage.save(), parcels: parcels.save(), districtPlay: districtPlay.save(), graphics: graphics.mode });
+    const snapshot = () => mainSession ? { ...mainSession, settings: { ...ui.settings }, graphics: graphics.mode } : ({ version: 1, game: sim.snapshot(), settings: { ...ui.settings }, yaw: follow.yaw, districtJobs: jobs.save(), outerTour: tour.save(), garage: garage.save(), parcels: parcels.save(), districtPlay: districtPlay.save(), shiftJournal: journal.save(), graphics: graphics.mode });
     const jobFrame = (dt = 0) => ({ x: sim.player.x, z: sim.player.z, yaw: follow.yaw, space: sim.home.zone, car: sim.activeCar() ?? null, vehicles: sim.cars, busy: !!sim.transition || !!sim.home.door || sim.tramRider.onboard, wanted: sim.wanted, elapsed: sim.elapsed, clockMinutes: clockMinutes(), heroSpeed: sim.player.speed, heroY: sim.player.y, tramTime: sim.tramTime, campaignMission: sim.mission, cargo: sim.cargoRail.passage, dt });
     const trialCamera = new THREE.PerspectiveCamera();
     const sampleHome = new residence_js_1.Residence();
@@ -9454,6 +9743,13 @@ async function start(boot, listen) {
     ui.registerPanel('fleet', 'Автопарк', () => (0, fleet_guide_js_1.fleetGuide)(sim.cars, sim.player, sim.driven));
     ui.registerPanel('district-jobs', 'Заказы района', () => (0, story_ui_js_1.jobBoard)(jobs, jobFrame()));
     const escaped = (v) => v.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    const callsigns = ['Депо', 'Участок', 'Вышка'];
+    let radioChannel = 0, radioAnswer = '';
+    ui.registerPanel('shift-radio', 'Рация смены', () => {
+        const reply = radioAnswer ? '<p role="status">'+escaped(radioAnswer)+'</p>' : '';
+        return '<div class="k-radio-lcd"><span>КАНАЛ 0'+(radioChannel + 1)+'</span><strong>'+callsigns[radioChannel]+'</strong></div>'+reply+
+            '<div class="k-list"><button class="k-panel-row" data-action="shift-tune">Сменить канал</button><button class="k-panel-row" data-action="shift-call">Нажать тангенту · запросить сводку</button></div>';
+    });
     ui.registerPanel('reports', 'Сводка дежурной смены', () => sim.cityLife.incidents.length ? sim.cityLife.incidents.slice().reverse().map(i => '<p>' + escaped(i.text) + '</p>').join('') : '<p>В районе пока спокойно.</p>');
     if (storage_js_1.recoveryNotice)
         ui.notify(storage_js_1.recoveryNotice);
@@ -9468,10 +9764,17 @@ async function start(boot, listen) {
         });
     }
     let audioStarted = false;
+    function phoneSignal() {
+        audio.tone(165, 135, .11, .065, 'triangle');
+        audio.tone(165, 135, .11, .055, 'triangle', .18);
+        ui.messageFeedback();
+    }
     function unlock() {
         audio.unlock();
-        if (!audioStarted && sim.mission === 0 && sim.stage === 0)
-            audio.voice('order');
+        if (!audioStarted && !mainSession && sim.mission === 0 && sim.stage === 0) {
+            phoneSignal();
+            ui.notify('Канальск · февраль 2022. Семён оставил сообщение о последнем рейсе.');
+        }
         audioStarted = true;
     }
     window.addEventListener('pointerdown', unlock, { capture: true });
@@ -9514,6 +9817,22 @@ async function start(boot, listen) {
     }
     function action(id, value) {
         if (id.startsWith('district:') && districtPlay.act(id)) return;
+        if (id === 'shift-tune' || id === 'shift-call') {
+            if (id === 'shift-tune') { radioChannel = (radioChannel + 1) % callsigns.length; radioAnswer = ''; }
+            else {
+                const rail = (0, world_railway_js_1.linePose)(sim.tramTime);
+                const weather = (0, weather_js_1.weatherAt)(sim.elapsed,clockMinutes());
+                const bulletins = districtPlay.radio();
+                radioAnswer = radioChannel === 0 ? (rail.visible ? 'Вагон на линии. ' + sim.tramRider.stopName(sim.tramTime) : 'Вагон сейчас в депо.') :
+                    radioChannel === 1 ? (bulletins.find(b => b.subtitle)?.subtitle || 'Текущий участок · ' + sim.district()) :
+                    'По метеопосту ' + Math.round(weather.temperature) + ' °C.';
+                audio.burst(2100,.055,.07);
+                audio.tone(640,600,.08,.035,'sine',.12);
+                journal.add(callsigns[radioChannel]+' · эфир',radioAnswer,calendarMinutes());
+            }
+            ui.refreshPanel();
+            return;
+        }
         if (id === 'quarter-trial') {
             startQuarterTrial();
             return;
@@ -9574,6 +9893,7 @@ async function start(boot, listen) {
                 parcels = new parcel_hands_js_1.ParcelHands();
                 garage.setTime(Math.round(ride.hour * 60), (0, city_clock_js_1.districtMinutes)(ride.sim.elapsed));
                 districtPlay.restore();
+                journal = new ShiftJournal({ opening:3 });
                 swapWorld(ride.sim);
                 return;
             }
@@ -9585,6 +9905,7 @@ async function start(boot, listen) {
                 garage = new garage_log_js_1.GarageLog(original.garage, original.game.savedCar?.id);
                 parcels = new parcel_hands_js_1.ParcelHands(original.parcels);
                 districtPlay.restore(original.districtPlay);
+                journal = new ShiftJournal(original.shiftJournal);
                 swapWorld(new sim_js_1.Simulation(original.game), original.yaw);
                 return;
             }
@@ -9741,7 +10062,7 @@ async function start(boot, listen) {
             return;
         }
         if (id.startsWith('home:')) {
-            const r = sim.home.act(id, sim.hero, sim.elapsed, p => (0, collision_js_1.clearDisc)(p, .31, (0, world_layout_js_1.groundHeight)(p.x, p.z), sim.cars) && !sim.people.some(n => !n.onboard && Math.hypot(n.x - p.x, n.z - p.z) < .55), clockMinutes());
+            const r = sim.home.act(id, sim.hero, sim.elapsed, p => (0, collision_js_1.clearDisc)(p, .31, (0, world_layout_js_1.groundHeight)(p.x, p.z), sim.cars) && !sim.people.some(n => !n.onboard && Math.hypot(n.x - p.x, n.z - p.z) < .55), calendarMinutes());
             if (r) {
                 if ('untilHour' in r && typeof r.untilHour === 'number')
                     garage.setTime(r.untilHour * 60, clockMinutes());
@@ -9936,6 +10257,8 @@ async function start(boot, listen) {
                 const person = sim.people.find(p => p.id === speaker);
                 const position = person ? (0, blackout_js_1.soundDirection)('voice', { ...sim.player, yaw: soundBearing() }, person, 20) : undefined;
                 const scene = { phone: !!position && position.distance > 5.2, pan: position?.pan, distance: position?.distance, subtitle };
+                if (scene.phone && journal.add(event.who || 'Диспетчер', event.text, calendarMinutes(), true))
+                    phoneSignal();
                 if (clip)
                     audio.voice(clip, speaker, scene);
                 if (person && clip && !(0, dialogue_js_1.dialogueDelivery)(clip, scene).phone && !sim.home.inside && !sim.driven && (position?.distance ?? Infinity) < 3.2)
@@ -9973,7 +10296,7 @@ async function start(boot, listen) {
         if (districtPlay.lookout)
             return districtPlay.actions();
         const base = sim.interactionOptions().map(label => ({ id: 'interact', label, value: label }));
-        const more = sim.driven || sim.transition || sim.tramRider.onboard ? [] : sim.home.options(sim.hero, sim.elapsed, clockMinutes());
+        const more = sim.driven || sim.transition || sim.tramRider.onboard ? [] : sim.home.options(sim.hero, sim.elapsed, calendarMinutes());
         const stop = availableTourStop(), visit = stop && tour.canInteract(tourFrame()) ? [{ id: 'tour-check', label: stop.action }] : [];
         const carry = sim.driven || sim.transition || sim.home.inside || sim.tramRider.onboard ? [] : parcels.actions(sim.hero, sim.cars, parcelRear, storyBlock());
         const rest = canWait() ? [{ id: 'rest-hour', label: 'Подождать час' }] : [];
@@ -9999,7 +10322,8 @@ async function start(boot, listen) {
         const pursuitInfo = sim.pursuitStatus;
         showRoadAdvisory(active ? (0, road_advisory_js_1.roadAhead)(active, conditions, sim.cargoRail.blocksTraffic(active)) : '');
         const description = pursuitInfo.vehicle;
-        ui.update({ tramTime: sim.tramRider.onboard ? sim.tramTime : null,
+        if (!mainSession && journal.order(sim.mission, calendarMinutes()) && audioStarted) phoneSignal();
+        ui.update({ shiftMessages: journal.messages, campaignPay, campaignStage:sim.stage, tramTime: sim.tramRider.onboard ? sim.tramTime : null,
             pursuitVehicle: description ? { name: vehicle_cabin_js_1.vehicleNames[description.kind], color: description.color, abandoned: description.abandoned } : undefined, pursuitOnFoot: pursuitInfo.onFoot, campaignObjective, sidePanel: stop ? 'outer-tour' : undefined, sideStage: stop ? { step: tour.stage + 1, total: tour.total } : jobs.active ? { step: jobs.active.stage + 1, total: (0, story_catalog_js_1.districtJob)(jobs.active.id).steps.length } : undefined, archiveMap: sim.home.archiveMap, actions: opts, clock, interiorId: sim.home.zone, interiorPlan: sim.home.inside ? (0, interior_layout_js_1.interiorAtlas)(sim.home.zone) : undefined, cockpit: !!active && sim.motorPool.cockpit, inside: sim.home.inside, x: sim.player.x, z: sim.player.z, heading: sim.player.yaw, driving: !!active, money: sim.money, wanted: sim.wanted, missionIndex: sim.mission,
             missionTitle: objective.title, objective: objective.goal, reward: objective.reward, hint: opts[0]?.label, target: targetPoint(), district: sim.district(),
             search: sim.search, pursuit: pursuitInfo, population: sim.home.inside ? null : sim.populationStatus, lastContact: pursuitInfo.lastSeen, police: sim.wanted ? [...sim.cars.filter(patrolLight), ...sim.footPatrols] : [], atGarage: sim.atGarage(), speed: active?.speed ?? 0,
@@ -10043,6 +10367,7 @@ async function start(boot, listen) {
                 drive: sim.activeCar() ? { yaw: sim.activeCar().yaw, speed: sim.activeCar().speed } : null
             }) });
     }
+    let soundedAtTurn = false;
     function updateAudio(dt, paused) {
         const c = sim.activeCar(), player = sim.player, conditions = (0, weather_js_1.weatherAt)(sim.elapsed, clockMinutes());
         if (!paused)
@@ -10063,7 +10388,7 @@ async function start(boot, listen) {
                 side = (dx * Math.cos(direction) - dz * Math.sin(direction)) / Math.max(range, .1);
             }
         const kit = c ? (0, vehicle_systems_js_1.equipment)(c) : undefined;
-        const road = c && kit ? {
+        const road = c && kit ? { vehicleId:c.id,
             kind: c.kind, surface: (0, weather_js_1.footstepSurface)((0, world_layout_js_1.surfaceAt)(c.x, c.z), c.x, c.z, conditions), accelerator: Number(ui.input.gas ?? 0), interior: sim.motorPool.cockpit, enclosure: sim.transition ? 0 : kit.windowsOpen ? .18 : sim.motorPool.cockpit ? 1 : .58,
             load: Math.min(1, (kit.load + kit.towedMass) / 600), punctures: kit.punctures, cargo: kit.cargo, turn: c.steer, shock: Math.min(1, kit.shock / 8),
             wearLeft: Math.max(kit.dents.leftSide ?? 0, kit.dents.frontLeft ?? 0, kit.dents.rearLeft ?? 0, kit.wheelDamage?.[0] ?? 0, kit.wheelDamage?.[2] ?? 0, kit.leftMirror ? .16 : 0),
@@ -10072,7 +10397,13 @@ async function start(boot, listen) {
         } : undefined;
         const power = (0, blackout_js_1.blackoutField)(jobs.blackoutPhase, listener.x, listener.z);
         const clue = (0, blackout_js_1.blackoutCues)(jobs.blackoutPhase, { ...listener, space: sim.home.zone }, sim.elapsed, sim.tramTime, nearbyPatrol);
-        const landmarks = paused ? [] : (0, local_soundscape_js_1.landmarkSoundField)(listener, sim.elapsed, conditions, power);
+        const soundMinutes = clockMinutes(), tramSoundPose = (0, world_railway_js_1.linePose)(sim.tramTime);
+        const enteringCurve = tramSoundPose.visible && Math.abs(tramSoundPose.speed) > 1 && tramSoundPose.z > 9 && tramSoundPose.z < 24;
+        if (!paused) {
+            if (enteringCurve && !soundedAtTurn) ringTram(tramSoundPose);
+            soundedAtTurn = enteringCurve;
+        }
+        const landmarks = paused ? [] : (0, local_soundscape_js_1.landmarkSoundField)(listener, sim.elapsed, conditions, power, soundMinutes, tramSoundPose);
         const cargoRail = sim.home.inside ? undefined : sim.cargoRail.soundAt({ ...player, yaw: direction }) ?? undefined;
         const sealed = sim.home.inside ? 1 - sim.home.open * .65 : road?.enclosure ?? 0;
         const dialogueNoise = (0, dialogue_js_1.dialogueNoiseAt)(listener, (0, world_railway_js_1.linePose)(sim.tramTime), cargoRail?.distance, Math.abs(cargoRail?.speed ?? 0) / 4, sealed);
@@ -10092,6 +10423,7 @@ async function start(boot, listen) {
             roomMix: sim.home.acoustics(sim.hero, sim.elapsed), broadcast: jobs.broadcast, archive: jobs.archive, townNews, districtRadio: districtPlay.radio,
             inside: sim.home.inside, tramTime: sim.tramTime, district: sim.district(), driving: !!c, speed: c?.speed ?? player.speed,
             wanted: sim.wanted, moving: Math.abs(player.speed) > .15, running: player.speed > 3.5, paused, road, weather: conditions,
+            minutes: soundMinutes, depotKeysReturned: !!sim.depotKeysReturned,
             pursuit: { tracking: sim.wanted > 0 && !sim.search, distance, side, phase: sim.pursuitStatus.phase }, soundGuide: clue.sources, blackout: power, landmarks, cargoRail, dialogueNoise });
     }
     document.addEventListener('visibilitychange', () => {
@@ -10228,12 +10560,12 @@ async function start(boot, listen) {
         const { frame, camera: shot, cars: vehicles, focus } = replay;
         const conditions = (0, weather_js_1.weatherAt)(frame.time, frame.clock);
         world.setTramCabin(false);
-        world.update(frame.time, frame.tram, focus, sim.brokenFixtures, frame.power, conditions.daylight);
+        world.update(frame.time, frame.tram, focus, sim.brokenFixtures, frame.power, conditions.daylight, frame.calendar ?? frame.clock);
         motorWorld.updateCrashDebris(replay.crashes, frame.time, focus);
         motorWorld.updateFences(frame.fences ?? sim.motorPool.props, frame.time);
         recordedFreight.restore(frame.freight);
         freightView.update(recordedFreight, frame.time, focus);
-        weather(dt, focus, !!frame.driven, vehicles, [], frame.time, shot, sim.brokenFixtures, graphics.quality, car => frame.cars.some(c => c.id === car.id && c.active), { weather: conditions, wanted: frame.wanted, fast: Math.abs(focus.speed) > 11, clock: frame.clock, blackout: frame.power });
+        weather(dt, focus, !!frame.driven, vehicles, [], frame.time, shot, sim.brokenFixtures, graphics.quality, car => frame.cars.some(c => c.id === car.id && c.active), { weather: conditions, wanted: frame.wanted, fast: Math.abs(focus.speed) > 11, clock: frame.calendar ?? frame.clock, blackout: frame.power });
         world.cull(shot);
         renderer.render(scene, shot);
         replayView.afterDraw();
@@ -10271,7 +10603,7 @@ async function start(boot, listen) {
         follow.look(look.x, look.y);
         const input = { ...ui.input, cameraYaw: follow.yaw, populationYaw: follow.yaw + (ui.input.rear ? Math.PI : 0) };
         const before = { x: sim.player.x, z: sim.player.z }, wasDriving = sim.activeCar(), zoneBefore = sim.home.zone;
-        sim.clockOffset = garage.wait;
+        sim.clockOffset = garage.calendarWait;
         sim.tick(dt, input);
         prunePopulationModels();
         if (!sim.tramRider.onboard && !sim.transition && zoneBefore === sim.home.zone) {
@@ -10304,6 +10636,21 @@ async function start(boot, listen) {
         world.setTramCabin(sim.tramRider.onboard);
         const floor = inside ? indoorFloor : heroFloor, conditions = (0, weather_js_1.weatherAt)(sim.elapsed, clockMinutes());
         districtPlay.update(dt, conditions);
+        const opening = !mainSession && journal.walk(sim, calendarMinutes());
+        if (opening) {
+            if (opening.route) {
+                if (opening.text) phoneSignal();
+                ui.openingRoute(firstMarket, sim.player);
+            }
+            if (opening.bell) {
+                const turn = { x:17, z:15 };
+                const direction = (0, blackout_js_1.soundDirection)('bell', { ...sim.player, yaw:soundBearing() }, turn, 45);
+                audio.tramBell(direction.pan, .45);
+                soundCaptions.pulse('bell', sim.elapsed, turn);
+            }
+            if (opening.arrived) ui.clearRoute(firstMarket);
+            if (opening.text) ui.notify(opening.text);
+        }
         const streetLookout = districtPlay.lookout, lookout = streetLookout ?? sim.home.lookout;
         const outside = !inside || !!lookout, focus = lookout ? { ...lookout, speed: 0 } : p;
         const transfer = sim.transition, exchange = sim.handoffRole;
@@ -10330,7 +10677,9 @@ async function start(boot, listen) {
                 if (!inside)
                     tracks.footprint(sole, sim.elapsed);
                 const schoolPlan = inside && interior_layout_js_1.annexes[sim.home.zone];
-                const indoorSurface = schoolPlan?.number ? (schoolPlan.number === 1 ? 'school-tile' : 'school-vinyl') : 'concrete';
+                const mat = inside && (sim.home.zone === 'house' && sole.y < .45 && Math.abs(sole.x+.85)<.82 && sole.z>5.68 ||
+                    schoolPlan?.number === 1 && Math.hypot(sole.x-schoolPlan.entrance.x,sole.z-schoolPlan.entrance.z)<1.15);
+                const indoorSurface = mat ? 'rubber' : schoolPlan?.number ? (schoolPlan.number === 1 ? 'school-tile' : 'school-vinyl') : 'concrete';
                 audio.footstep(inside ? indoorSurface : (0, weather_js_1.footstepSurface)((0, world_layout_js_1.surfaceAt)(sole.x, sole.z), sole.x, sole.z, conditions), p.speed > 3.5);
             }
         }
@@ -10444,13 +10793,13 @@ async function start(boot, listen) {
         if (inside)
             house.update(dt, sim.home.open, sim.home, sim.cars, sim.mission, sim.elapsed, sim.tramTime, jobs.effects);
         if (outside) {
-            explore.update(sim.elapsed, sim.home, focus, sim.tramTime, sim.cars, sim.cityTraffic, sim.cityMinutes);
+            explore.update(sim.elapsed, sim.home, focus, sim.tramTime, sim.cars, sim.cityTraffic, sim.cityCalendarMinutes, sim.stage === 0 && (sim.mission === 0 || sim.mission === 2));
             const shutter = garage.shutter === undefined ? sim.cityLife.shutter : Number(garage.shutter);
             roll = THREE.MathUtils.damp(roll, shutter, 5.2, dt);
             crew.update(sim.cityLife.repair, sim.elapsed, roll);
             motorWorld.update(sim, dt);
             tracks.update(sim.elapsed, focus, sim.cars, graphics.quality, conditions);
-            if (world.update(sim.elapsed, sim.tramTime, focus, sim.brokenFixtures, jobs.blackoutPhase, conditions.daylight).bell)
+            if (world.update(sim.elapsed, sim.tramTime, focus, sim.brokenFixtures, jobs.blackoutPhase, conditions.daylight, calendarMinutes(), conditions.wet).bell)
                 ringTram(rail);
             freightView.update(sim.cargoRail, sim.elapsed, focus);
         }
@@ -10525,7 +10874,7 @@ async function start(boot, listen) {
         if (contactShadow.root.visible)
             contactShadow.update(hero.getFootContacts(), hero.root.scale.x, floor);
         if (outside)
-            weather(dt, focus, !!car || !!lookout || sim.tramRider.onboard, sim.cars, sim.people, sim.elapsed, camera, sim.brokenFixtures, graphics.quality, patrolLight, { weather: conditions, wanted: sim.wanted, fast: Math.abs(car?.speed ?? 0) > 11, clock: clockMinutes(), blackout: jobs.blackoutPhase });
+            weather(dt, focus, !!car || !!lookout || sim.tramRider.onboard, sim.cars, sim.people, sim.elapsed, camera, sim.brokenFixtures, graphics.quality, patrolLight, { weather: conditions, wanted: sim.wanted, fast: Math.abs(car?.speed ?? 0) > 11, clock: calendarMinutes(), blackout: jobs.blackoutPhase });
         updateAudio(dt, false);
         if (now - lastHud >= 100) {
             syncHUD();
@@ -10549,7 +10898,7 @@ async function start(boot, listen) {
         if (outside)
             world.cull(camera);
         if (!inside && !sim.tramRider.onboard)
-            recorder.capture({ time: sim.elapsed, clock: clockMinutes(), tram: sim.tramTime, wanted: sim.wanted,
+            recorder.capture({ time: sim.elapsed, clock: calendarMinutes(), tram: sim.tramTime, wanted: sim.wanted,
                 power: jobs.blackoutPhase, freight: sim.cargoRail.poses.length ? sim.cargoRail.save() : undefined, hero: sim.hero, driven: sim.driven, transfer: sim.transition, cars: sim.cars, people: sim.people, props: sim.motorPool.props, patrol: patrolLight, signal: trafficLight, impacts: replayImpacts, impactLean: c => sim.impactLean(c) });
         replayImpacts.length = 0;
         const drawStart = performance.now();
@@ -10824,7 +11173,7 @@ exports.paintDrain = paintDrain;
 exports.paintPlough = paintPlough;
 exports.paintDrift = paintDrift;
 exports.paintWindCrust = paintWindCrust;
-const ripples = { amber: ['#e7b480', '#cf8d67'], ice: ['#a0bdc8', '#819fb4'], jade: ['#83c7b0', '#79aeae'] };
+const ripples = { amber: ['#e7b480', '#cf8d67'], ice: ['#a0bdc8', '#819fb4'], jade: ['#b1b5ae', '#999e9c'] };
 function paintMeltwater(c, x, z, rx, rz, angle, tint, seed) {
     let state = seed >>> 0;
     const rnd = () => { state = (Math.imul(1664525, state) + 1013904223) >>> 0; return state / 4294967296; };
@@ -10852,7 +11201,7 @@ function paintMeltwater(c, x, z, rx, rz, angle, tint, seed) {
     c.stroke();
     c.clip();
     const water = c.createLinearGradient(-.28, -.96, .36, .99);
-    const horizon = tint === 'amber' ? '#9b8a83' : tint === 'jade' ? '#779697' : '#7a91a3';
+    const horizon = tint === 'amber' ? '#9b8a83' : tint === 'jade' ? '#838b88' : '#7a91a3';
     water.addColorStop(0, '#596e83');
     water.addColorStop(.35, '#485b70');
     water.addColorStop(.72, horizon);
@@ -11199,6 +11548,9 @@ function furnishHouse(b, labels) {
         for (const z of [2.87, 3.34])
             box(x, .204, z, .058, .40, .058, edge);
     box(4.51, .435, 3.10, 1.23, .077, .77, wood);
+    box(4.61,.48,2.94,.29,.008,.21,'#e4dec6',.12);
+    label('СМЕНЫ', 'ФЕВРАЛЬ · 18 / 21 / 24',4.56,house_layout_js_1.houseUpper+1.43,-6.70,.77,.44,0,'#55574c','#e5dfc8');
+    label('КУПИТЬ', 'ХЛЕБ · МОЛОКО · ЧАЙ',9.94,house_layout_js_1.houseUpper+1.59,6.93,.43,.41,Math.PI,'#4e5148','#e3d7b5');
     for (let i = 0; i < 3; i++)
         box(4.24, .489 + i * .031, 3.1, .35, .029, .22, ['#77675e', '#b8a68b', '#648284'][i], .10 - i * .08);
     cyl(4.74, .49, 3.14, .148, .027, '#c5b99c');
@@ -13081,6 +13433,19 @@ function sculptBoot(side, fit, role) {
         const tag = palette(field || worker || sport ? fit.style.accent : '#9a9477');
         s.tube([[-.014, .147, .063], [0, .153, .065], [.014, .147, .063]], high ? .003 : .0025, tag, 4);
     }
+    if (((fit.variant ?? 0) + (side > 0 ? 1 : 0)) % 3 !== 0) {
+        const salt = palette('#b6ada0');
+        for (const sign of [-1,1]) {
+            const stripe=[];
+            for(let i=0;i<6;i++) {
+                const angle=.13+.055*Math.sin(phase+i*1.4);
+                const p=uppers(-.115+i*.025,sign>0?angle:Math.PI-angle,.0008);
+                p[0]+=sign*.0015;
+                stripe.push(p);
+            }
+            s.tube(stripe,.0018,salt,4);
+        }
+    }
     const mesh = s.mesh('lace-up-winter-boot');
     mesh.userData.outfitDye = 'boots';
     const crust = new Sculpt(side);
@@ -14472,7 +14837,7 @@ exports.jobs = {
     vendor: { cut: 'quilted', kit: 'repair', main: '#356763', shade: '#243f44', accent: '#a9b8a1', shirt: '#758779', pants: '#494852', scale: .939, build: -.42 },
     dispatcher: { cut: 'wool', kit: 'dispatch', main: '#465865', shade: '#313e4b', accent: '#d6b679', shirt: '#77726b', pants: '#414b4c', scale: 1.051, build: .68 },
     mechanic: { cut: 'workwear', kit: 'garage', main: '#884c43', shade: '#59363a', accent: '#d1a477', shirt: '#3e4f59', pants: '#304651', scale: .995, build: .36 },
-    courier: { cut: 'windbreaker', kit: 'messenger', main: '#57756e', shade: '#34434a', accent: '#e0b874', shirt: '#836e57', pants: '#343e49', scale: 1.025, build: -.56 }
+    courier: { cut: 'quilted', kit: 'messenger', scarf: '#8a7566', main: '#667564', shade: '#3e4941', accent: '#c1a37b', shirt: '#836e57', pants: '#393d3e', scale: 1.025, build: -.56 }
 };
 const heroJacket = exports.jobs.hero;
 exports.heroCoats = [
@@ -15097,6 +15462,7 @@ function upperBody(role, fit) {
             bag.stroke([[-.067, .258, .251], [.051, .271, .255], [.120, .280, .251]], .006, '#303c3c', 0, true);
             bag.panel([[[-.080, .229, .253], [-.023, .234, .259]], [[-.080, .245, .253], [-.023, .251, .259]]], '#ada184', 0, true);
             bag.stroke([[-.071, .237, .256], [-.041, .241, .261]], .0026, '#47483e', 0, true);
+            bag.stroke([[-.067,.263,.249],[.046,.275,.254],[.112,.277,.246]],.006,'#c7c9bf');
             const bagMesh = bag.mesh('courier-canvas-bag');
             bagMesh.scale.set(.84, .84, .80);
             bagMesh.position.set(.0874, -.0914, .0032);
@@ -15229,7 +15595,9 @@ function limbs(side, fit, role, socket) {
     aBend.loft(arms.slice(7, 13), l.main, 1, 24, .90);
     lower.loft(shift(arms.slice(12), .251), l.main, 1, 24, .90, undefined, true);
     const cuff = scale([[-.172, .037, .041, .040, 0, -.006], [-.184, .037, .042, .039, 0, -.008], [-.196, .033, .037, .036, 0, -.008]], arm);
-    lower.loft(cuff, role === 'mechanic' ? l.shirt : l.shade, role === 'mechanic' ? 0 : 2, 16, .91, undefined, true);
+    const wornCuff = utility || fit.variant % 4 === 0;
+    const cuffColor = role === 'mechanic' ? l.shirt : l.shade;
+    lower.loft(cuff, wornCuff ? (0,human_cloth_js_1.tint)(cuffColor,.68) : cuffColor, role === 'mechanic' ? 0 : 2, 16, .91, undefined, true);
     if (role === 'hero')
         lower.loft(scale([[-.165, .040, .045, .043, 0, -.005], [-.175, .039, .044, .042, 0, -.007]], arm), l.accent, 3, 16, .91);
     const forePanels = (rows, color, back, rise) => lower.fittedPatch(rows, (x, y, d) => {
@@ -15465,7 +15833,7 @@ function archiveFigure() {
         image = paper.image.toDataURL('image/png');
         paper.dispose();
     }
-    return '<figure style="max-width:38rem;margin:.6rem auto"><img width="512" height="340" style="display:block;width:100%;height:auto" alt="Архивная схема: Фабричная, дома 23, 24, 31 и 32. Пунктир у прачечной обозначает проход на улицу Мастеров." src="' + image + '"><figcaption>Бюро инвентаризации, 2060 год. На нынешней Канальной сохранился проход за прачечной у дома № 23.</figcaption></figure>';
+    return '<figure style="max-width:38rem;margin:.6rem auto"><img width="512" height="340" style="display:block;width:100%;height:auto" alt="Архивная схема: Фабричная, дома 23, 24, 31 и 32. Пунктир у прачечной обозначает проход на улицу Мастеров." src="' + image + '"><figcaption>Бюро инвентаризации, 1995 год. На нынешней Канальной сохранился проход за прачечной у дома № 23.</figcaption></figure>';
 }
 
 },
@@ -15785,7 +16153,13 @@ function workshop(b, sign) {
         b.box(70.35, 1.13, z, .93, 2.26, .067, '#647973');
     b.box(61.72, .56, .43, .86, 1.02, 3.24, '#536f70');
     b.box(61.72, 1.09, .43, .91, .071, 3.30, '#b1ae94');
-    sign('ИННА · РЕМОНТ', 'ИМПЛАНТЫ / РАДИОДЕТАЛИ', 67, 2.15, -3.90, 2.72, .54, 0, '#475e58');
+    b.beam(65.47, 1.00, -3.50, 65.67, 1.27, -3.46, .020, '#9a998d');
+    wheel(b,65.71,1.36,-3.44,.115,'#777769');
+    b.beam(67.76,.99,-3.20,68.04,.99,-3.31,.044,'#79624d');
+    b.beam(68.04,.99,-3.31,68.19,.99,-3.37,.015,'#a7a698');
+    for(let i=0;i<3;i++) b.box(65.86+i*.025,.98+i*.007,-3.25,.23,.006,.29,'#e1d7bd');
+    sign('КВИТАНЦИИ', 'ВЫДАЧА У СТОЙКИ',65.46,1.77,-3.89,1.09,.30);
+    sign('ИННА · РЕМОНТ', 'ТЕЛЕФОНЫ / МАГНИТОЛЫ', 67, 2.15, -3.90, 2.72, .54, 0, '#475e58');
     sign('ОБМЕН', 'ПРИЁМНИКИ ДЛЯ СОСЕДЕЙ', 63.84, 1.65, -3.88, 1.50, .40);
     b.box(63.84, .83, -3.7, 1.22, .079, .44, '#8d927c');
 }
@@ -15807,6 +16181,16 @@ function dispatch(b, p, sign) {
         b.box(98.62, y, -3.096, 1.50, .35, .052, '#86958a');
         b.box(98.62, y, -3.054, .30, .035, .063, '#c2b999');
     }
+    b.box(96.93,1.81,-3.82,1.33,.76,.08,'#aca38c');
+    for (let i=0;i<5;i++) {
+        const xx=96.46+i*.22;
+        b.box(xx,1.84,-3.75,.043,.15,.052,'#797c72');
+        b.box(xx+.025,1.73,-3.73,.063,.065,.026,'#c7b278');
+        b.box(xx,1.68,-3.72,.108,.065,.016,'#d9d2bc');
+    }
+    sign('КЛЮЧИ', 'ПОСТЫ И СТРЕЛКИ',96.93,2.31,-3.79,1.36,.27);
+    sign('ДЕЖУРЯТ СЕГОДНЯ', 'СЕМЁН · БРИГАДА 07',90.96,1.79,-3.80,1.36,.54,0,'#d1ccb4','#4a5548');
+    for(let i=0;i<3;i++) b.cyl(90.41+i*.53,2.068,-3.77,.063,.033,'#887857');
     sign('АРХИВ', 'КАРТОТЕКА', 98.62, 2.42, -3.89, 1.49, .35);
     b.box(90.31, .90, .32, .76, 1.85, 2.66, '#6d8079');
     for (let k = 0; k < 5; k++)
@@ -15839,6 +16223,15 @@ exports.stairBaseX = -49, exports.stairLanes = 5, exports.laneWidth = 1.55, expo
 const stairWalls = Array.from({ length: exports.stairLanes - 1 }, (_, i) => v('stairRail', exports.stairBaseX + (i + .5) * exports.laneWidth, i % 2 === 0 ? .71 : -.71, .11, 6.48, 1.04));
 exports.annexes = {
     ...campus.floors,
+    ...Object.fromEntries(Object.entries(require('./neighborhood-shops.js').shops).map(([id, shop]) => {
+        const x = shop.centre;
+        const items = id === 'locker' ? [v('lockers', x, -3.48, 6.4, .82, 2.0), v('dryer', x + 3.46, -.42, .24, 1.0, .86)] :
+            [v('counter', x, -2.86, 3.6, .92, 1.1)];
+        if (id === 'grocery') items.push(v('fridge',x-3.29,-3.39,1.49,.92,2.08), v('bread',x+3.38,-3.43,1.25,.77,1.0));
+        if (id === 'optician') items.push(v('frames',x-3.30,-3.55,2.25,.5,1.68));
+        if (id === 'canteen') for (const k of [-1,1]) items.push(v('cafe-table',x+k*2.83,1.18,1.47,1.74,.84));
+        return [id,room(shop.label,x,0,10,8,0,3.12,items,[lab(x,2.97,'Выход')],{x,z:2.97})];
+    })),
     basement: room('Подвал · тепловой узел', 36, 0, 12, 8, -2.75, 2.65, [
         v('manifold', 36, -3.55, 10.7, .65, 1.64), v('pump', 31.02, .12, 1.55, 1.52, .98), v('meter', 41.16, .14, .73, 1.08, 1.61)
     ], [lab(32, -2, 'Подача'), lab(36, -2, 'Стояк Б'), lab(40, -2, 'Обратка'), lab(36, 3.02, 'Лифт')], { x: 36, z: 2.85 }),
@@ -15884,7 +16277,11 @@ exports.annexes = {
     stairs: room('Служебная лестница', exports.stairBaseX + 2 * exports.laneWidth, 0, exports.stairLanes * exports.laneWidth, 8.4, 3.06, 24, stairWalls, [lab(exports.stairBaseX, 3.35, 'Этаж 2'), lab(exports.stairBaseX + 4 * exports.laneWidth, -3.35, 'Крыша')], { x: exports.stairBaseX, z: 3.55 }),
     lift: room('Лифт · Канальная, 23', -65, 0, 2.38, 2.55, 0, 2.56, [], [lab(-65, 0, 'Кабина')], { x: -65, z: .5 }),
 };
-const annexAt = (x, z = 0, y = 0) => campusMotion.isCampusX(x) ? campusMotion.zoneFor(x, z, y) : x > 270 ? 'metal-hall' : x > 246 ? 'river-station' : x > 220 ? 'passage' : x > 193 ? 'hydro' : x > 166 ? 'terminal' : x > 139 ? 'cafe' : x > 110 ? 'taxipark' : x < -78 ? 'roof' : x < -56 ? 'lift' : x < -30 ? 'stairs' : x > 83 ? 'dispatch' : x > 53 ? 'workshop' : x > 22 ? 'basement' : null;
+const shopZones = Object.keys(require('./neighborhood-shops.js').shops);
+function shopAt(x) {
+    return shopZones.find(id => x >= exports.annexes[id].bounds.minX && x <= exports.annexes[id].bounds.maxX);
+}
+const annexAt = (x, z = 0, y = 0) => x >= 455 && x <= 525 ? shopAt(x) ?? null : campusMotion.isCampusX(x) ? campusMotion.zoneFor(x, z, y) : x > 270 ? 'metal-hall' : x > 246 ? 'river-station' : x > 220 ? 'passage' : x > 193 ? 'hydro' : x > 166 ? 'terminal' : x > 139 ? 'cafe' : x > 110 ? 'taxipark' : x < -78 ? 'roof' : x < -56 ? 'lift' : x < -30 ? 'stairs' : x > 83 ? 'dispatch' : x > 53 ? 'workshop' : x > 22 ? 'basement' : null;
 exports.annexAt = annexAt;
 const zoneAt = (x, z = 0, y = 0) => (0, exports.annexAt)(x, z, y) ?? 'house';
 exports.zoneAt = zoneAt;
@@ -16081,7 +16478,8 @@ class InteriorLife {
         d.total = .8 + Math.abs(stops[d.car].height - stops[stop].height) * .16;
         d.phase = d.open > 0 ? 'closing' : 'moving';
     }
-    options(outside, elapsed, minutes = (0, city_clock_js_1.districtMinutes)(elapsed)) {
+    options(outside, elapsed, calendar = (0, city_clock_js_1.districtCalendarMinutes)(elapsed)) {
+        const minutes = calendar % 1440;
         const p = this.avatar ?? outside, zone = this.zone;
         const a = [];
         const add = (id, label) => a.push({ id: 'home:' + id, label });
@@ -16119,7 +16517,7 @@ class InteriorLife {
             for (const f of exploration_layout_js_1.bankFinds)
                 if (near(p, f, 1.9))
                     add('find-' + f.id, f.name);
-            if (near(p, { x: 69, z: 21.85 }, 2.5) && (0, exploration_layout_js_1.marketLayouts)(elapsed).length === 0)
+            if (near(p, { x: 69, z: 21.85 }, 2.5) && (0, exploration_layout_js_1.marketLayouts)(elapsed, calendar).length === 0)
                 add('night', 'Обратиться в дежурный киоск');
             return a;
         }
@@ -16149,7 +16547,7 @@ class InteriorLife {
                 add('board66', 'Объявление · отопление');
             }
             if (near(p, { x: -2.20, z: 4.81 }, 1.6))
-                add('map', 'Прочитать схему 2060 года');
+                add('map', 'Прочитать схему 1995 года');
             if (near(p, { x: -.43, z: -5.98 }, 1.42))
                 add('stairs', 'По лестнице на крышу');
             if (near(p, { x: -1.10, z: 5.67 }, 1.13))
@@ -16302,7 +16700,7 @@ class InteriorLife {
             return { text: 'Дежурная смена. Ищем старые записи для утреннего эфира.', bulletin: 'job-accept-65' };
         if (key === 'map') {
             this.archiveMap = true;
-            return result('Схема 2060 года: Канальная тогда называлась Фабричной. За прачечной у дома 23 сквозной проход на улицу Мастеров.');
+            return result('Схема 1995 года: Канальная тогда называлась Фабричной. За прачечной у дома 23 сквозной проход на улицу Мастеров.');
         }
         if (key.startsWith('board')) {
             const id = key.slice(5);
@@ -16409,7 +16807,7 @@ function surveyPrint() {
     g.font = 'bold 22px K77Display';
     g.fillText('СХЕМА ДВОРОВ', 23, 38);
     g.font = '14px K77Body';
-    g.fillText('БЮРО ИНВЕНТАРИЗАЦИИ       2060 г.', 24, 58);
+    g.fillText('БЮРО ИНВЕНТАРИЗАЦИИ       1995 г.', 24, 58);
     g.strokeStyle = '#8c9077';
     g.lineWidth = 15;
     g.beginPath();
@@ -17294,6 +17692,8 @@ exports.landmarkTransient = landmarkTransient;
 exports.playTramBell = playTramBell;
 exports.createLocalSoundscape = createLocalSoundscape;
 const world_expansion_layout_js_1 = require("./world-expansion-layout.js");
+const { shopSounds, streetSample } = require('./winter-street-sounds.js');
+const { districtMinutes } = require('./city-clock.js');
 const sources = [
     { key: 'substation-depot', kind: 'substation', x: 26.4, z: -34.2, range: 49, gain: .87, period: 1, offset: 0, length: 1 },
     { key: 'shutter-market-west', kind: 'shutter', x: 35.5, z: 20.5, range: 28, gain: .76, period: 6.3, offset: 1.05, length: .92 },
@@ -17303,10 +17703,16 @@ const sources = [
     { key: 'ice-port', kind: 'ice', x: 72, z: world_expansion_layout_js_1.canal.south - 5, range: 32, gain: .63, period: 9.4, offset: 5.1, length: 1.00 },
 ];
 const clamp = (value) => Math.max(0, Math.min(1, value));
-function landmarkSoundField(listener, elapsed, weather, blackout = 0) {
+function landmarkSoundField(listener, elapsed, weather, blackout = 0, minutes = districtMinutes(elapsed), tram) {
     const audible = [];
     const co = Math.cos(listener.yaw), si = Math.sin(listener.yaw);
-    for (const source of sources) {
+    const dynamic = shopSounds.filter(s => !s.hours || minutes >= s.hours[0] && minutes < s.hours[1]);
+    if (tram?.visible && Math.abs(tram.speed)>.5) {
+        const corner = tram.z>13 && tram.z<24;
+        dynamic.push({key:corner?'tram-flanges':'tram-joints',kind:corner?'flanges':'joints',x:tram.x,z:tram.z,range:36,gain:.85,
+            period:corner?1.65:Math.max(.33,3.35/Math.abs(tram.speed)),offset:0,length:.17});
+    }
+    for (const source of [...sources,...dynamic]) {
         const dx = source.x - listener.x, dz = source.z - listener.z, distance = Math.hypot(dx, dz);
         if (distance >= source.range)
             continue;
@@ -17314,7 +17720,7 @@ function landmarkSoundField(listener, elapsed, weather, blackout = 0) {
         const bearing = distance < .05 ? 0 : Math.atan2(side, ahead);
         const rear = Math.cos(bearing) < -.35;
         const wind = weather?.wind ?? .28, snow = weather?.snow ?? 0;
-        const material = source.kind === 'substation' ? 1 - .92 * clamp(blackout) :
+        const material = source.kind === 'substation' ? 1 - .92 * clamp(blackout) : source.kind !== 'shutter' && source.kind !== 'ice' ? 1 :
             source.kind === 'shutter' ? .52 + .80 * wind : .54 + .46 * clamp((3 - (weather?.temperature ?? -2)) / 8);
         const strength = clamp(source.gain * ((1 - distance / source.range) ** 1.36) * material * (1 - .24 * snow) * (rear ? .84 : 1));
         if (strength < .012)
@@ -17328,6 +17734,7 @@ function landmarkSoundField(listener, elapsed, weather, blackout = 0) {
 const sampleRate = 22050;
 const shutterStrikes = [0, .10, .147, .280, .411, .460], iceStrikes = [0, .066, .191, .310];
 function landmarkTransient(kind) {
+    if (kind !== 'shutter' && kind !== 'ice') return streetSample(kind, sampleRate);
     const data = new Float32Array(Math.round(sampleRate * (kind === 'shutter' ? .70 : .79)));
     let seed = kind === 'shutter' ? 2805 : 1409, low = 0, mid = 0;
     for (let i = 0; i < data.length; i++) {
@@ -17400,7 +17807,7 @@ function createLocalSoundscape(ctx, bus) {
     const buffers = new Map(), played = new Map();
     return (marks, at, duck) => {
         const loudness = duck ? .42 : 1;
-        const power = marks.find(mark => mark.kind === 'substation');
+        const power = marks.reduce((best, m) => m.kind === 'substation' && (!best || best.strength < m.strength) ? m : best, null);
         hum.gain.setTargetAtTime((power?.strength ?? 0) * (.16 + .020 * Math.sin(at * 3.1)) * loudness, at, .18);
         pan?.pan.setTargetAtTime((power?.pan ?? 0) * .89, at, .18);
         for (const mark of marks) {
@@ -17535,8 +17942,8 @@ void (0, offline_js_1.prepareOffline)(progress => {
     }
     if (last.total) {
         const percent = Math.floor(last.loaded / last.total * 100);
-        boot.textContent = last.phase === 'ready' ? 'Открываем Канальные гаражи…' :
-            'Загружаем район · ' + size(last.total) + ' МБ · ' + percent + '%';
+        boot.textContent = last.phase === 'ready' ? 'Канальск · февраль 2022 · открываем город…' :
+            'Канальск · февраль 2022 · ' + size(last.total) + ' МБ · ' + percent + '%';
     }
 });
 void Promise.resolve().then(() => require("./game.js")).then(({ start }) => start(boot, callback => { listener = callback; callback(last); })).catch(error => {
@@ -17672,6 +18079,23 @@ function fenceFootprint(prop, damage) {
 }
 
 module.exports = { boardCount, fenceDamage, validFence, strikeFence, fenceLean, fenceFootprint };
+
+},
+"game/market-hours.js": function(require, module, exports) {
+"use strict";
+
+// The first shift begins on Friday 18 February 2022.
+function marketHours(calendarMinutes) {
+    const weekday = (Math.floor(calendarMinutes / 1440) + 4) % 7;
+    return { open: weekday >= 5 ? 360 : 420, close: 1080 };
+}
+
+function marketOpen(calendarMinutes) {
+    const hours = marketHours(calendarMinutes), local = calendarMinutes % 1440;
+    return local >= hours.open && local < hours.close;
+}
+
+module.exports = { marketHours, marketOpen };
 
 },
 "game/market-quarter-layout.js": function(require, module, exports) {
@@ -18853,6 +19277,9 @@ function buildDoor(kind, side, series = 0) {
     }
     trim.box(side * (innerX - .045), h - .17, (z0 + z1) / 2, .018, .17, (z1 - z0) * .81, van ? '#526061' : '#596165');
     trim.box(side * (innerX - .071), h - .267, (z0 + z1) / 2 + .04, .091, .077, .49, '#242d35');
+    if (['hatch','wagon','taxi','van'].includes(kind)) {
+        trim.rod(point(w+.009,h-.23,z0+.031),point(w+.009,h-.23,z1-.025),.023,'#343736',true);
+    }
     const pull = (0, vehicle_cabin_js_1.doorPullLocal)(kind, side);
     for (const dz of [-.092, .092]) {
         trim.rod([side * innerX, pull.y - .016, pull.z + dz], [pull.x, pull.y, pull.z + dz], .018, '#697877');
@@ -19042,7 +19469,9 @@ function headlampOptics(kind, emission, side) {
             i % 2 ? '#bdc5bf' : '#828f8d', outward);
         silver.quad(p(u, v, .83, -.015), p(x, y, .83, -.015), p(x, y, .75, -.006), p(u, v, .75, -.006),
             i % 2 ? '#9baaa6' : '#717c7d', outward);
-        glazing.tri(p(0, 0, 1, -.045), p(u, v, .953, -.026), p(x, y, .953, -.026), i % 3 === 1 ? '#d4e7e4' : '#a8c4c8', outward);
+        const aged = kind === 'hatch' || kind === 'wagon';
+        glazing.tri(p(0, 0, 1, -.045), p(u, v, .953, -.026), p(x, y, .953, -.026),
+            aged ? (i % 3 === 1 ? '#e1dac2' : '#b9b49d') : (i % 3 === 1 ? '#d4e7e4' : '#a8c4c8'), outward);
         glazing.quad(p(u, v, .95, -.026), p(x, y, .95, -.026), p(x, y, .95, -.018), p(u, v, .95, -.018), '#7f9ca0', outward);
     }
     const projectors = kind === 'sedan' || kind === 'patrol' || kind === 'towtruck' || kind === 'utility' || kind === 'pickup' ? [-.43, .43] : [0];
@@ -19426,6 +19855,19 @@ function dashboard(kind, series) {
         lights.box(.059, y - .112, consoleZ + .018, .105, .027, .005, '#779b81');
         for (const px of [.139, .173])
             body.add(tube, [px, y - .119, consoleZ + .026], [.026, .013, .026], '#798684', [Math.PI / 2, 0, 0]);
+    }
+    // A clipped parking slip, heater controls and the equipment used on shift.
+    body.box(.33, s.roof - .123, s.a + .29, .18, .012, .10, '#e1d4ab', [.12, 0, .04]);
+    for (const knob of [-.08, 0, .08]) {
+        body.add(tube, [knob, y - .192, consoleZ + .060], [.039, .019, .039], '#545555', [Math.PI / 2, 0, 0]);
+        body.box(knob, y - .181, consoleZ + .073, .004, .012, .004, '#d7cfac');
+    }
+    if (work || kind === 'van' || kind === 'taxi') {
+        body.box(.30, y - .18, consoleZ + .055, .21, .072, .105, '#333a39');
+        body.box(.29, y - .17, consoleZ + .11, .08, .019, .003, '#acb39b');
+        for (let i = 0; i < 4; i++) body.box(.35, y - .198 + i * .012, consoleZ + .11, .046, .003, .004, '#131916');
+        body.add(tube, [.14, c.seatY + .05, c.seatZ - .15], [.080, .22, .080], '#677c69');
+        body.add(tube, [.14, c.seatY + .173, c.seatZ - .15], [.078, .035, .078], '#c2bca4');
     }
     const arrow = new Batch();
     arrow.rod([0, -.013, 0], [0, .054, 0], .0031, '#ea9660', true);
@@ -19881,6 +20323,14 @@ function buildWheel(radius, side, kind) {
             engraving.quad(surface(x - .0034, a), surface(x + .0034, a), surface(x + .0034, next), surface(x - .0034, next), '#1c2222');
         }
     }
+    if (kind === 'wagon' || kind === 'taxi') {
+        rim.add(require('./model-geometry.js').tube,[side*(sidewall+.029),0,0],[radius*.89,.033,radius*.89],
+            '#a8aaa4',[0,0,Math.PI/2]);
+        for(let i=0;i<8;i++){
+            const a=i*Math.PI/4;
+            rim.box(side*(sidewall+.047),radius*.32*Math.sin(a),radius*.32*Math.cos(a),.007,radius*.07,radius*.13,'#585e5b',[-a,0,0]);
+        }
+    }
     sidewallStamp(engraving, point, side, sidewall, radius);
     const roller = new T.Group();
     roller.name = 'wheel-roller';
@@ -19922,8 +20372,9 @@ function pressedBody(kind, s, cab, coat, trimBatch, distant, hood) {
     const { w, front, rear, belt, r, fw, rw } = s;
     const hatch = kind === 'hatch', van = kind === 'van', coupe = kind === 'coupe';
     const frontHeight = belt - (hatch ? .17 : coupe ? .10 : .12), deck = (0, vehicle_cabin_js_1.rearDeckStart)(kind);
-    const nose = hatch ? .76 : coupe ? .69 : van ? .87 : .75, tail = hatch || van || kind === 'wagon' ? .90 : .81;
-    const frontBreak = Math.min(front + (coupe ? .33 : .23), fw - .02);
+    const nose = hatch ? .83 : coupe ? .69 : van ? .90 : kind === 'wagon' ? .81 : .74;
+    const tail = van ? .94 : hatch || kind === 'wagon' ? .91 : .79;
+    const frontBreak = Math.min(front + (hatch || van ? .16 : coupe ? .34 : .30), fw - .02);
     const stations = [[front, w * nose, frontHeight], [frontBreak, w * .966, frontHeight + .040],
         [cab.hingeZ, w, belt], [Math.min(s.d, rear - .30), w, belt], [rear - .26, w * .977, belt - .012], [rear, w * tail, belt - .067]];
     const archRadius = r + (van ? .078 : .055), lower = .33;
@@ -22511,7 +22962,7 @@ function animatePerson(role, variant, rig) {
         if (updateCivicItems) updateCivicItems(hood);
         const door = unit(pose.doorReach ?? 0), seat = unit(pose.seated ?? (hood?.seat ? 1 : 0));
         const cabin = pose.doorCabinKind && carCabin(pose.doorCabinKind);
-        const driving = cabin?.drivingPose, doorSide = pose.doorSide ?? -1;
+        const driving = cabin?.drivingPose, seatedLegs = pose.seatedLegs, doorSide = pose.doorSide ?? -1;
         const doorPivot = unit(pose.doorPivot ?? 0), doorBrace = unit(pose.doorBrace ?? 0);
         const innerPull = driving && pose.doorTarget ? seat * door * (.14 + .86 * smooth(pose.doorOpen ?? 1, 0, .64)) : 0;
         const slide = unit(pose.passengerSlide ?? 0) * seat;
@@ -22568,9 +23019,10 @@ function animatePerson(role, variant, rig) {
         waitingFor = canWait ? waitingFor + dt : 0;
         const waitPhase = (waitingFor + (Math.abs(variant) % 5) * .31) % 9.4;
         const waiting = canWait ? smooth(waitingFor, .05, .38) * (1 - move) : 0;
-        const glanceBoard = waiting * smooth(waitPhase, 3.5, 4.3) * (1 - smooth(waitPhase, 7, 7.8));
+        const habit = Math.abs(variant)%3;
+        const glanceBoard = waiting * (habit===1 ? 1 : .56) * smooth(waitPhase, 3.5, 4.3) * (1 - smooth(waitPhase, 7, 7.8));
         readBoard = T.MathUtils.damp(readBoard, glanceBoard, 6, dt);
-        const idleHands = waiting * smooth(waitPhase, .6, 1.4) * (1 - smooth(waitPhase, 3.4, 4.1));
+        const idleHands = waiting * (habit===2 ? 1 : .48) * smooth(waitPhase, .6, 1.4) * (1 - smooth(waitPhase, 3.4, 4.1));
         warmHands = T.MathUtils.damp(warmHands, pose.cold && !pose.carry ? idleHands : 0, 8, dt);
         const gust = hasHood && free > .95 && !pose.carry && !addressed && !pose.reaction ? pose.wind ?? 0 : 0;
         const windUp = smooth(gust, .48, .80) * (1 - jump) * (1 - run) * (1 - watchingImpact);
@@ -22673,6 +23125,7 @@ function animatePerson(role, variant, rig) {
             lowering * 0.48 +
             seat * (driving?.backAngle ?? -.19) -
             0.16 * gripCrouch - free * (gait.grade * .25 + gait.landing * .16 + gait.takeoff * .09) - doorDuck * (.24 + .31 * roofDuck) - .15 * cover - .20 * dodge - .25 * rise + .24 * fall, yawLead * free + (movement.chestYaw - movement.pelvisYaw) * swingWeight * forward - .58 * strike + dodgeSide * .25 * dodge, -movement.pelvisRoll * 1.42 * swingWeight + bank + gait.pivotLoad * .047 * free - (pose.doorSide ?? -1) * lowering * 0.13 + .16 * passing - fallSide * .21 * fall - dodgeSide * .12 * dodge, 'YXZ');
+        if (canWait && habit===0) pelvis.rotation.z += Math.sin(clock*.87)*.036*waiting;
         const squeezing = unit(pose.squeeze ?? 0), duck = unit(pose.duck ?? 0);
         spine.rotation.y += chestTurn + (squeezing * .55) + passing * .47 - pivotTwist * .8 - doorSide * (.40 * doorPivot + .28 * innerPull);
         spine.rotation.z -= doorSide * (.11 * doorBrace + .48 * innerPull);
@@ -22821,9 +23274,12 @@ function animatePerson(role, variant, rig) {
             const kx = -Math.acos(clamp((length * length - U * U - L * L) / (2 * U * L), -1, 1));
             const bentKnee = side === fallSide ? 1 : .65;
             const legSeat = seat * (1 - pinned[i]);
-            hips[i].rotation.x = mix(mix(hx, 1.02 * bentKnee + .18 * rise, fall), driving?.thigh ?? (1.87 - i * .018), legSeat);
+            const seatedThigh = driving?.thigh ?? seatedLegs?.thigh ?? (1.87 - i * .018);
+            const seatedShin = driving?.shins[i] ?? seatedLegs?.shin;
+            const seatedKnee = seatedShin === undefined ? -1.075 + i * .014 : seatedShin - seatedThigh;
+            hips[i].rotation.x = mix(mix(hx, 1.02 * bentKnee + .18 * rise, fall), seatedThigh, legSeat);
             hips[i].rotation.z = mix(mix(Math.atan2(lateral, yDown), side * .29 + fallSide * .23, fall), side * (driving ? .065 : .083), legSeat);
-            knees[i].rotation.x = mix(mix(kx, -1.39 * bentKnee - .12 * rise, fall), driving ? driving.shins[i] - driving.thigh : -1.075 + i * .014, legSeat);
+            knees[i].rotation.x = mix(mix(kx, -1.39 * bentKnee - .12 * rise, fall), seatedKnee, legSeat);
             restQ.copy(pelvis.quaternion).multiply(hips[i].quaternion).multiply(knees[i].quaternion).invert();
             ankles[i].quaternion.copy(restQ).multiply(bootRotation[i]);
             (0, locomotion_poses_js_1.armPose)(gait.phase + i * .5, run, arm);
@@ -22983,8 +23439,11 @@ function animatePerson(role, variant, rig) {
                     target.lerp(stow.set(satchelContents.x + .045, satchelContents.y + .047, satchelContents.z + .025), smooth(hand, 0.58, 0.87));
                 armTo(shoulders[i], elbows[i], target, side, reach);
             }
+            const handTarget = pose.handTargets?.[i];
+            if (handTarget)
+                armTo(shoulders[i], elbows[i], target.fromArray(handTarget), side, 1);
             if (near.visible) {
-                const gripping = (i === gripHand && handWeight > .51) || (seated && (pose.driverSeatWeight ?? 1) > .72) || carry === 'crate' || (transferring && handing && hand > .35 && hand < .77);
+                const gripping = handTarget || (i === gripHand && handWeight > .51) || (seated && (pose.driverSeatWeight ?? 1) > .72) || carry === 'crate' || (transferring && handing && hand > .35 && hand < .77);
                 rig.grip(i, carry === 'cup' && i === 1 && !seated ? 'cup' : gripping ? 'handle' : 'rest');
             }
         }
@@ -23158,9 +23617,10 @@ function roleTool(role) {
         const pieces = new model_geometry_js_1.Batch();
         if (role === 'dispatcher') {
             pieces.box(0, 0, 0, .152, .194, .023, '#4d5e62');
-            pieces.box(0, .005, .013, .126, .150, .005, '#253132');
+            pieces.box(0, .005, .013, .138, .169, .005, '#dbd6b9');
+            pieces.box(0,.087,.018,.079,.018,.006,'#818b84');
             for (let row = 0; row < 4; row++)
-                pieces.box(-.011, .052 - row * .028, .017, .072 - .008 * (row % 2), .004, .002, row === 0 ? '#c5a573' : '#8ab9aa');
+                pieces.box(-.011, .052 - row * .028, .017, .072 - .008 * (row % 2), .004, .002, row === 0 ? '#706958' : '#989688');
             pieces.box(0, -.082, .015, .035, .006, .006, '#9ba991');
             pieces.add(model_geometry_js_1.ring, [.092, -.059, -.010], [.026, .026, .024], '#acaa8f');
             for (const x of [.088, .106])
@@ -23187,7 +23647,7 @@ function roleTool(role) {
     }
     const tool = item.clone();
     tool.visible = false;
-    tool.name = role === 'dispatcher' ? 'dispatch-tablet' : role === 'mechanic' ? 'garage-diagnostic-reader' : 'inna-calibration-board';
+    tool.name = role === 'dispatcher' ? 'dispatch-clipboard' : role === 'mechanic' ? 'garage-diagnostic-reader' : 'inna-calibration-board';
     return tool;
 }
 let ragTemplate;
@@ -23958,6 +24418,104 @@ var model_people_js_1 = require("./model-people.js");
 Object.defineProperty(exports, "createPerson", { enumerable: true, get: function () { return model_people_js_1.createPerson; } });
 
 },
+"game/neighborhood-shops.js": function(require, module, exports) {
+'use strict';
+
+const shops = {
+    optician: { centre: 460, label: 'Городская оптика', x: -3.93, z: 17.57, yaw: 0 },
+    grocery: { centre: 480, label: 'Продукты у дома № 19', x: 35.8, z: 55.55, yaw: 0 },
+    canteen: { centre: 500, label: 'Столовая «Причал»', x: -6.0, z: 44.91, yaw: Math.PI },
+    locker: { centre: 520, label: 'Раздевалка трамвайного депо', x: -4.08, z: -26.90, yaw: Math.PI / 2 }
+};
+
+function spectacleFrame(b, x, y, z, scale, finish) {
+    const r = .04 * scale, offset = .053 * scale;
+    for (const side of [-1, 1]) {
+        const cx = x + side * offset;
+        for (let i = 0; i < 10; i++) {
+            const a = i * Math.PI / 5, next = a + Math.PI / 5;
+            b.beam(cx + r * Math.cos(a), y + r * .72 * Math.sin(a), z,
+                cx + r * Math.cos(next), y + r * .72 * Math.sin(next), z, .006 * scale, finish);
+        }
+        b.beam(cx + side * r, y, z, cx + side * r, y - .012 * scale, z - .11 * scale, .006 * scale, finish);
+    }
+    b.beam(x - offset + r, y, z, x + offset - r, y, z, .006 * scale, finish);
+}
+
+function shopInterior(b, sign, zone) {
+    const x = shops[zone].centre, back = -3.845, paper = '#ede8d4', black = '#44473f';
+    // Frost and a wiped patch on the double glazed pane by the door.
+    const pane = x + 2.85;
+    b.box(pane, 1.76, 3.86, 1.6, 1.5, .10, '#887c68');
+    b.box(pane, 1.76, 3.79, 1.48, 1.38, .035, '#b7c6c5');
+    b.piece('stone', pane - .07, 1.69, 3.759, .99, .89, .027, '#96a6a5');
+    for (let i = 0; i < 15; i++) {
+        const cx = pane - .68 + i * .095, len = .10 + (i * 7 % 11) * .021;
+        b.beam(cx, 2.40, 3.75, cx + .048, 2.40 - len, 3.75, .012, '#e4e5d9');
+    }
+    if (zone === 'optician') {
+        const shelf = x - 3.3;
+        for (let row = 0; row < 3; row++) {
+            const y = .92 + row * .30;
+            b.box(shelf, y, -3.55, 2.25, .043, .48, '#adb2a1');
+            for (let col = 0; col < 5; col++) {
+                const cx = shelf + (col - 2) * .41;
+                b.box(cx, y + .054, -3.5, .23, .060, .11, '#6e635a');
+                spectacleFrame(b, cx, y + .136, -3.40, 1, col % 2 ? '#4c463a' : '#9a734c');
+            }
+        }
+        sign('Ш  Б', 'М Н К  ·  Ы М Б Ш', x + 2.7, 1.9, back, .84, .97, 0, paper, black);
+        b.box(x + .97, 1.44, -2.98, .42, .58, .052, '#777769');
+        b.box(x + .97, 1.44, -2.94, .36, .51, .013, '#bdc9c8');
+        b.cyl(x + 1.41, 1.14, -2.82, .24, .055, '#767969');
+        b.beam(x + 1.41, 1.15, -2.82, x + 1.34, 1.55, -2.87, .028, '#777a6c');
+        b.piece('taper',x + 1.31,1.53,-2.85,.22,.16,.22,'#c2a07c');
+    } else if (zone === 'grocery') {
+        b.box(x - 3.29, 1.04, -3.39, 1.49, 2.08, .92, '#c4c4b2');
+        b.box(x - 3.29, 1.15, -2.90, 1.28, 1.52, .04, '#718182');
+        for (let row = 0; row < 3; row++) {
+            const y = .58 + row * .43;
+            b.box(x - 3.29,y,-2.85,1.24,.037,.085,'#babfaf');
+            for (let col = 0; col < 5; col++)
+                b.box(x - 3.76 + col * .23,y + .155,-2.84,.17,.29,.064, col % 2 ? '#d3c39f' : '#b0b9a7');
+        }
+        for (let j = 0; j < 3; j++) {
+            const y = .16 + j * .32;
+            b.box(x + 3.38,y,-3.43,1.25,.30,.77,'#8b744f');
+            for (let k=0;k<4;k++) b.piece('stone', x + 2.96 + k * .26, y + .16,-3.38,.21,.19,.48,'#bf9556');
+        }
+        b.piece('box',x+.65,1.14,-2.54,.13,.06,.21,'#45524d',0,0,-.14);
+        b.box(x+.65,1.178,-2.56,.095,.014,.09,'#a3ad99');
+        sign('ХЛЕБ СВЕЖИЙ', 'ПРИВОЗ УТРОМ',x+2.95,2.19,back,1.14,.39,0,paper,black);
+    } else if (zone === 'canteen') {
+        sign('ОБЕД 12—15', 'ЩИ · ГРЕЧКА С КОТЛЕТОЙ · КОМПОТ',x+2.88,1.72,back,1.68,.84,0,paper,black);
+        for (let i = 0; i < 6; i++)
+            b.box(x-.88,1.116+i*.031,-2.90,.59,.029,.42,i%2?'#9e6950':'#9ba086');
+        for (let i = 0; i < 3; i++) {
+            b.cyl(x+i*.37,1.24,-2.96,.31,.25,'#9daba4');
+            b.cyl(x+i*.37,1.37,-2.96,.33,.032,'#c3c8ba');
+        }
+    } else {
+        for (let i = 0; i < 8; i++) {
+            const cx=x-2.80+i*.80;
+            b.box(cx,1.0,-3.47,.76,2,.81,'#758375');
+            b.box(cx,1.01,-3.045,.69,1.89,.031,i%3===0?'#8c9584':'#869284');
+            b.box(cx+.21,1.12,-3.012,.032,.145,.036,black);
+            sign(String(11+i),['ПУТЬ','ДЕПО','СМЕНА'][i%3],cx,1.55,-3.015,.32,.21,0,paper,black);
+        }
+        b.box(x,.037,.2,2.65,.035,1.29,'#51534b');
+        for(let i=0;i<12;i++) b.box(x-1.2+i*.21,.063,.2,.025,.018,1.19,'#62645b');
+        for(let i=0;i<4;i++){
+            const cx=x+3.46,cz=-.8+i*.25;
+            b.cyl(cx,.41,cz,.06,.74,'#99978a');
+            b.piece('stone',cx,.80,cz,.14,.23,.11,i%2?'#998568':'#aa9472');
+        }
+        sign('СУШИЛКА', 'ДЕЖУРНАЯ СМЕНА',x+3.09,1.34,-.94,.64,.21,Math.PI/2,paper,black);
+    }
+}
+module.exports = { shops, spectacleFrame, shopInterior };
+
+},
 "game/neighbourhood-rig.js": function(require, module, exports) {
 "use strict";
 const T=require("../engine/three.module.min.js");
@@ -24184,6 +24742,2251 @@ function makeView(scene) {
 exports.makeView=makeView;
 
 },
+"game/new-city-industry-layout.js": function(require, module, exports) {
+"use strict";
+
+const industryPlacements = [
+    { id: 'terminal-shunter', label: 'Терминальный тягач', x: -798, z: -112.5, w: 3.00, d: 5.80, h: 3.36, lookX: -800.5, lookZ: -112.2,
+        note: 'Красный перегон · кабина сдвинута влево. За ней короткая рама с открытым седлом.' },
+    { id: 'port-straddle', label: 'Портовый контейнеровоз', x: -786.25, z: -113.5, w: 5.50, d: 8.42, h: 8.10, lookX: -789.95, lookZ: -110.9,
+        note: 'Красный перегон · контейнер подвешен между четырьмя стойками. Кабина над рамой справа.' },
+    { id: 'log-grapple', label: 'Погрузчик брёвен', x: 180.3, z: 674.9, w: 4.28, d: 6.72, h: 3.64, lookX: 183.8, lookZ: 674.3,
+        note: 'Северный лес · решётка защищает кабину, а две створки захвата держат брёвна поперёк кузова.' },
+    { id: 'quarry-hauler', label: 'Карьерный самосвал', x: -424.75, z: -57.75, w: 6.86, d: 10.70, h: 5.50, lookX: -420.0, lookZ: -54.25,
+        note: 'Рудный двор · шины почти достают до крыши кабины. Водитель поднимается по наружной лестнице.' },
+    { id: 'survey-snowmobile', label: 'Снегоход обходчика', x: -401.5, z: -765.2, w: 1.59, d: 3.61, h: 1.61, lookX: -403.8, lookZ: -764.9,
+        note: 'Северный пост · две передние лыжи, гусеница и пробник снега на заднем багажнике.' },
+    { id: 'tram-haulage', label: 'Транспортёр трамвайных секций', x: 23.9, z: -19.15, w: 17.66, d: 3.28, h: 3.89, yaw: Math.PI / 2, lookX: 24.2, lookZ: -16.53,
+        note: 'Деповская улица · вагон закреплён на коротких рельсах. На низкой платформе видны дополнительные поворотные оси.' }
+];
+const industrySolids = industryPlacements.map(({ x, z, w, d, h }) => ({ x, z, w, d, h }));
+
+module.exports = { industryPlacements, industrySolids };
+
+},
+"game/new-city-industry.js": function(require, module, exports) {
+"use strict";
+
+const T = require('../engine/three.module.min.js');
+const { Batch, shell, lit, glass } = require('./model-geometry.js');
+const { groundHeight } = require('./world-layout.js');
+const { industryPlacements } = require('./new-city-industry-layout.js');
+
+const rubber = '#252b2d', shield = '#39484a', steel = '#6d8281', bright = '#b8c3b7';
+const rimMesh = new T.CylinderGeometry(1, 1, 1, 16);
+const lens = new T.CylinderGeometry(1, 1, 1, 12);
+const cylinder = new T.CylinderGeometry(1, 1, 1, 12);
+const wheelRotation = [0, 0, Math.PI / 2];
+const deck = '#626964';
+
+function add(root, batch, name, material) {
+    const part = batch.mesh(material);
+    part.name = name;
+    root.add(part);
+    return part;
+}
+
+function wheel(batch, side, x, z, radius, width, rim, shallow = false) {
+    batch.add(rimMesh, [x, radius, z], [radius, width, radius], rubber, wheelRotation);
+    batch.add(rimMesh, [x + side * (width / 2 + .012), radius, z], [radius * .58, .061, radius * .58], rim, wheelRotation);
+    batch.add(lens, [x + side * (width / 2 + .051), radius, z], [radius * .25, .068, radius * .25], shield, wheelRotation);
+    const count = shallow ? 8 : 12;
+    for (let i = 0; i < count; i++) {
+        const a = i * Math.PI * 2 / count;
+        const y = radius + Math.sin(a) * radius * .98, pz = z + Math.cos(a) * radius * .98;
+        batch.box(x, y, pz, width * .95, radius * (shallow ? .11 : .16), .047 + radius * .03, '#363e3f', [a - Math.PI / 2, 0, 0]);
+    }
+}
+
+function cab(body, windows, { x = 0, z, floor, width, length, height, color, stripe = '#d4bc81' }) {
+    const front = z - length * .5, back = z + length * .5, half = width * .5, roof = floor + height;
+    body.box(x, floor + height * .22, z, width, height * .44, length, color);
+    body.box(x, roof - .061, z + .04, width + .062, .122, length * .97, color);
+    body.box(x, floor + height * .39, front - .012, width * .96, .055, .041, stripe);
+    body.box(x, floor + height * .66, back - .025, width, height * .44, .09, color);
+    windows.box(x, floor + height * .68, front + .055, width * .92, height * .48, .036, '#819a9a');
+    for (const side of [-1, 1]) {
+        const sx = x + side * (half - .017);
+        windows.box(sx, floor + height * .69, z + .03, .026, height * .49, length * .90, '#8caaa9');
+        for (const pz of [front + .061, back - .073])
+            body.rod([sx, floor + height * .40, pz], [sx, roof - .048, pz + .049], .033, color, true);
+        body.box(sx, floor + height * .39, z, .060, .045, length * .98, shield);
+        body.box(sx + side * .037, floor + height * .29, z + .14, .055, .039, .19, bright);
+    }
+    body.rod([x, floor + height * .43, front + .035], [x, roof - .057, front + .065], .021, shield, true);
+    body.box(x, floor + height * .53, z + length * .20, width * .56, .12, .21, '#344043');
+}
+
+function stepLadder(batch, x, z, bottom, top, width) {
+    for (const side of [-1, 1])
+        batch.rod([x + side * width * .5, bottom, z], [x + side * width * .5, top, z], .028, bright);
+    for (let y = bottom + .12; y < top; y += .22)
+        batch.rod([x - width * .5, y, z], [x + width * .5, y, z], .022, steel, true);
+}
+
+function terminalShunter(root) {
+    const body = new Batch(), windows = new Batch(), lights = new Batch();
+    const paint = '#496f68', trim = '#aabda8';
+    body.box(0, .85, .10, 2.50, .27, 5.27, shield);
+    body.box(0, .64, -2.57, 2.76, .28, .38, '#52616a');
+    body.box(0, .54, 2.58, 2.83, .27, .31, '#516467');
+    body.box(0, 1.0, 1.20, 2.26, .18, 2.55, '#656d67');
+    body.box(.69, 1.25, -.47, .83, .57, 2.36, paint);
+    body.box(.69, 1.56, -.47, .85, .10, 2.40, trim);
+    cab(body, windows, { x: -.45, z: -1.45, floor: 1.04, width: 1.32, length: 1.83, height: 2.05, color: paint });
+    body.add(cylinder, [0, 1.20, 1.35], [.68, .31, .68], '#363f40');
+    body.add(cylinder, [0, 1.40, 1.35], [.59, .14, .59], '#8a9186');
+    for (const side of [-1, 1]) {
+        body.box(side * .26, 1.45, 1.64, .099, .08, .55, '#465154', [0, side * .37, 0]);
+        body.box(side * .96, 1.11, 1.52, .61, .074, 1.81, '#757b73');
+        for (const z of [-1.69, 1.57]) wheel(body, side, side * 1.08, z, .595, .43, darkRim, true);
+        const x = side * .96;
+        body.box(x, .91, -2.75, .35, .24, .10, shield);
+        lights.box(x, .925, -2.809, .234, .105, .021, '#dbe9da');
+        lights.box(x, .85, 2.75, .193, .086, .025, '#b84c45');
+    }
+    stepLadder(body, -1.27, -.95, .39, 1.1, .34);
+    add(root, body, 'short-elevated-fifth-wheel');
+    add(root, windows, 'offset-cab-windows', glass);
+    add(root, lights, 'terminal-marker-lights', lit);
+}
+
+const darkRim = '#819288';
+function striped(batch, x, y, z, span) {
+    for (let i = 0; i < 6; i++)
+        batch.box(x + (i - 2.5) * span / 6, y, z, span * .074, .132, .024, i % 2 ? '#303b3d' : '#d5a153', [0, 0, -.38]);
+}
+
+function portStraddle(root) {
+    const body = new Batch(), windows = new Batch(), lights = new Batch(), load = new Batch();
+    const orange = '#bb8849', orangeShade = '#826344', width = 2.26, length = 3.31;
+    for (const side of [-1, 1]) {
+        for (const end of [-1, 1]) {
+            const x = side * width, z = end * length;
+            wheel(body, side, x, z, .86, .47, darkRim);
+            body.box(x, 1.07, z, .82, .55, .95, orangeShade);
+            body.box(x, 3.54, z, .47, 5.55, .55, orange);
+            for (let i=0;i<8;i++) {
+                const y=1.39+i*.28;
+                body.rod([x+side*.238,y,z-.18],[x+side*.238,y+.18,z+.08],.012,i%3?'#827a69':'#a9a89c',true);
+            }
+            body.rod([x, 3.84, z], [x, 6.09, z - end * 2.40], .16, orangeShade, true);
+            lights.box(x, 6.38, z, .22, .087, .20, '#f4be72');
+        }
+        body.box(side * width, 6.37, 0, .59, .58, 7.80, orange);
+        body.box(side * width, 7.00, -2.48, .52, .068, 1.37, shield);
+        body.rod([side * 2.46, 7.44, -3.10], [side * 2.46, 7.44, -1.80], .022, bright);
+        for (const z of [-3.06, -2.32, -1.85]) body.rod([side * 2.46, 7.0, z], [side * 2.46, 7.44, z], .022, bright);
+    }
+    for (const z of [-3.13, .78, 3.03])
+        body.box(0, 6.25, z, 4.74, .49, .44, orangeShade);
+    cab(body, windows, { x: 1.62, z: -2.09, floor: 6.57, width: 1.43, length: 1.89, height: 1.53, color: orange, stripe: '#e0bf78' });
+    stepLadder(body, 2.39, -3.66, .53, 6.66, .39);
+    const spreader = new Batch();
+    spreader.box(0, 2.72, 0, 2.81, .25, 6.37, '#b99054');
+    for (const z of [-2.83, 2.83]) spreader.box(0, 2.84, z, 2.87, .155, .20, orangeShade);
+    const spread = add(root, spreader, 'suspended-spreader');
+    const cableParts = new Batch();
+    for (const x of [-.98, .98])
+        for (const z of [-2.59, 2.59]) cableParts.rod([x, 2.81, z], [x, 6.24, z], .025, '#394547');
+    const cable = add(root, cableParts, 'lifting-cables');
+    load.box(0, 1.53, 0, 2.39, 2.24, 6.05, '#557b7c');
+    for (const side of [-1, 1]) {
+        for (let i = 0; i < 15; i++) load.box(side * 1.196, 1.52, -2.76 + i * .393, .037, 2.11, .118, '#61888a');
+        for (const y of [.42, 2.63]) load.box(side * 1.203, y, 0, .073, .106, 6.16, '#3d5b5e');
+        load.rod([side * .56, .48, 3.06], [side * .56, 2.55, 3.06], .031, '#a3aea3');
+        load.box(side * .55, 1.39, 3.07, .33, .071, .046, '#8d9d94');
+    }
+    striped(load, 0, 2.57, 3.066, 2.22);
+    const box = add(root, load, 'suspended-corrugated-container');
+    add(root, body, 'four-corner-gantry');
+    add(root, windows, 'raised-gantry-cab', glass);
+    add(root, lights, 'gantry-marker-lights', lit);
+    return (c) => {
+        const lift = .18 + .18 * Math.sin(c.elapsed * .29);
+        spread.position.y = box.position.y = lift;
+        cable.scale.y = 1 - lift / 3.43;
+        cable.position.y = (1 - cable.scale.y) * 6.24;
+    };
+}
+
+function logGrapple(root) {
+    const body = new Batch(), windows = new Batch(), lights = new Batch(), boom = new Batch();
+    const yellow = '#b69453', darkYellow = '#86633c';
+    body.box(0, .92, .52, 2.78, .54, 5.20, shield);
+    body.box(0, 1.54, 1.73, 2.71, 1.21, 1.83, yellow);
+    body.box(0, 2.16, 1.69, 2.67, .055, 1.66, '#a8aca0');
+    for (let i = 0; i < 7; i++) body.box(0, 1.34 + i * .105, 2.665, 1.61, .041, .025, '#666450');
+    cab(body, windows, { z: -.36, floor: 1.73, width: 1.81, length: 1.47, height: 1.67, color: yellow });
+    body.box(0, 3.44, -.37, 1.97, .084, 1.63, '#727568');
+    for (let i = 0; i < 6; i++) {
+        const x = -.76 + i * .30;
+        body.rod([x, 2.38, -1.136], [x, 3.30, -1.14], .022, shield, true);
+    }
+    for (let i = 0; i < 4; i++) body.rod([-.87, 2.52 + i * .21, -1.15], [.87, 2.52 + i * .21, -1.15], .023, shield, true);
+    for (const side of [-1, 1]) {
+        for (const z of [-1.19, 1.71]) wheel(body, side, side * 1.34, z, .83, .67, darkRim);
+        body.box(side * 1.14, 1.67, -1.47, .55, .18, 2.03, darkYellow);
+        lights.box(side * .69, 3.12, -1.174, .195, .098, .034, '#e2dcca');
+        boom.rod([side * .64, .26, .26], [side * .59, .46, -1.62], .115, yellow, true);
+        boom.rod([side * .59, .46, -1.61], [side * .65, .145, -2.65], .119, yellow, true);
+        boom.rod([side * .54, -.36, .36], [side * .51, .31, -1.98], .069, '#99a29a');
+    }
+    const linkage = new T.Group();
+    linkage.name = 'forestry-lifting-boom';
+    linkage.position.set(0, 1.53, -.87);
+    root.add(linkage);
+    add(linkage, boom, 'forklift-hydraulic-linkage');
+    const jaws = new Batch(), cargo = new Batch();
+    const arc = [[0, .62, -.08], [0, .63, -.50], [0, .38, -.71], [0, .02, -.74], [0, -.27, -.49], [0, -.32, -.19]];
+    for (const x of [-.87, .87]) {
+        for (let i = 1; i < arc.length; i++) {
+            const a = arc[i - 1], b = arc[i];
+            jaws.rod([x, a[1], a[2]], [x, b[1], b[2]], .093, darkYellow, true);
+            jaws.rod([x, -a[1] * .54, -a[2] * .57], [x, -b[1] * .54, -b[2] * .57], .081, '#6c6855', true);
+        }
+    }
+    jaws.rod([-.94, .33, .02], [.94, .33, .02], .089, shield);
+    for (const [i, at] of [[0, [-.09, -.05, -.31]], [1, [.04, .16, -.23]], [2, [-.17, .04, -.65]]]) {
+        const len = 3.26 + i * .19, r = .23 - i * .024;
+        cargo.add(cylinder, at, [r, len, r], '#69523d', wheelRotation);
+        for (const side of [-1, 1]) {
+            const x = at[0] + side * (len / 2 + .013);
+            cargo.add(cylinder, [x, at[1], at[2]], [r * .88, .019, r * .88], '#b69369', wheelRotation);
+            cargo.add(cylinder, [x + side * .013, at[1], at[2]], [r * .48, .015, r * .48], '#95764d', wheelRotation);
+        }
+    }
+    const head = new T.Group();
+    head.position.set(0, .31, -2.13);
+    linkage.add(head);
+    add(head, jaws, 'curved-log-grapple');
+    add(head, cargo, 'crosswise-logs-with-cut-ends');
+    add(root, body, 'reinforced-forest-loader');
+    add(root, windows, 'protected-forest-cab-glass', glass);
+    add(root, lights, 'forest-loader-work-lights', lit);
+    return (c) => { linkage.rotation.x = -.065 - .063 * Math.sin(c.elapsed * .43); };
+}
+
+function quarryHauler(root) {
+    const base = new Batch(), windows = new Batch(), lights = new Batch(), tipper = new Batch(), piston = new Batch();
+    const tan = '#b89860', deep = '#6a5b43';
+    base.box(0, 1.84, -.06, 4.93, .51, 8.63, deep);
+    base.box(0, 1.73, -4.56, 5.70, .61, .58, '#545b56');
+    base.box(0, 2.75, -3.18, 4.91, 1.47, 2.33, tan);
+    base.box(.81, 2.68, -4.36, 2.95, .81, .048, shield);
+    for (let y = 2.34; y < 2.98; y += .13) base.box(.81, y, -4.415, 2.87, .069, .022, '#64726d');
+    cab(base, windows, { x: -1.49, z: -2.46, floor: 2.13, width: 1.88, length: 2.15, height: 1.55, color: tan });
+    stepLadder(base, -1.99, -4.88, .72, 3.11, .60);
+    base.box(-1.98, 2.28, -4.65, .72, .143, .48, shield);
+    for (const x of [-2.53, 2.53]) base.rod([x, 2.32, -4.49], [x, 3.31, -4.49], .038, bright);
+    for (const side of [-1, 1]) {
+        const x = side * 2.69;
+        for (const z of [-2.87, 2.82]) wheel(base, side, x, z, 1.53, 1.16, '#837b68');
+        lights.box(side * 2.03, 2.16, -4.894, .415, .245, .026, '#e9d7aa');
+        lights.box(side * 2.23, 1.91, 4.45, .24, .16, .04, '#c35954');
+    }
+    striped(base, 0.22, 1.73, -4.875, 4.56);
+    const bed = new T.Group();
+    bed.position.set(0, 2.65, 3.56);
+    bed.name = 'quarry-tipping-body';
+    root.add(bed);
+    tipper.box(0, .19, -2.15, 5.13, .22, 6.91, deep);
+    tipper.box(0, 1.20, -5.14, 5.52, 2.19, .29, tan, [-.26, 0, 0]);
+    tipper.quad([-2.76, 1.81, -5.52], [2.76, 1.81, -5.52], [2.87, 1.65, -7.95], [-2.87, 1.65, -7.95], '#a97f49', [0, 1, 0]);
+    tipper.box(0, 1.65, -7.82, 5.71, .135, .33, '#c5a770');
+    for (const side of [-1, 1]) {
+        const outer = side * 2.72, inner = side * 2.45;
+        tipper.quad([inner, .22, .89], [inner, .32, -4.89], [outer, 1.87, -5.02], [outer, 1.79, .73], tan, [side, 0, 0]);
+        tipper.rod([outer, 1.85, -4.92], [outer, 1.78, .90], .075, '#8e704c', true);
+        for (let j = 0; j < 7; j++) {
+            const z = -4.43 + j * .78;
+            tipper.rod([inner, .32, z], [outer, 1.78, z + .14], .052, '#8a704e', true);
+        }
+        piston.rod([side * .73, 1.33, 1.75], [side * .73, 2.58, -.68], .095, '#aeb5ad');
+        piston.rod([side*.73,1.41,1.60],[side*.73,1.55,1.32],.106,'#474b40');
+        piston.rod([side*.73,1.57,1.30],[side*.73,1.61,1.22],.10,'#615f50');
+    }
+    add(root, base, 'oversized-hauler-with-ladder');
+    add(root, windows, 'quarry-cab-glass', glass);
+    add(root, lights, 'quarry-truck-lights', lit);
+    add(root, piston, 'tipper-hydraulic-cylinders');
+    add(bed, tipper, 'canopied-dump-bed');
+    return c => { bed.rotation.x = .028 + .021 * Math.sin(c.elapsed * .26); };
+}
+
+function snowmobile(root) {
+    const body = new Batch(), screen = new Batch(), lamps = new Batch(), tracks = new Batch();
+    const paint = '#a36551';
+    shell(body, [[-1.50, .17, .39, .47, .60], [-1.16, .32, .39, .63, .85], [-.62, .43, .42, .74, 1.03], [-.18, .40, .45, .58, .83], [.37, .32, .43, .60, .71], [1.29, .24, .36, .51, .58]], paint);
+    body.box(0, .71, .42, .58, .21, 1.24, shield);
+    body.box(0, .56, 1.23, .68, .11, .53, '#657271');
+    body.rod([-.30, .67, 1.04], [-.30, .75, 1.51], .024, bright);
+    body.rod([.30, .67, 1.04], [.30, .75, 1.51], .024, bright);
+    body.rod([-.28, .73, 1.05], [.26, .73, 1.41], .041, '#8ca5a0');
+    body.box(.24, .73, 1.40, .13, .10, .12, '#aa875a');
+    body.rod([0, .71, -.63], [0, 1.04, -.45], .037, '#2d3539');
+    body.rod([-.41, 1.10, -.34], [.41, 1.10, -.34], .024, '#303a3d');
+    screen.quad([-.33, .98, -.62], [.33, .98, -.62], [.25, 1.39, -.41], [-.25, 1.39, -.41], '#b2c9c2', [0, 0, -1]);
+    lamps.box(0, .66, -1.274, .26, .117, .026, '#ebe9b5');
+    lamps.box(0, .55, 1.52, .21, .081, .032, '#c05448');
+    for (const side of [-1, 1]) {
+        const x = side * .55;
+        body.rod([side * .22, .56, -1.05], [x, .16, -.97], .034, '#a2aeaa');
+        body.rod([side * .22, .47, -.36], [x, .16, -.85], .029, shield);
+        body.box(x, .055, -1.01, .235, .073, 1.07, '#515c5b');
+        body.box(x, .091, -1.65, .228, .057, .29, '#a3b4af', [.37, 0, 0]);
+        body.rod([x, .091, -.56], [x, .106, -1.68], .021, '#b6c2b6');
+    }
+    tracks.box(0, .18, .55, .58, .24, 1.71, rubber);
+    for (let i = 0; i < 12; i++) tracks.box(0, .052, -.19 + i * .134, .61, .059, .068, '#56645e');
+    for (const side of [-1, 1])
+        for (const z of [-.08, .51, 1.13]) tracks.add(lens, [side * .285, .182, z], [.116, .048, .116], '#879992', wheelRotation);
+    add(root, body, 'snow-scooter-with-survey-kit');
+    add(root, tracks, 'snow-scooter-track-and-rollers');
+    add(root, screen, 'snow-scooter-windshield', glass);
+    add(root, lamps, 'snow-scooter-lights', lit);
+}
+
+function tramHaulage(root) {
+    const tractor = new Batch(), windows = new Batch(), trailer = new Batch(), railBody = new Batch(), railWindows = new Batch(), lights = new Batch();
+    const blue = '#576f7d', red = '#875b50', cream = '#a99d83';
+    tractor.box(0, .77, -5.97, 2.41, .31, 5.24, shield);
+    cab(tractor, windows, { z: -7.53, floor: .96, width: 2.57, length: 2.21, height: 2.18, color: blue });
+    tractor.box(0, .63, -8.67, 2.63, .23, .25, steel);
+    tractor.box(0, 1.03, -5.38, 2.33, .184, 2.16, deck);
+    for (const side of [-1, 1]) {
+        for (const z of [-7.73, -5.74, -4.94]) wheel(tractor, side, side * 1.07, z, .53, .39, steel, true);
+        lights.box(side * 1.04, .755, -8.81, .285, .133, .024, '#e0e9d7');
+        lights.box(side * 1.43, .42, 8.52, .21, .129, .022, '#c46550');
+        lights.box(side * 1.54, .58, 2.04, .025, .080, .114, '#e5b46d');
+    }
+    trailer.box(0, .27, 1.44, 2.97, .16, 10.11, '#8d795a');
+    trailer.box(0, .41, 6.85, 3.10, .21, 3.22, '#6c6861');
+    trailer.box(0, .74, -3.67, 2.81, .39, 1.14, '#776b59');
+    trailer.box(0, .43, -2.70, 2.83, .175, 1.46, '#726b5c', [0, 0, 0]);
+    for (const side of [-1, 1]) {
+        trailer.box(side * 1.45, .40, .38, .09, .17, 10.03, '#504e48');
+        for (const [i, z] of [5.48, 6.26, 7.03, 7.82].entries()) {
+            const swivel = new Batch();
+            wheel(swivel, side, 0, 0, .38, .285, armRim, true);
+            const bogie = add(root, swivel, 'steered-trailer-wheel');
+            bogie.position.set(side * 1.34, 0, z);
+            bogie.rotation.y = .035 + i * .028;
+        }
+        trailer.rod([side * .56, .43, -3.07], [side * .56, .43, 5.53], .046, '#a8adaa', true);
+        for (const z of [-2.81, .51, 4.07]) {
+            trailer.rod([side * 1.38, .422, z - .44], [side * 1.01, 1.025, z], .036, '#b99260', true);
+            trailer.box(side * 1.39, .51, z - .42, .111, .15, .24, '#545449');
+        }
+    }
+    const profile = [[-2.99, .89, .81, 2.74, 2.89], [-2.67, 1.12, .67, 2.84, 3.19], [4.32, 1.13, .67, 2.84, 3.19], [4.57, .98, .85, 2.78, 3.04]];
+    shell(railBody, profile, cream);
+    railBody.box(0, 1.01, .84, 2.32, .61, 7.57, red);
+    railBody.box(0, 3.21, .49, 2.08, .093, 6.63, '#7b8984');
+    for (const side of [-1, 1]) {
+        for (let j = 0; j < 6; j++) {
+            const z = -2.14 + j * 1.13;
+            railBody.box(side * 1.13, 2.27, z, .020, .86, .99, shield);
+            railWindows.box(side * 1.147, 2.28, z, .016, .731, .87, '#769495');
+            railBody.box(side * 1.168, 2.61, z, .018, .024, .84, bright);
+        }
+        railBody.box(side * 1.166, 1.46, .83, .020, .11, 7.04, '#b6a689');
+    }
+    railWindows.box(0, 2.27, -2.999, 1.58, .81, .022, '#829f9a');
+    railBody.box(0, 2.82, -2.978, .80, .24, .053, shield);
+    railBody.box(0, 2.79, -3.013, .68, .107, .011, '#b5ab8b');
+    striped(trailer, 0, .51, 8.535, 2.64);
+    add(root, tractor, 'haulage-tractor');
+    add(root, windows, 'haulage-tractor-glass', glass);
+    add(root, trailer, 'multi-axle-tram-trailer-with-rails');
+    add(root, railBody, 'tied-down-tram-section');
+    add(root, railWindows, 'tram-section-windows', glass);
+    add(root, lights, 'haulage-marker-lights', lit);
+}
+
+const armRim = '#818a81';
+const builders = [terminalShunter, portStraddle, logGrapple, quarryHauler, snowmobile, tramHaulage];
+
+function createCityIndustry(scene) {
+    const group = new T.Group();
+    group.name = 'Портовая и промышленная техника';
+    scene.add(group);
+    const sites = industryPlacements.map(({ id, label, lookX, lookZ, note }) => ({ id, label, x: lookX, z: lookZ, note, radius: 2.5 }));
+    const views = industryPlacements.map((position, i) => ({ position, build: builders[i], root: null, update: null }));
+    return { sites, update(c) {
+        for (const view of views) {
+            const { position } = view, point = c.focus ?? c;
+            const visible = c.zone === 'street' && Math.hypot(point.x - position.x, point.z - position.z) < 145;
+            if (visible && !view.root) {
+                view.root = new T.Group();
+                view.root.name = position.label;
+                view.root.userData.cityModel = position.id;
+                view.root.position.set(position.x, groundHeight(position.x, position.z), position.z);
+                view.root.rotation.y = position.yaw ?? 0;
+                view.update = view.build(view.root);
+                group.add(view.root);
+            }
+            if (view.root) view.root.visible = visible;
+            if (visible) view.update?.(c);
+        }
+    } };
+}
+
+module.exports = { createCityIndustry };
+
+},
+"game/new-city-people.js": function(require, module, exports) {
+'use strict';
+
+const T = require('../engine/three.module.min.js');
+const { Batch, ring, tube, shell, glass } = require('./model-geometry.js');
+const { createPerson } = require('./model-people.js');
+const { groundHeight } = require('./world-layout.js');
+
+const metal = '#b1bab5', rubber = '#253138', brass = '#b59b69', canvas = '#9b9378';
+const row = (id, label, x, z, yaw, variant, note, design) => ({ id: 'city-person-' + id, label, x, z, yaw, variant, note, design });
+
+function parts(parent, name, draw, material) {
+    const b = new Batch();
+    draw(b);
+    const mesh = b.mesh(material);
+    mesh.name = name;
+    parent.add(mesh);
+    return mesh;
+}
+
+function loop(b, x, y, z, radius, color, sideOn = false) {
+    b.add(ring, [x, y, z], [radius, radius, radius * .72], color, [0, sideOn ? Math.PI * .5 : 0, 0]);
+}
+
+function caseBody(b, w, h, d, color) {
+    b.box(0, -h * .5 - .026, 0, w, h, d, color);
+    b.box(0, -h * .12 - .026, -d * .51, w * .97, .014, .007, metal);
+    b.rod([-w * .22, -.024, 0], [-w * .22, .015, 0], .009, rubber);
+    b.rod([-w * .22, .015, 0], [w * .22, .015, 0], .011, rubber);
+    b.rod([w * .22, .015, 0], [w * .22, -.024, 0], .009, rubber);
+    for (const x of [-w * .31, w * .31])
+        b.box(x, -h * .34 - .026, -d * .52, .028, .032, .009, metal);
+}
+
+function cylinder(b, x, y, z, diameter, height, color) {
+    b.add(tube, [x, y, z], [diameter, height, diameter], color);
+}
+
+function apron(a, color, length, trim, width = .22) {
+    a.body('apron', b => {
+        const rows = [[.429, width * .57, -.143], [.328, width * .67, -.200], [.178, width, -.186], [-.025, width * 1.015, -.204], [-length, width * 1.06, -.198]];
+        const panel = (y, w, z) => [[-w, y, z + .049], [-w * .24, y - .003, z], [w * .24, y, z - .004], [w, y + .004, z + .049]];
+        const bands = rows.map(r => panel(...r));
+        for (let i = 1; i < bands.length; i++)
+            for (let j = 0; j < 3; j++)
+                b.quad(bands[i - 1][j], bands[i][j], bands[i][j + 1], bands[i - 1][j + 1], j === 1 ? color : trim, [0, 0, -1]);
+        for (const sign of [-1, 1]) {
+            b.rod([sign * .085, .447, -.133], [sign * .105, .486, -.023], .011, trim, true);
+            b.rod([sign * .105, .486, -.023], [sign * .109, .418, .134], .011, trim, true);
+        }
+        b.box(0, .134, -.207, width * .88, .064, .016, trim);
+        b.box(0, .170, -.218, width * .89, .011, .010, color);
+    });
+}
+
+function vest(a, color, trim, bib = false) {
+    a.body('work-vest', b => {
+        shell(b, [[-.202, .108, .04, .332, .418], [-.150, .213, .063, .356, .447], [.111, .207, .075, .359, .440], [.166, .125, .062, .335, .420]], color);
+        for (const s of [-1, 1]) {
+            b.box(s * .116, .248, -.208, .102, .077, .028, trim);
+            b.box(s * .112, .294, -.213, .108, .018, .024, color);
+            b.box(s * .126, .379, -.199, .089, .028, .015, bib ? '#d9dbc0' : trim);
+            b.box(s * .126, .385, .137, .095, .022, .014, trim);
+        }
+        b.box(0, .228, -.212, .013, .339, .012, trim);
+    });
+}
+
+function helmet(a, color, shield) {
+    a.removeHat();
+    a.head('helmet', b => {
+        b.ball(0, .216, -.005, .219, .149, .264, color);
+        b.ball(0, .166, -.030, .222, .028, .268, color);
+        b.box(0, .181, -.127, .175, .032, .074, color, [.11, 0, 0]);
+        for (const side of [-1, 1])
+            b.box(side * .095, .151, -.017, .020, .058, .078, rubber);
+    });
+    if (shield)
+        a.head('face-shield', b => b.quad([-.092, .184, -.155], [-.080, .084, -.140], [.080, .084, -.140], [.092, .184, -.155], '#8ba3a4'), glass);
+}
+
+function gauntlets(a, color, length = .18, width = .083) {
+    for (const side of ['left', 'right'])
+        a.equipment(`${side}-elbow`, 'gauntlet', b => {
+            cylinder(b, 0, -.13, 0, width + .024, length, color);
+            cylinder(b, 0, -.13 + length * .49, 0, width + .032, .024, rubber);
+            b.ball(0, -.239, -.007, width * .84, .081, .069, color);
+        });
+}
+
+function wheelchair(a) {
+    a.removePack();
+    a.seated = true;
+    a.seatHeight = .53;
+    a.seatedLegs = { thigh: 1.82, shin: -.27 };
+    a.hands = [[-.339, .087, -.082], [.339, .087, -.082]];
+    a.equipment('root', 'active-wheelchair-frame', b => {
+        b.box(0, .491, .037, .476, .082, .439, '#334b55');
+        b.box(0, .660, .249, .443, .299, .068, '#405762');
+        for (const side of [-1, 1]) {
+            const x = side * .215;
+            b.rod([x, .495, .219], [x, .161, -.366], .020, '#68858a');
+            b.rod([x, .475, -.161], [x, .176, -.36], .016, '#68858a');
+            b.rod([x, .352, .218], [x, .721, .256], .019, '#68858a');
+            b.rod([x, .726, .24], [x, .726, .355], .018, rubber);
+            b.rod([x, .269, .166], [side * .311, .324, .062], .014, metal);
+            loop(b, side * .199, .080, -.374, .070, rubber, true);
+        }
+        b.box(0, .145, -.358, .350, .052, .158, rubber);
+    });
+    for (const side of [-1, 1])
+        a.equipment('root', 'wheel-and-push-rim', b => {
+            const x = side * .309;
+            loop(b, x, .326, .052, .299, rubber, true);
+            loop(b, x + side * .025, .326, .052, .276, '#b6c5c6', true);
+            for (let i = 0; i < 10; i++) {
+                const angle = Math.PI * 2 * i / 10;
+                b.rod([x, .326, .052], [x, .326 + Math.cos(angle) * .277, .052 + Math.sin(angle) * .277], .003, metal);
+            }
+            b.ball(x, .326, .052, .061, .066, .066, '#566e77');
+        });
+    a.equipment('root', 'blanket-across-knees', b => {
+        for (let i = 0; i < 8; i++) {
+            const x = (i - 3.5) * .044;
+            const fold = .008 * Math.sin(i * 1.9);
+            const color = i % 2 ? '#b09274' : '#a38465';
+            b.quad([x - .023, .609, .032], [x - .023, .739 + fold, -.365], [x + .022, .738 + fold, -.373], [x + .022, .607, .032], color, [0, 1, 0]);
+            b.quad([x - .023, .739 + fold, -.365], [x - .023, .582 + fold, -.449], [x + .022, .580 + fold, -.450], [x + .022, .738 + fold, -.373], color, [0, 0, -1]);
+            b.rod([x, .582 + fold, -.45], [x, .550 - i % 3 * .006 + fold, -.460], .003, '#d3b59a');
+        }
+    });
+}
+
+const cast = [
+    row('printer', 'Печатник', -104.7, 39.1, 2.7, 10, 'Литейный квартал. Плотные нарукавники, короткий фартук и наборная верстатка.', a => {
+        apron(a, '#627068', .119, '#414e49');
+        gauntlets(a, '#676a5e', .156);
+        a.held('composing-stick', b => {
+            b.box(0, 0, 0, .315, .045, .099, '#5e7178');
+            b.box(0, .023, -.044, .320, .033, .018, metal);
+            for (let i = 0; i < 9; i++) b.box((i - 4) * .027, .037, 0, .020, .016 + (i % 3) * .004, .061, '#aeb1a5');
+        }, .29, .285);
+    }),
+    row('glassblower', 'Стеклодув', -109.2, 38.8, 3.1, 5, 'Двор Металлурга. Высокий фартук, щиток и цветная стеклянная заготовка.', a => {
+        apron(a, '#896144', .243, '#745141'); helmet(a, '#8e7653', true);
+        a.held('coloured-glass-blank', b => {
+            b.rod([-.187, -.014, .014], [.186, -.014, .014], .011, metal);
+            for (const x of [-.119, .119]) b.rod([x, -.020, .014], [x * .59, .064, -.005], .009, '#536369');
+            b.ball(0, .077, .008, .182, .193, .153, '#79aeb2');
+            b.ball(-.029, .124, -.034, .074, .058, .027, '#c8c797');
+            b.ball(.029, .040, -.039, .070, .043, .028, '#a77471');
+        }, .30, .30);
+    }),
+    row('laundry', 'Работница прачечной', -40.7, 12.2, -1.35, 3, 'Канальная улица. Водостойкий передник и корзина с формой.', a => {
+        apron(a, '#62878b', .262, '#527279');
+        a.equipment('left-elbow', 'blue-sleeve-cover', b => cylinder(b, 0, -.086, 0, .106, .164, '#6a9caa'));
+        a.equipment('right-elbow', 'plum-sleeve-cover', b => cylinder(b, 0, -.086, 0, .105, .164, '#8d706d'));
+        a.held('uniform-basket', b => {
+            b.box(0, -.101, .016, .473, .043, .282, '#696f68');
+            for (const x of [-.224, .224]) b.box(x, -.033, .016, .030, .197, .291, '#7e6352');
+            for (const z of [-.126, .156]) {
+                for (let j = 0; j < 4; j++) b.box(0, -.069 + j * .039, z, .446, .019, .025, '#926f56');
+                for (let i = -4; i <= 4; i++) b.box(i * .045, -.023, z - .009, .014, .174, .021, '#775b4b');
+            }
+            for (let i = 0; i < 4; i++) b.ball((i - 1.5) * .090, .074 - i % 2 * .020, .008, .163, .108, .280, ['#96a7ae', '#6d777f', '#847766', '#a99e87'][i]);
+        }, .46, .26);
+    }),
+    row('nursery', 'Воспитательница ночных яслей', -30.3, 17.2, 3.0, 1, 'Двор дома № 23. Мягкий жилет, мешок с варежками и фигурные жетоны.', a => {
+        vest(a, '#8f6e71', '#a48586');
+        a.hand('mitten-bag', b => {
+            b.ball(0, -.141, .008, .196, .285, .131, '#8f8272');
+            b.rod([-.054, -.043, .008], [-.025, .002, 0], .009, canvas);
+            b.rod([-.025, .002, 0], [.050, -.044, .008], .008, canvas);
+            b.ball(-.035, -.037, -.041, .055, .068, .037, '#b56965');
+            b.ball(.035, -.042, -.041, .059, .053, .035, '#6a9b9d');
+        });
+        a.body('locker-tokens', b => {
+            loop(b, .124, .289, -.227, .030, brass);
+            for (let i = 0; i < 4; i++) b.ball(.101 + i * .015, .257 - i % 2 * .017, -.230, .023, .034, .008, ['#ad885f', '#82a290', '#86a7ab', '#c99782'][i]);
+        });
+    }),
+    row('book-restorer', 'Реставратор книг', -235.8, 18.4, 3.15, 6, 'Школьный двор. Хлопковые перчатки, откидная лупа и раскрытый переплёт.', a => {
+        apron(a, '#b3a88b', .165, '#8c806e'); gauntlets(a, '#ded2b6', .079, .055);
+        a.head('hinged-magnifier', b => {
+            b.rod([-.091, .134, -.035], [-.044, .132, -.132], .004, rubber);
+            loop(b, -.042, .118, -.136, .032, brass);
+            b.rod([-.043, .148, -.130], [-.043, .133, -.175], .004, metal);
+        });
+        a.held('open-book-on-support', b => {
+            for (const side of [-1, 1]) {
+                b.box(side * .087, 0, 0, .170, .029, .242, '#685854', [0, 0, side * .153]);
+                b.box(side * .082, .020, -.001, .152, .019, .219, '#c9bc9a', [0, 0, side * .153]);
+                for (let j = 0; j < 6; j++) b.box(side * .083, .036, -.070 + j * .025, .095 - (j % 3) * .009, .004, .0025, '#707262', [0, 0, side * .153]);
+            }
+        }, .31, .27);
+    }),
+    row('clockkeeper', 'Смотритель городских часов', 16.8, -35.8, 2.8, 13, 'Около трамвайного депо. Жилет и контрольный циферблат в футляре.', a => {
+        vest(a, '#565d66', '#72736d');
+        a.held('reference-clock-case', b => {
+            b.box(0, 0, -.003, .327, .245, .072, '#755b4d');
+            b.ball(0, .001, -.045, .211, .210, .031, '#d6cba7');
+            loop(b, 0, 0, -.060, .105, brass);
+            for (let i = 0; i < 12; i++) {
+                const angle = Math.PI * i / 6;
+                b.box(Math.sin(angle) * .081, Math.cos(angle) * .081, -.064, .005, .019, .005, rubber, [0, 0, -angle]);
+            }
+            b.rod([0, 0, -.069], [.047, .035, -.069], .004, rubber);
+            b.rod([0, 0, -.071], [-.015, .068, -.071], .003, '#856746');
+        }, .29, .283);
+    }),
+    row('accordionist', 'Дворовый музыкант', -24.2, 17.5, 2.85, 8, 'Двор Канальной. Короткая куртка, широкий ремень и гармонь.', a => {
+        a.equipment('root','Потёртый футляр гармони', b => {
+            b.box(.46,.17,.13,.52,.26,.28,'#59483c');
+            b.box(.46,.23,.13,.53,.019,.29,'#a09478');
+            for(const x of [.22,.70]) b.box(x,.27,.13,.045,.055,.28,'#84775e');
+            b.rod([.38,.31,.13],[.53,.31,.13],.014,'#695746');
+        });
+        a.body('accordion-shoulder-strap', b => {
+            b.rod([-.110, .447, -.089], [.009, .196, -.208], .024, '#45443c', true);
+            b.rod([.140, .440, -.095], [.092, .191, -.203], .021, '#45443c', true);
+        });
+        a.held('accordion-ends', b => {
+            for (const s of [-1, 1]) {
+                b.box(s * .151, 0, 0, .116, .237, .185, '#865855');
+                for (let i = 0; i < 7; i++) b.box(s * .163, .081 - i * .027, -.097, .051, .020, .008, '#c5bea2');
+            }
+        }, .34, .327);
+        const bellows = a.held('accordion-bellows', b => {
+            for (let i = 0; i < 10; i++) {
+                b.box((i - 4.5) * .022, .001, .002, .018, .209, .174, i % 2 ? '#555450' : '#6f7070');
+                b.box((i - 4.5) * .022, 0, -.090, .006, .204, .005, '#9a8a76');
+            }
+        });
+        a.motion = time => { bellows.scale.x = 1 + .13 * Math.sin(time * 3); };
+    }),
+    row('umbrella-maker', 'Мастер по ремонту зонтов', 29.8, 25.4, 3.0, 4, 'Рынок «Спектр». Длинный жилет и каркасы зонтов.', a => {
+        vest(a, '#514a54', '#787079');
+        a.body('folded-umbrella-frames', b => {
+            for (let i = 0; i < 3; i++) {
+                const x = .164 + i * .043;
+                b.rod([x + .123, -.420, .107], [x - .156, .556, .169], .012, metal);
+                b.rod([x + .036, -.041, .117], [x - .049, .403, .139], .027, ['#84735d', '#615c73', '#687e74'][i]);
+                b.rod([x - .145, .548, .167], [x - .103, .575, .178], .014, rubber);
+            }
+            b.rod([-.128, .428, -.139], [.150, .192, .190], .016, canvas, true);
+        });
+    }),
+    row('radio-student', 'Подросток из радиокружка', -237.8, 21.1, 3.05, 4, 'У школьной дорожки. Пульт на ремешке и маленькая модель машины в кейсе.', a => {
+        a.root.scale.multiplyScalar(.881);
+        a.body('radio-controller', b => {
+            b.rod([-.092, .490, -.092], [0, .230, -.209], .009, '#647d83');
+            b.rod([.092, .485, -.103], [0, .230, -.209], .009, '#647d83');
+            b.box(0, .217, -.215, .172, .093, .045, rubber);
+            b.rod([.053, .256, -.221], [.051, .375, -.228], .006, metal);
+            for (const x of [-.036, .036]) b.ball(x, .216, -.246, .024, .022, .017, '#b7a884');
+        });
+        a.hand('radio-car-in-case', b => {
+            b.box(0, -.140, 0, .228, .021, .128, '#465c63');
+            b.box(0, -.104, 0, .170, .045, .087, '#bf735f');
+            for (const x of [-.054, .054]) for (const z of [-.043, .043]) b.ball(x, -.121, z, .046, .045, .033, rubber);
+            b.rod([-.072, -.041, 0], [.072, -.041, 0], .012, metal);
+        });
+        a.hand('transparent-model-cover', b => b.box(0, -.091, 0, .222, .104, .120, '#9abaaf'), glass);
+    }),
+    row('astronomy-student', 'Участница астрокружка', -230.9, 20.1, 2.7, 11, 'У школы № 1430. Вязаная шапка, тубус со звёздной картой и красный фонарь.', a => {
+        a.root.scale.multiplyScalar(.912);
+        a.removeHat();
+        a.head('knitted-astronomy-cap', b => {
+            b.ball(0, .225, .004, .175, .163, .205, '#726380');
+            b.ball(-.008, .299, .040, .128, .117, .150, '#80728d');
+            b.ball(-.008, .358, .064, .052, .054, .054, '#c19ea0');
+            cylinder(b, 0, .176, -.005, .182, .045, '#90839c');
+        });
+        a.body('star-map-tube', b => {
+            b.rod([.257, -.155, .161], [-.146, .630, .171], .056, '#617980');
+            b.rod([-.146, .629, .171], [-.162, .656, .171], .064, '#a99072');
+            b.rod([-.135, .442, -.121], [.178, .133, -.204], .015, canvas, true);
+            b.box(.148, .202, -.226, .051, .036, .044, '#a94d52');
+        });
+    }),
+    row('rink-worker', 'Заливщик катка', -73.5, -591.4, 2.4, 10, 'Северный посёлок. Непромокаемый полукомбинезон и широкий скребок.', a => {
+        apron(a, '#516e77', .232, '#45626a');
+        for (const side of ['left', 'right']) a.equipment(`${side}-ankle`, 'waterproof-boot', b => cylinder(b, 0, .052, .015, .136, .192, '#384a50'));
+        a.hand('wide-ice-scraper', b => {
+            b.rod([0, .284, 0], [0, -.502, -.003], .014, '#816f5c');
+            b.box(0, -.511, -.009, .365, .084, .032, '#9eafae', [.23, 0, 0]);
+            for (const x of [-.113, .113]) b.rod([0, -.409, -.007], [x, -.492, -.006], .011, metal);
+        });
+    }),
+    row('shift-skier', 'Лыжник после смены', -75.5, -627.9, 3.1, 7, 'У сквера Полярников. Лыжи с заснеженными креплениями и палки.', a => {
+        a.removePack();
+        vest(a, '#537c91', '#aaddcc', true);
+        a.body('snow-covered-skis', b => {
+            for (const x of [.139, .208]) {
+                b.rod([x + .12, -.775, .226], [x - .23, .915, .252], .032, x < .15 ? '#9a7067' : '#68878f', true);
+                b.rod([x - .228, .913, .252], [x - .263, 1.052, .232], .029, '#adbabc', true);
+                b.box(x, -.051, .236, .071, .125, .071, '#475b60', [0, 0, .20]);
+                b.box(x - .011, .013, .280, .059, .029, .021, '#c0d3d4');
+            }
+            b.rod([-.116, .447, -.106], [.183, .183, .232], .018, '#454e53', true);
+        });
+        a.hand('ski-poles', b => {
+            for (const x of [-.035, .035]) {
+                b.rod([x, .062, .038], [x, -.534, -.096], .009, metal);
+                loop(b, x, -.49, -.083, .050, '#546972');
+            }
+        });
+    }),
+    row('wheelchair-resident', 'Горожанка в кресле-коляске', -36.7, 18.1, 3.2, 11, 'Тротуар у Канальной. Короткая куртка, плед и открытые ручные обода.', wheelchair),
+    row('paramedic', 'Ночной фельдшер', -39.5, 38.1, 2.7, 14, 'Канальные гаражи. Тёмно-красная куртка и плоский медицинский чемоданчик.', a => {
+        vest(a, '#803b43', '#c2a881', true);
+        gauntlets(a, '#913f44', .094, .068);
+        a.hand('medical-case', b => {
+            caseBody(b, .347, .211, .137, '#7e444d');
+            b.box(0, -.128, -.073, .112, .027, .008, '#d0c6ad');
+            b.box(0, -.128, -.074, .027, .100, .008, '#d0c6ad');
+        });
+    }),
+    row('firefighter', 'Пожарный', -52, 35.8, .9, 2, 'Выезд к Канальным гаражам. Каска, объёмная куртка и дыхательный аппарат.', a => {
+        a.removePack();
+        vest(a, '#544a41', '#b6a569', true); helmet(a, '#bc8d58', true); gauntlets(a, '#665547');
+        a.body('breathing-apparatus', b => {
+            b.box(0, .245, .201, .215, .384, .053, '#536264');
+            for (const x of [-.074, .074]) {
+                cylinder(b, x, .255, .266, .126, .344, '#718489');
+                b.ball(x, .425, .264, .106, .090, .100, '#798c8b');
+                b.box(x, .449, .267, .062, .050, .064, brass);
+            }
+            b.rod([.126, .425, .289], [.185, .451, .024], .018, rubber);
+        });
+    }),
+    row('surveyor', 'Геодезист карьера', -404.8, -50.5, 2.6, 7, 'Старый карьер. Куртка, наколенники и высокая складная тренога.', a => {
+        a.removePack();
+        vest(a, '#6c7d63', '#b1ad7d');
+        for (const side of ['left', 'right']) a.equipment(`${side}-knee`, 'survey-kneepad', b => b.ball(0, -.014, -.049, .101, .163, .070, '#4a5e59'));
+        a.body('folded-survey-tripod', b => {
+            for (let i = 0; i < 3; i++) b.rod([.239 + i * .030, -.545, .170], [-.133 + i * .028, .604, .224], .016, i === 0 ? '#95816f' : metal, true);
+            b.box(-.099, .612, .217, .115, .065, .138, '#a48660', [0, 0, .31]);
+            b.box(-.105, .678, .216, .096, .091, .111, '#6c9292');
+            b.rod([-.117, .451, -.088], [.177, .180, .190], .018, rubber, true);
+        });
+    }),
+    row('caster', 'Литейщик', -143.3, 22.2, 2.5, 5, 'Возле Литейной. Серебристый фартук до голеней, рукавицы и лицевой щиток.', a => {
+        apron(a, '#a8afac', .516, '#858f90'); helmet(a, '#808986', true); gauntlets(a, '#a2aaa6', .171, .082);
+        a.hand('long-foundry-gauge', b => {
+            b.rod([0, -.383, -.003], [0, .302, .054], .012, metal, true);
+            b.box(0, .302, -.004, .153, .028, .094, '#786553');
+            for (const x of [-.059, .059]) b.box(x, .270, -.048, .022, .076, .021, '#5f5a52');
+        });
+    }),
+    row('antenna-rigger', 'Монтажник антенн', -23.9, -303.9, 2.8, 0, 'Радиоцентр «Полюс». Каска, поясная обвязка и бухта кабеля.', a => {
+        helmet(a, '#728996'); vest(a, '#5e737d', '#9ea99c');
+        a.body('harness-and-cable', b => {
+            for (const side of [-1, 1]) {
+                b.rod([side * .126, .455, -.096], [side * .086, .061, -.211], .025, '#968367', true);
+                b.rod([side * .133, .446, .094], [side * .171, .055, .126], .024, '#968367', true);
+            }
+            b.box(0, .070, -.216, .378, .043, .020, '#b8a277');
+            b.box(0, .067, -.229, .064, .045, .019, metal);
+            for (let i = 0; i < 4; i++) loop(b, .086, .243 - i * .022, .218 + i * .018, .117 - i * .003, '#323843');
+        });
+    }),
+    row('diver', 'Портовый водолаз', -153, 108, 1.7, 2, 'Южный порт. Толстый костюм, круглый ворот и шлем под локтем.', a => {
+        a.removePack();
+        vest(a, '#565d53', '#7d7361'); gauntlets(a, '#746d61', .146, .094);
+        a.body('drysuit-neck-seal', b => {
+            cylinder(b, 0, .477, -.009, .209, .061, '#555758');
+            cylinder(b, 0, .508, -.009, .182, .037, metal);
+        });
+        a.hand('diver-helmet-carried', b => {
+            b.ball(0, -.121, .005, .244, .248, .236, '#a88960');
+            b.ball(0, -.106, -.107, .145, .135, .057, '#687c79');
+            loop(b, 0, -.107, -.132, .077, brass);
+            cylinder(b, 0, -.233, .007, .198, .053, '#566367');
+            b.rod([-.067, .023, .004], [.067, .023, .004], .014, metal);
+        });
+    }),
+    row('signalman', 'Портовый сигнальщик', -138, 103, 3.55, 9, 'Причал 01. Вязаный капор, короткий плащ и два чехла для флажков.', a => {
+        a.removeHat();
+        a.head('knitted-dock-hood', b => {
+            b.ball(0, .199, .031, .206, .164, .202, '#746754');
+            b.ball(-.075, .132, .001, .074, .127, .115, '#8b7661');
+            b.ball(.075, .132, .001, .074, .127, .115, '#8b7661');
+        });
+        apron(a, '#68765f', .145, '#566556');
+        a.body('twin-flag-cases', b => {
+            for (const x of [-.111, .119]) {
+                b.rod([x + .109, -.138, .189], [x - .114, .661, .246], .029, '#5d6253');
+                b.rod([x - .113, .653, .246], [x - .140, .737, .241], .016, x < 0 ? '#b97264' : '#e1bd77');
+            }
+            b.rod([-.115, .446, -.105], [.178, .170, -.194], .014, '#a29a78', true);
+        });
+    }),
+    row('ferry-skipper', 'Шкипер парома', -6, 105, .55, 12, 'У Речного вокзала. Шерстяная куртка, жилет с пряжками и фонарь.', a => {
+        vest(a, '#7a7154', '#a99a70');
+        a.body('marine-buckles', b => {
+            for (const y of [.266, .125]) {
+                b.box(0, y, -.222, .298, .031, .018, '#474c46');
+                b.box(0, y, -.238, .060, .040, .014, metal);
+            }
+        });
+        a.hand('guarded-hand-lantern', b => {
+            cylinder(b, 0, -.085, -.008, .126, .134, '#6f7a6e');
+            b.ball(0, -.071, -.063, .098, .093, .052, '#ddc586');
+            for (let i = -1; i <= 1; i++) b.rod([i * .032, -.133, -.083], [i * .032, -.020, -.085], .005, rubber);
+            b.rod([-.059, -.019, -.004], [-.040, .029, -.003], .009, rubber);
+            b.rod([-.041, .028, -.003], [.035, .028, -.002], .009, rubber);
+            b.rod([.035, .028, -.002], [.058, -.019, -.006], .009, rubber);
+        });
+    }),
+    row('river-lab', 'Лаборант речной станции', 134.2, 120.7, -1.5, 8, 'Южный порт. Прорезинённые нарукавники и термочемодан для проб.', a => {
+        gauntlets(a, '#75848a', .173); vest(a, '#758467', '#a6b49e');
+        a.held('sample-container', b => {
+            b.box(0, -.041, .002, .377, .167, .215, '#7b8f91');
+            b.box(0, .051, .075, .374, .041, .078, '#a5b4a9');
+            for (let i = -2; i <= 2; i++) {
+                cylinder(b, i * .058, .052, -.035, .039, .125, i % 2 ? '#9eb7b2' : '#9cafbd');
+                cylinder(b, i * .058, .122, -.035, .047, .022, '#4e5c63');
+            }
+        }, .34, .280);
+    }),
+    row('meteorologist', 'Метеоролог карьера', -409.3, -50.8, 2.8, 14, 'Старый карьер. Глубокий капюшон, планшет и цилиндрический футляр.', a => {
+        a.removeHat();
+        a.head('drawn-weather-hood', b => {
+            b.ball(0, .184, .034, .235, .229, .208, '#626c76');
+            b.ball(-.097, .132, -.025, .075, .165, .162, '#73828a');
+            b.ball(.097, .132, -.025, .075, .165, .162, '#73828a');
+        });
+        a.body('weather-tablet-and-case', b => {
+            b.rod([.203, -.276, .181], [.155, .426, .171], .058, '#6a7d86');
+            b.rod([.155, .431, .171], [.147, .478, .171], .063, '#a2a288');
+            b.rod([-.106, .431, -.101], [0, .212, -.211], .011, brass);
+            b.rod([.091, .441, -.114], [0, .212, -.211], .011, brass);
+            b.box(0, .153, -.233, .154, .128, .024, '#455860', [.09, 0, 0]);
+            b.box(0, .159, -.248, .128, .084, .008, '#91aba8', [.09, 0, 0]);
+        });
+    }),
+    row('greenhouse-gardener', 'Садовник оранжереи', -11, -88.4, 3.05, 6, 'Северная ТЭЦ. Стёганый жилет, зелёный передник и кассета с рассадой.', a => {
+        vest(a, '#65785d', '#87947d'); apron(a, '#556c49', .220, '#68775d');
+        a.held('seedling-tray', b => {
+            b.box(0, -.039, 0, .427, .056, .241, '#715f53');
+            for (const x of [-.149, -.050, .050, .149]) for (const z of [-.067, .067]) {
+                cylinder(b, x, -.013, z, .064, .061, '#5a473b');
+                b.rod([x, .008, z], [x + .006, .102, z - .012], .005, '#718d58');
+                b.ball(x - .021, .057, z, .050, .019, .042, '#829c60', [0, 0, .35]);
+                b.ball(x + .021, .090, z - .007, .050, .021, .046, '#7b985e', [0, 0, -.32]);
+            }
+        }, .42, .275);
+    }),
+    row('tram-track-worker', 'Путеец трамвайной линии', 7.8, -38.4, 2.7, 5, 'Трамвайное депо. Укороченная куртка, фонарь и измерительное колесо.', a => {
+        vest(a, '#8d7854', '#e2c08b', true); helmet(a, '#a08764');
+        a.head('low-mounted-lamp', b => {
+            b.box(0, .137, -.162, .060, .035, .037, '#49585a');
+            b.box(0, .136, -.184, .042, .023, .007, '#ddc490');
+        });
+        a.body('Путевая сумка с инструментом',b=>{
+            caseBody(b,.25,.22,.12,'#786a51');
+            b.rod([0,-.05,0],[-.17,.37,.04],.016,'#72674f',true);
+        }).position.set(.20,.04,.11);
+        a.hand('track-measuring-wheel', b => {
+            b.rod([.005, .031, -.001], [.001, -.378, -.074], .012, '#91a0a1');
+            loop(b, .001, -.396, -.084, .111, '#576c73', true);
+            for (let i = 0; i < 4; i++) {
+                const phi = Math.PI * i / 2;
+                b.rod([.003, -.396, -.084], [.003, -.396 + Math.sin(phi) * .100, -.084 + Math.cos(phi) * .100], .006, brass);
+            }
+        });
+    })
+];
+
+function fabricate(site) {
+    const actor = createPerson('resident', site.variant), { root } = actor;
+    const spine = root.getObjectByName('spine'), neck = root.getObjectByName('neck');
+    const [lod] = root.children;
+    const near = lod.levels[0].object;
+    root.name = site.label;
+    root.userData.cityModel = site.id;
+    root.position.set(site.x, groundHeight(site.x, site.z), site.z);
+    root.rotation.y = site.yaw;
+    const attire = {
+        root,
+        body(name, draw, mat) { return parts(spine, name, draw, mat); },
+        head(name, draw, mat) { return parts(neck, name, draw, mat); },
+        equipment(joint, name, draw, mat) { return parts(joint === 'root' ? near : root.getObjectByName(joint), name, draw, mat); },
+        removeHat() {
+            neck.traverse(child => { if (child.name.startsWith('headwear-')) child.visible = false; });
+        },
+        removePack() {
+            const pack = root.getObjectByName('commuter-backpack');
+            if (pack) pack.visible = false;
+        },
+        held(name, draw, width, y = .296) {
+            const mesh = parts(spine, name, draw);
+            mesh.position.set(0, y, -.363);
+            if (width) this.hands = [[-width / 2, y, -.365], [width / 2, y, -.365]];
+            return mesh;
+        },
+        hand(name, draw, mat) {
+            const mesh = parts(root.getObjectByName('right-elbow'), name, draw, mat);
+            mesh.position.set(0, -.265, -.038);
+            mesh.rotation.x = -.075;
+            this.hands = [null, [.247, .061, -.179]];
+            return mesh;
+        }
+    };
+    site.design(attire);
+    lod.levels[1].distance = attire.seated ? 60 : 36;
+    return { actor, attire };
+}
+
+function createCityPeople(scene) {
+    const group = new T.Group(), models = new Map();
+    const routines = require('./winter-residents.js').createWinterResidents(group);
+    group.name = 'Новые персонажи города';
+    scene.add(group);
+    const sites = cast.map(({ id, label, x, z, note }) => ({ id, label, x, z, radius: 2.05, note, actionLabel: `Осмотреть · ${label}` }));
+    function update(ctx) {
+        group.visible = ctx.zone === 'street';
+        if (!group.visible)
+            return;
+        const focus = ctx.focus ?? ctx;
+        routines(ctx, focus);
+        for (const site of cast) {
+            const distance = Math.hypot(focus.x - site.x, focus.z - site.z);
+            let entry = models.get(site.id);
+            if (distance > 47) {
+                if (entry) entry.actor.root.visible = false;
+                continue;
+            }
+            if (!entry) {
+                entry = fabricate(site);
+                models.set(site.id, entry);
+                group.add(entry.actor.root);
+            }
+            const { actor, attire } = entry;
+            actor.root.visible = true;
+            let turn = 0;
+            if (distance < 5 && distance > .02) {
+                const angle = Math.atan2(site.x - focus.x, site.z - focus.z) - site.yaw;
+                turn = T.MathUtils.clamp(Math.atan2(Math.sin(angle), Math.cos(angle)), -.54, .54) * T.MathUtils.smoothstep(5 - distance, 0, 3.9);
+            }
+            actor.root.rotation.y = site.yaw + (attire.seated ? 0 : turn);
+            actor.update(ctx.dt, 0, false, {
+                ground: ctx.ground ?? groundHeight, handTargets: attire.hands,
+                seated: attire.seated ? 1 : 0, seatHeight: attire.seatHeight, seatedLegs: attire.seatedLegs,
+                glance: attire.seated ? turn * .42 : 0, conversation: distance < 2.5,
+                wetness: Math.min(.65, (ctx.weather?.snow ?? 0) * .33)
+            });
+            attire.motion?.(ctx.elapsed);
+        }
+    }
+    return { sites, update };
+}
+
+module.exports = { createCityPeople };
+
+},
+"game/new-city-services-layout.js": function(require, module, exports) {
+"use strict";
+
+const side = Math.PI / 2;
+
+const serviceSites = [
+    { id: 'city-sweeper', label: 'Вакуумная подметальная машина', x: 58, z: 36.7, radius: 2.1, note: 'Карман напротив рынка «Спектр». Две круглые щётки подают снег и песок к всасывающему башмаку.', body: { x: 58, z: 39.2, w: 2.1, d: 4.9, h: 2.6, yaw: side } },
+    { id: 'city-rotary-snow', label: 'Роторный снегоочиститель', x: -62, z: -108.8, radius: 2.2, note: 'Стоянка у Турбинного зала. В открытом ковше крутятся спиральные ножи, сверху поворачивается разгрузочный желоб.', body: { x: -62, z: -106, w: 2.7, d: 6.3, h: 3.65, yaw: side } },
+    { id: 'city-ice-resurfacer', label: 'Ледозаливочная машина', x: -80.1, z: -599.9, radius: 2, note: 'Служебная площадка возле Ледовой арены. Под баком видны щётка, вал и широкая задняя планка.', body: { x: -80.1, z: -596.4, w: 2.8, d: 5.3, h: 2.35, yaw: Math.PI } },
+    { id: 'city-side-loader', label: 'Мусоровоз с боковым захватом', x: 72, z: 10.9, radius: 2.2, note: 'Карман у дома № 13. На противоположной стороне кузова рычаг подводит контейнер к верхнему люку.', body: { x: 73, z: 8.1, w: 2.52, d: 7.7, h: 3.25, yaw: side } },
+    { id: 'city-lamp-lift', label: 'Автовышка фонарной службы', x: 55.4, z: -55.2, radius: 2, note: 'Портовая улица у перекрёстка с Деповской. Решётчатая люлька поднимается на коленчатой стреле.', body: { x: 52.8, z: -55.2, w: 2.43, d: 6.8, h: 3.05, yaw: 0 } },
+    { id: 'city-fire-ladder', label: 'Пожарная автолестница', x: 118.5, z: -38.5, radius: 2.1, note: 'Служебный карман у станции Восточной. Видны боковые опоры, закрытые шкафы и вложенные секции лестницы.', body: { x: 112.5, z: -38.6, w: 2.7, d: 10.2, h: 3.28, yaw: side } },
+    { id: 'city-field-lab', label: 'Передвижная лаборатория', x: 117.8, z: -401.55, radius: 1.9, note: 'Верхняя улица у метеостанции. Из лабораторного кузова выдвигается мачта с приборами.', body: { x: 117.8, z: -404.1, w: 2.55, d: 7.2, h: 3.2, yaw: side } },
+    { id: 'city-medical-tracks', label: 'Санитарный гусеничный вездеход', x: 23, z: -647.25, radius: 2.3, note: 'Служебная стоянка у Северного посёлка. Два гусеничных модуля соединены шарниром, в корме высокая дверь с поручнями.', body: { x: 23, z: -650, w: 2.8, d: 9.4, h: 2.75, yaw: side } }
+];
+
+const serviceSolids = serviceSites.map(({ body }) => {
+    const { x, z, w, d, h, yaw } = body;
+    if (Math.abs(Math.sin(yaw)) < .5)
+        return { x, z, w, d, h };
+    return { x, z, w: d, d: w, h };
+});
+
+module.exports = { serviceSites, serviceSolids };
+
+},
+"game/new-city-services.js": function(require, module, exports) {
+"use strict";
+
+const T = require('../engine/three.module.min.js');
+const { Batch, tube, shell, stencil, lit } = require('./model-geometry.js');
+const { groundHeight } = require('./world-layout.js');
+const { serviceSites } = require('./new-city-services-layout.js');
+
+const rubber = '#293038', metal = '#69777a', black = '#303d41', chrome = '#a0a8a2';
+const glassTint = '#526b77', glassEdge = '#30434d';
+const across = [0, 0, Math.PI / 2], lengthwise = [Math.PI / 2, 0, 0];
+
+function cylinder(b, at, diameter, depth, color, axis = across) {
+    b.add(tube, at, [diameter, depth, diameter], color, axis);
+}
+
+function subgroup(root, name, x = 0, y = 0, z = 0) {
+    const part = new T.Group();
+    part.name = name;
+    part.position.set(x, y, z);
+    root.add(part);
+    return part;
+}
+
+function mesh(root, batch, name, material) {
+    const part = batch.mesh(material);
+    part.name = name;
+    root.add(part);
+    return part;
+}
+
+function axles(b, positions, { half = .87, radius = .39, tread = .24 } = {}) {
+    for (const z of positions) {
+        b.rod([-half, radius, z], [half, radius, z], .067, black);
+        for (const side of [-1, 1]) {
+            const x = side * half;
+            cylinder(b, [x, radius, z], radius * 2, tread, rubber);
+            cylinder(b, [x + side * tread * .51, radius, z], radius * 1.08, .030, metal);
+            cylinder(b, [x + side * tread * .58, radius, z], radius * .50, .029, chrome);
+            for (let i = 0; i < 7; i++) {
+                const angle = i * 2 * Math.PI / 7;
+                b.box(x + side * tread * .60, radius + radius * .36 * Math.sin(angle), z + radius * .36 * Math.cos(angle), .018, .039, .039, '#4b5557', [angle, 0, 0]);
+            }
+        }
+    }
+}
+
+function cabin(b, lamps, { x = 0, y = .58, z, w, d, h, paint, grille = '#39484b' }) {
+    const f = z - d / 2, r = z + d / 2, hw = w / 2;
+    b.box(x, y + .29 * h, z + .008, w, h * .57, d, paint);
+    b.box(x, y + .96 * h, z + .07 * d, w * .92, h * .09, d * .81, paint);
+    const sill = y + .55 * h, top = y + .916 * h;
+    const frontY = sill + .023, frontZ = f + .108 * d;
+    b.quad([x - hw + .105, frontY, f - .008], [x + hw - .105, frontY, f - .008], [x + hw - .13, top, frontZ], [x - hw + .13, top, frontZ], glassTint);
+    b.rod([x, frontY, f - .016], [x, top, frontZ - .007], .012, glassEdge, true);
+    b.rod([x - hw + .16, frontY + .027, f - .020], [x - .047, frontY + .104, f + .023], .010, black, true);
+    for (const side of [-1, 1]) {
+        const edge = x + side * hw, roofEdge = x + side * hw * .92;
+        b.quad([edge, sill, f], [edge, sill, r], [roofEdge, top, r - d * .10], [roofEdge, top, frontZ], glassTint);
+        b.rod([edge, sill, f], [roofEdge, top, frontZ], .040, paint, true);
+        b.rod([edge, sill, r], [roofEdge, top, r - d * .10], .055, paint, true);
+        b.rod([edge, sill, z + d * .09], [roofEdge, top, z + d * .09], .016, glassEdge, true);
+        b.box(edge, sill - .096, z + d * .14, .045, .035, .129, chrome);
+        b.rod([edge, top - .19, f + .19], [edge + side * .139, top - .22, f + .23], .015, black);
+        b.box(edge + side * .144, top - .27, f + .23, .103, .188, .074, black);
+        b.box(x + side * (hw - .162), y + .19, f - .035, .279, .237, .063, black);
+        lamps.box(x + side * (hw - .169), y + .221, f - .070, .194, .104, .011, '#eedabb');
+        lamps.box(x + side * (hw - .214), y + .143, f - .070, .12, .033, .011, '#e3a45a');
+    }
+    b.box(x, y + .224, f - .042, w * .47, .275, .063, grille);
+    for (let i = 0; i < 4; i++)
+        b.box(x, y + .128 + i * .047, f - .077, w * .41, .014, .010, '#667578');
+    b.box(x, y + .040, f - .059, w + .082, .134, .164, black);
+    b.box(x, y + .39, r - .046, w * .90, .252, .083, paint);
+}
+
+function chassis(b, lamps, w, d, paint) {
+    b.box(0, .61, 0, w * .86, .24, d - .13, '#3b4446');
+    b.box(0, .55, d / 2 - .086, w * .91, .23, .18, '#4a5556');
+    for (const s of [-1, 1]) {
+        b.box(s * w * .36, .71, d / 2, .25, .14, .059, black);
+        lamps.box(s * w * .36, .74, d / 2 + .039, .17, .061, .018, '#e87565');
+        b.box(s * (w * .49), .64, d * .07, .055, .197, d * .35, paint);
+    }
+}
+
+function serviceBox(b, { w, start, end, bottom = .75, roof = 3.07, color, inset = '#6d7777' }) {
+    const mid = (start + end) / 2, depth = end - start;
+    b.box(0, (bottom + roof) / 2, mid, w, roof - bottom, depth, color);
+    b.box(0, roof + .01, mid, w - .10, .068, depth - .14, '#a1a9a4');
+    for (const side of [-1, 1]) {
+        const x = side * (w / 2 + .012);
+        b.box(x, bottom + .16, mid, .045, .106, depth, '#adb0a2');
+        for (const u of [.19, .51, .83]) {
+            const z = start + depth * u, doorW = depth * .243;
+            b.box(x, bottom + .74, z, .035, 1.02, doorW, black);
+            b.box(x + side * .019, bottom + .74, z, .031, .948, doorW - .058, inset);
+            b.box(x + side * .041, bottom + .56, z + doorW * .31, .022, .037, .122, chrome);
+        }
+    }
+}
+
+function amberBeacon(b, lamps, x, y, z, w = .41) {
+    b.box(x, y, z, w + .04, .054, .128, black);
+    lamps.box(x, y + .039, z, w, .044, .113, '#efab5c');
+}
+
+function striped(b, y, z, count, width = .09) {
+    const start = (1 - count) * width / 2;
+    for (let i = 0; i < count; i++)
+        b.box(start + i * width, y, z, width * .63, .105, .019, i % 2 ? '#c39351' : black, [0, 0, -.34]);
+}
+
+function sweeper(root, b, lamps) {
+    const paint = '#9b743e';
+    chassis(b, lamps, 1.95, 4.29, paint);
+    axles(b, [-1.22, 1.32], { half: .72, radius: .34, tread: .22 });
+    cabin(b, lamps, { x: -.37, y: .56, z: -1.53, w: 1.12, d: 1.23, h: 1.61, paint });
+    b.box(.57, .95, -1.52, .49, .53, 1.10, '#6c745e');
+    shell(b, [[-.66, .86, .86, 1.90, 2.13], [-.46, .93, .80, 2.08, 2.29], [1.57, .89, .75, 2.00, 2.25], [2.13, .75, .87, 1.69, 2.05]], '#64858a');
+    b.box(0, 2.245, .53, .77, .092, 1.31, '#8b9793');
+    for (let j = 0; j < 7; j++)
+        b.box(.89, 1.76, -.25 + j * .24, .045, .299, .027, '#8ba2a1');
+    b.rod([.29, .25, -1.69], [.69, .52, -.72], .105, '#49575c');
+    b.rod([.69, .52, -.72], [.92, 1.24, -.43], .106, '#49575c');
+    b.box(0, .174, -1.72, .81, .187, .37, black);
+    amberBeacon(b, lamps, -.37, 2.22, -1.55, .37);
+    const brushes = [-1, 1].map(s => {
+        const group = subgroup(root, 'Щётка подметальной машины', s * .61, .18, -2.15), bristles = new Batch();
+        b.rod([s * .24, .48, -1.65], [s * .61, .25, -2.15], .042, metal, true);
+        cylinder(bristles, [0, .058, 0], .584, .075, '#747867', [0, 0, 0]);
+        for (let i = 0; i < 36; i++) {
+            const a = i * Math.PI / 18;
+            bristles.rod([.22 * Math.cos(a), .028, .22 * Math.sin(a)], [.34 * Math.cos(a + .12), -.134, .34 * Math.sin(a + .12)], .015, i % 3 ? '#8b7952' : '#b59563', true);
+        }
+        mesh(group, bristles, 'Вращающиеся щётки');
+        return group;
+    });
+    return time => { brushes[0].rotation.y = time * 4.2; brushes[1].rotation.y = -time * 4.2; };
+}
+
+function rotarySnow(root, b, lamps) {
+    const paint = '#b57440';
+    chassis(b, lamps, 2.52, 4.75, paint);
+    axles(b, [-1.02, 1.61], { half: 1.012, radius: .55, tread: .31 });
+    cabin(b, lamps, { y: .77, z: -.74, w: 2.27, d: 1.70, h: 1.93, paint });
+    shell(b, [[.21, 1.09, .83, 1.79, 2.16], [.49, 1.10, .83, 1.92, 2.30], [2.05, 1.01, .81, 1.92, 2.29], [2.34, .91, .87, 1.67, 2.14]], '#a17f54');
+    for (let i = 0; i < 8; i++) b.box(.99, 1.59, .60 + .154 * i, .055, .47, .027, black);
+    const z = -2.42;
+    b.box(0, .71, z + .44, 2.64, .94, .17, '#6c6757');
+    b.box(0, .31, z - .043, 2.73, .19, 1.21, '#999483');
+    b.box(0, 1.21, z + .089, 2.69, .125, 1.01, '#aa7753');
+    for (const s of [-1, 1]) {
+        const x = s * 1.28;
+        b.quad([x, .26, z - .64], [x, .26, z + .55], [x, 1.23, z + .55], [x, 1.16, z - .37], paint);
+        b.box(x, .78, z - .15, .098, .79, .103, '#779092', [.26, 0, 0]);
+    }
+    b.box(0,.27,z-.657,2.70,.058,.04,'#c5c4af');
+    for(let i=0;i<9;i++) b.box(-1.17+i*.28,.305,z-.658,.036,.019,.016,'#4f5149');
+    striped(b, .39, z - .659, 21);
+    const rotor = subgroup(root, 'Шнек роторного снегоочистителя', 0, .70, z - .035), spiral = new Batch();
+    spiral.rod([-1.265, 0, 0], [1.265, 0, 0], .079, '#86908f');
+    for (const side of [-1, 1]) {
+        for (let i = 0; i < 28; i++) {
+            const point = (j, r) => [side * (.076 + 1.155 * j / 28), r * Math.cos(j * .488), r * Math.sin(j * .488)];
+            spiral.quad(point(i, .068), point(i + 1, .068), point(i + 1, .378), point(i, .378), i % 4 ? '#8c9290' : '#c7c6b9');
+        }
+    }
+    mesh(rotor, spiral, 'Спиральные ножи');
+    const chute = subgroup(root, 'Разгрузочный желоб', .37, 1.16, z + .41), arc = new Batch();
+    cylinder(arc, [0, .036, 0], .72, .146, '#5f6967', [0, 0, 0]);
+    arc.rod([0, .09, 0], [0, 1.71, .12], .25, paint, true);
+    arc.rod([0, 1.71, .12], [0, 2.14, .37], .25, paint, true);
+    arc.rod([0, 2.14, .37], [0, 2.25, .75], .247, paint, true);
+    arc.box(0, 2.255, .763, .418, .373, .022, '#413c34', [-.29, 0, 0]);
+    mesh(chute, arc, 'Поворотный желоб');
+    amberBeacon(b, lamps, -.39, 2.73, -.68);
+    return time => { rotor.rotation.x = time * 4.6; chute.rotation.y = .63 + .29 * Math.sin(time * .90); };
+}
+
+function iceResurfacer(root, b, lamps) {
+    const paint = '#557b89';
+    const ice = new Batch();
+    ice.box(0, .015, 0, 3.26, .03, 7.1, '#8ea7b2');
+    for (let i = 0; i < 18; i++) {
+        const x = (i - 8.5) * .16;
+        ice.box(x, .033, .10 + Math.sin(i * 2.4) * .12, .014, .006, 6.52 - .6 * Math.sin(i * 3.2) ** 2, i % 3 ? '#a4bcc4' : '#788f9c');
+    }
+    mesh(root.parent, ice, 'Служебная ледовая полоса');
+    chassis(b, lamps, 2.27, 2.97, paint);
+    axles(b, [-.93, 1.04], { half: .88, radius: .34 });
+    shell(b, [[-1.60, .88, .40, .99, 1.13], [-1.38, 1.06, .38, 1.13, 1.35], [.80, 1.13, .42, 1.18, 1.38], [1.54, 1.00, .43, 1.07, 1.23]], paint);
+    cylinder(b, [0, 1.09, .22], .88, 1.89, '#7c969f', across);
+    cylinder(b, [.11, 1.57, .21], .47, .073, '#9faeaf', [0, 0, 0]);
+    b.box(-.67, 1.42, 1.00, .44, .099, .41, black);
+    b.box(-.67, 1.63, 1.16, .44, .48, .126, black);
+    b.rod([-.67, 1.23, .68], [-.67, 1.61, .44], .030, metal);
+    cylinder(b, [-.67, 1.61, .44], .302, .056, black, [0, 0, 0]);
+    b.box(0, .245, 1.77, 2.28, .292, .61, '#59716f');
+    b.box(0, .115, 2.07, 2.72, .100, .22, '#b0a799');
+    for (const s of [-1, 1]) b.rod([s * .74, .65, 1.29], [s * 1.08, .24, 1.83], .070, chrome, true);
+    const roller = subgroup(root, 'Вал ледозаливочной машины', 0, .19, 1.72), drum = new Batch();
+    cylinder(drum, [0, 0, 0], .265, 2.14, black);
+    for (let i = 0; i < 6; i++) {
+        const a = i * Math.PI / 3;
+        drum.rod([-1.065, .132 * Math.cos(a), .132 * Math.sin(a)], [1.065, .132 * Math.cos(a), .132 * Math.sin(a)], .012, '#a39886');
+    }
+    mesh(roller, drum, 'Вал и щётка');
+    amberBeacon(b, lamps, .71, 1.39, .84, .24);
+    return time => { root.position.z = .31 * Math.sin(time * 1.5); roller.rotation.x = time * 4; };
+}
+
+function wasteLoader(root, b, lamps) {
+    const paint = '#748575';
+    chassis(b, lamps, 2.40, 7.51, paint);
+    axles(b, [-2.25, 1.86, 2.78], { half: .94, radius: .465, tread: .29 });
+    cabin(b, lamps, { y: .70, z: -2.66, w: 2.30, d: 2, h: 1.95, paint });
+    shell(b, [[-1.53, 1.11, .84, 2.59, 2.95], [-1.26, 1.17, .80, 2.72, 3.12], [2.89, 1.17, .81, 2.60, 3.06], [3.48, 1.03, .98, 2.34, 2.77]], '#596b58');
+    for (const s of [-1, 1]) {
+        for (let j = 0; j < 7; j++)
+            b.rod([s * 1.178, 1.02, -.97 + j * .62], [s * 1.10, 2.60, -.84 + j * .62], .048, '#81917d', true);
+        b.box(s * 1.175, 2.36, 1.19, .036, .126, 3.83, '#c4a679');
+    }
+    b.box(0, 2.95, .80, 1.13, .17, 1.24, '#4b5550');
+    striped(b, .81, 3.756, 19);
+    amberBeacon(b, lamps, 0, 2.71, -2.70, .91);
+    const lift = subgroup(root, 'Боковой захват контейнера', 1.13, 1.10, .49), jaws = new Batch();
+    for (const z of [-.49, .49]) {
+        jaws.rod([0, 0, z], [.36, -.09, z], .079, metal, true);
+        jaws.rod([.36, -.09, z], [.73, -.30, z], .070, '#a58253', true);
+        jaws.rod([.73, -.30, z], [.88, -.34, z * .85], .056, black, true);
+    }
+    jaws.rod([.74, -.28, -.53], [.74, -.28, .53], .045, chrome, true);
+    mesh(lift, jaws, 'Рычаг и зажимы');
+    const bin = new Batch();
+    shell(bin, [[-.40, .28, -.98, -.37, -.34], [-.33, .32, -1.00, -.30, -.27], [.33, .32, -1.00, -.30, -.27], [.40, .28, -.98, -.37, -.34]], '#516568');
+    bin.box(0, -.283, 0, .682, .070, .849, '#747a69');
+    for (const z of [-.24, .24]) cylinder(bin, [-.28, -1.022, z], .143, .066, rubber);
+    const container = mesh(lift, bin, 'Дворовой контейнер');
+    container.position.x = .99;
+    return time => { lift.rotation.z = 1.5 * (.5 - .5 * Math.cos(time * .53)); };
+}
+
+function lampLift(root, b, lamps) {
+    const paint = '#c49a57';
+    chassis(b, lamps, 2.38, 6.52, paint);
+    axles(b, [-2.01, 1.92], { half: .93, radius: .431, tread: .28 });
+    cabin(b, lamps, { y: .70, z: -2.23, w: 2.17, d: 1.70, h: 1.94, paint });
+    b.box(0, 1.044, 1.19, 2.27, .536, 3.68, '#65746d');
+    for (const s of [-1, 1]) {
+        b.box(s * .91, 1.275, .40, .23, .238, 2.76, '#869587');
+        b.box(s * 1.147, 1.024, .65, .037, .348, .870, '#87978e');
+        b.box(s*1.03,.66,.55,.28,.16,.20,'#636c66');
+    }
+    const stabilizers = [-1,1].map(side => {
+        const leg = subgroup(root,'Выдвижная опора', side*1.10, .65, .55), steelwork = new Batch();
+        steelwork.rod([0,0,0],[side*.20,-.54,0],.066,chrome,true);
+        steelwork.box(side*.20,-.58,0,.29,.11,.37,black);
+        mesh(leg,steelwork,'Опорная пята');
+        return leg;
+    });
+    const worker = require('./model-people.js').createPerson('resident',5);
+    worker.root.name='Электромонтёр Горсвета';
+    root.add(worker.root);
+    let previousTime;
+    const cones = [-1, 1].map(side => {
+        const cone = subgroup(root, 'Дорожный конус'), shape = new Batch();
+        shape.box(0,.029,0,.28,.058,.28,'#4d4842');
+        for (let i=0;i<3;i++) shape.add(new T.CylinderGeometry(.060-i*.023,.094-i*.024,.12,8),[0,.11+i*.12,0],[1,1,1],i===1?'#e8d9ba':'#bc5e38');
+        mesh(cone,shape,'Сигнальные полосы');
+        return cone;
+    });
+    amberBeacon(b, lamps, 0, 2.68, -2.17, .74);
+    const turret = subgroup(root, 'Поворотная опора автовышки', 0, 1.39, 1.53), base = new Batch();
+    cylinder(base, [0, .104, 0], 1.19, .231, '#555f51', [0, 0, 0]);
+    base.box(0, .28, 0, .65, .46, .63, '#9d9566');
+    mesh(turret, base, 'Поворотная платформа');
+    const shoulder = subgroup(turret, 'Нижнее колено автовышки', 0, .39, 0), first = new Batch();
+    first.rod([0, 0, .04], [0, 0, -2.37], .157, '#aa915b', true);
+    first.rod([.11, -.14, -.12], [.11, -.07, -1.82], .047, chrome);
+    cylinder(first, [0, .003, -2.37], .285, .34, '#b9b29b');
+    mesh(shoulder, first, 'Первое колено');
+    const elbow = subgroup(shoulder, 'Верхнее колено автовышки', 0, 0, -2.37), second = new Batch();
+    second.rod([0, 0, 0], [0, 0, -1.91], .111, '#ba9d67', true);
+    second.rod([-.09, -.082, -.24], [-.09, -.082, -1.28], .031, chrome);
+    mesh(elbow, second, 'Второе колено');
+    const basket = subgroup(elbow, 'Решётчатая люлька', 0, -.07, -1.91), frame = new Batch();
+    frame.box(0, 0, 0, 1.03, .11, .89, '#555d58');
+    for (const x of [-.51, .51]) {
+        for (let j = 0; j < 6; j++)
+            frame.rod([x, .02, (j - 2.5) * .159], [x, .82, (j - 2.5) * .159], .024, chrome, true);
+        for (const y of [.44, .83]) frame.rod([x, y, -.44], [x, y, .44], .026, chrome, true);
+    }
+    for (const z of [-.44, .44]) for (const y of [.44, .83]) frame.rod([-.51, y, z], [.51, y, z], .028, chrome, true);
+    frame.box(-.19, .234, -.11, .44, .34, .43, '#82928d');
+    frame.box(-.19, .419, -.11, .47, .06, .48, '#c4b990');
+    mesh(basket, frame, 'Люлька с ящиком ламп');
+    return time => {
+        const phase = (time % 44)/44;
+        const smooth = (a,b) => T.MathUtils.smoothstep(phase,a,b);
+        const extend = smooth(.05,.16)-smooth(.89,.98);
+        stabilizers.forEach((leg,i) => {leg.position.x=(i?1:-1)*(1.10+.24*extend);leg.scale.y=.20+.80*extend;});
+        cones.forEach((cone,i) => {
+            const t=smooth(.17+i*.05,.22+i*.05)-smooth(.76+i*.05,.81+i*.05);
+            cone.position.set((i?1:-1)*(.88+.81*t),.99*(1-t)+.32*Math.sin(t*Math.PI),2.33+t*.50);
+        });
+        const cross = smooth(.18,.24)-smooth(.71,.78);
+        worker.root.position.set(-1.73+3.46*cross,0,2.92+.57*Math.sin(Math.PI*cross));
+        worker.root.rotation.y=Math.PI*(.17+.66*cross);
+        const bends = Math.sin(Math.PI*smooth(.155,.205)) + Math.sin(Math.PI*smooth(.225,.275)) +
+            Math.sin(Math.PI*smooth(.73,.80)) + Math.sin(Math.PI*smooth(.81,.86));
+        worker.update(previousTime==null?0:Math.max(0,Math.min(.1,time-previousTime)), 4*Math.sin(Math.PI*cross)*.65,false,
+            {duck:bends*.68, handTargets:bends>.09?[[-.08,.11,-.27],[.13,.10,-.30]]:undefined});
+        previousTime=time;
+        const lift = smooth(.30,.48)-smooth(.62,.75);
+        turret.rotation.y = -.18 + .18 * lift;
+        shoulder.rotation.x = .48 + .53 * lift;
+        elbow.rotation.x = -1.14 + .56 * lift;
+        basket.rotation.x = -shoulder.rotation.x - elbow.rotation.x;
+    };
+}
+
+function ladderSection(parent, name, width, span, tracks) {
+    const rails = new Batch();
+    for (const x of [-width / 2, width / 2]) {
+        rails.rod([x, tracks ? .102 : .085, .05], [x, tracks ? .102 : .085, -span], .035, '#acafa5', true);
+        rails.rod([x, -.07, .05], [x, -.07, -span], .028, '#827f73', true);
+        for (let z = -.21; z > -span; z -= .34) {
+            rails.rod([x, -.07, z], [x, .092, z - .16], .012, chrome, true);
+            if (x > 0) rails.rod([-x, -.022, z], [x, -.022, z], .026, '#c4b99e', true);
+        }
+    }
+    mesh(parent, rails, name);
+}
+
+function fireLadder(root, b, lamps) {
+    const paint = '#a13e36';
+    chassis(b, lamps, 2.56, 9.94, paint);
+    axles(b, [-3.25, 1.87, 3.33], { half: 1.02, radius: .489, tread: .32 });
+    cabin(b, lamps, { y: .79, z: -3.86, w: 2.42, d: 2.02, h: 2.11, paint });
+    serviceBox(b, { w: 2.41, start: -2.82, end: 4.66, roof: 2.12, color: paint, inset: '#817e76' });
+    for (const s of [-1, 1]) {
+        b.box(s * 1.214, 1.975, .96, .06, .109, 7.33, '#cfc0a4');
+        for (const z of [-1.71, 2.78]) {
+            b.box(s * 1.151, .66, z, .325, .30, .69, '#686d64');
+            b.box(s * 1.21, .44, z, .129, .245, .165, black);
+            b.box(s * 1.21, .286, z, .252, .094, .351, '#878e88');
+        }
+    }
+    stencil(b, '01', [0, .98, 4.994], .032, '#f0cfa4');
+    amberBeacon(b, lamps, 0, 2.942, -3.85, 1.04);
+    const pivot = subgroup(root, 'Поворотная автолестница', 0, 2.41, 2.66), mount = new Batch();
+    cylinder(mount, [0, -.119, 0], 1.42, .33, '#6b7069', [0, 0, 0]);
+    mount.box(0, .02, -.18, 1.07, .20, .79, '#717b70');
+    mesh(pivot, mount, 'Станина автолестницы');
+    const ladder = subgroup(pivot, 'Пакет телескопических секций', 0, .143, 0);
+    ladderSection(ladder, 'Наружная секция', 1.06, 5.56, true);
+    const extension = subgroup(ladder, 'Выдвижная средняя секция', 0, .13, -.26);
+    ladderSection(extension, 'Средняя секция', .81, 4.82, false);
+    const tip = subgroup(extension, 'Выдвижная верхняя секция', 0, .118, -.23);
+    ladderSection(tip, 'Верхняя секция', .60, 4.34, false);
+    return time => {
+        const cycle = .5 - .5 * Math.cos(time * .40);
+        ladder.rotation.x = .028 + .76 * cycle;
+        extension.position.z = -.26 - 1.45 * cycle;
+        tip.position.z = -.23 - 1.19 * cycle;
+    };
+}
+
+function fieldLab(root, b, lamps) {
+    const paint = '#7e928d';
+    chassis(b, lamps, 2.47, 7.09, paint);
+    axles(b, [-2.18, 1.89], { half: .925, radius: .458, tread: .266 });
+    cabin(b, lamps, { y: .66, z: -2.63, w: 2.18, d: 1.69, h: 2.01, paint });
+    serviceBox(b, { w: 2.39, start: -1.56, end: 3.26, roof: 3.08, color: '#9daaa2', inset: '#a5b0a8' });
+    for (const side of [-1, 1]) {
+        const x = side * 1.217;
+        for (const z of [-.61, .64, 1.88]) {
+            b.box(x, 2.42, z, .045, .37, .76, glassEdge);
+            b.box(x + side * .027, 2.426, z, .017, .269, .647, glassTint);
+        }
+        b.box(x, 1.98, .83, .044, .147, 4.58, '#698785');
+    }
+    b.box(-.48, 1.79, 3.293, .85, 1.64, .063, '#798e8a');
+    b.box(-.48, 2.31, 3.331, .62, .29, .015, glassTint);
+    for (let z = 2.41; z < 3.26; z += .18) b.box(.76, 2.66, z, .238, .018, .033, '#7a8991');
+    const reel = subgroup(root, 'Кабельный барабан', .67, 1.08, 3.31), winding = new Batch();
+    cylinder(winding, [0, 0, 0], .47, .428, black);
+    for (const x of [-.242, .242]) cylinder(winding, [x, 0, 0], .63, .057, '#827c68');
+    for (let j = 0; j < 11; j++) cylinder(winding, [(j - 5) * .032, 0, 0], .51, .025, '#595447');
+    mesh(reel, winding, 'Намотанный кабель');
+    const mast = subgroup(root, 'Телескопическая мачта лаборатории', .58, 3.103, 1.34), mount = new Batch();
+    cylinder(mount, [0, .39, 0], .186, .78, '#839691', [0, 0, 0]);
+    mast.add(mount.mesh());
+    const slide = subgroup(mast, 'Выдвижная приборная штанга'), antenna = new Batch();
+    cylinder(antenna, [0, .764, 0], .107, 1.54, '#b8b9a4', [0, 0, 0]);
+    antenna.rod([-.34, 1.39, 0], [.34, 1.39, 0], .022, metal);
+    antenna.rod([0, 1.43, -.32], [0, 1.43, .32], .023, metal);
+    for (const s of [-1, 1]) antenna.ball(s * .29, 1.436, .035, .131, .106, .134, '#7d8271');
+    antenna.box(0, 1.574, 0, .124, .188, .136, '#c4b791');
+    mesh(slide, antenna, 'Приборы метеостанции');
+    amberBeacon(b, lamps, 0, 2.71, -2.62, .59);
+    return time => { slide.position.y = .5 - .5 * Math.cos(time * .40); slide.rotation.y = time * .17; };
+}
+
+function tracks(b, mid) {
+    const ring = [[-.17,-1.88],[.37,-1.88],[.52,-1.53],[.52,1.30],[.29,1.80],[-.13,1.82],[-.23,1.55],[-.23,-1.51]];
+    for (const side of [-1, 1]) {
+        const point = (x, [y, z]) => [side * x, y + .25, z + mid];
+        for (let j = 0; j < ring.length; j++) {
+            const a = ring[j], d = ring[(j + 1) % ring.length];
+            b.quad(point(.77, a), point(1.38, a), point(1.38, d), point(.77, d), rubber);
+        }
+        for (let j = 0; j < 32; j++) {
+            const z = -1.56 + .098 * j + mid;
+            b.box(side * 1.078, .796, z, .64, .040, .078, j % 4 ? '#525953' : '#73817a');
+            b.box(side * 1.078, .044, z, .64, .062, .069, '#4b5451');
+        }
+        for (let j = 0; j < 6; j++) cylinder(b, [side * 1.25, j === 0 || j === 5 ? .413 : .318, mid - 1.46 + j * .548], .472, .181, '#767d70');
+    }
+}
+
+function medicalTracks(root, b, lamps) {
+    const paint = '#879e91';
+    tracks(b, -2.26);
+    b.box(0, .90, -2.31, 2.56, .273, 4.02, '#4e6461');
+    cabin(b, lamps, { y: 1.016, z: -3.03, w: 2.49, d: 2.48, h: 1.61, paint });
+    b.box(0, 1.62, -1.04, 2.43, 1.30, 1.31, paint);
+    b.rod([0, .87, -.53], [0, .87, .76], .154, '#65736e', true);
+    amberBeacon(b, lamps, 0, 2.68, -3.20, .71);
+    const rear = subgroup(root, 'Задний модуль санитарного вездехода', 0, 0, .64), body = new Batch(), rearLights = new Batch();
+    tracks(body, 1.54);
+    shell(body, [[-.22, 1.07, .81, 2.20, 2.44], [.12, 1.24, .81, 2.36, 2.62], [3.21, 1.24, .82, 2.36, 2.64], [3.80, 1.08, .93, 2.28, 2.55]], '#a8b5aa');
+    body.box(0, 1.65, 3.817, 1.46, 1.49, .046, '#879e91');
+    body.box(0, 2.09, 3.845, 1.14, .386, .032, glassEdge);
+    body.box(0, 1.177, 3.871, .66, .237, .022, '#aec0b3');
+    body.box(0, 1.017, 3.908, 1.95, .112, .285, black);
+    body.box(0, 1.182, 3.884, .385, .156, .018, '#517973');
+    stencil(body, 'М77', [0, 1.181, 3.896], .023, '#e9dfbf');
+    for (const s of [-1, 1]) {
+        const x = s * 1.258;
+        body.box(x, 1.58, 1.81, .047, .182, 2.69, '#aa5b48');
+        body.rod([x, 1.375, .16], [x, 1.375, 3.46], .026, chrome);
+        body.rod([s * .86, 1.25, 3.889], [s * .86, 2.22, 3.889], .032, chrome);
+        rearLights.box(s * .987, 1.119, 3.878, .211, .099, .027, '#e97154');
+    }
+    mesh(rear, body, 'Санитарный кузов и гусеницы');
+    mesh(rear, rearLights, 'Кормовые огни', lit);
+    return time => { rear.rotation.y = .035 * Math.sin(time * .56); };
+}
+
+const models = [sweeper, rotarySnow, iceResurfacer, wasteLoader, lampLift, fireLadder, fieldLab, medicalTracks];
+const contactShadow = new T.MeshBasicMaterial({ color: '#21323a', transparent: true, opacity: .22, depthWrite: false });
+
+function createCityServices(scene) {
+    const entries = serviceSites.map(({ body, ...site }, i) => {
+        const anchor = subgroup(scene, site.label, body.x, groundHeight(body.x, body.z), body.z);
+        anchor.rotation.y = body.yaw;
+        anchor.userData.cityModel = site.id;
+        let animate;
+        return { site, body, anchor, draw(time, distance) {
+            if (!animate) {
+                const model = subgroup(anchor, site.id), hull = new Batch(), lamps = new Batch();
+                animate = models[i](model, hull, lamps);
+                const offices=['Дорожная служба','Дорожная служба','Ледовая арена','Спецавтохозяйство','Горсвет','Пожарная часть','Гидропост','Медслужба'];
+                const {placard}=require('./fleet-placard.js');
+                for(const side of [-1,1]) placard(model,[offices[i]+'  /  '+(14+i),'Диспетчерская  77-04'],[side*(body.w/2+.025),1.48,i===5?-2.7:0],[1.12,.33],side*Math.PI/2);
+                const shade = new T.Mesh(new T.CircleGeometry(1, 18), contactShadow);
+                shade.rotation.x = -Math.PI / 2;
+                shade.scale.set(body.w * .53, body.d * .43, 1);
+                shade.position.y = i === 2 ? .045 : .014;
+                anchor.add(shade);
+                mesh(model, hull, 'Кузов и ходовая часть');
+                mesh(model, lamps, 'Габаритные огни', lit);
+            }
+            if (distance < 40 || !anchor.userData.poseReady) {
+                animate(time + i * 2);
+                anchor.userData.poseReady = true;
+            }
+        } };
+    });
+    return { sites: entries.map(({ site }) => site), update(ctx) {
+        const focus = ctx.focus ?? ctx;
+        for (const { body, anchor, draw } of entries) {
+            const distance = Math.hypot(focus.x - body.x, focus.z - body.z);
+            anchor.visible = ctx.zone === 'street' && distance < 125;
+            if (anchor.visible)
+                draw(ctx.elapsed, distance);
+        }
+    } };
+}
+
+module.exports = { createCityServices };
+
+},
+"game/new-city-transit-layout.js": function(require, module, exports) {
+"use strict";
+
+const parked = [
+    { kind: 'microcar', x: -33.2, z: 46.6, w: 1.62, d: 2.86, h: 1.64, yaw: -.12, viewX: -30.9, viewZ: 46.6 },
+    { kind: 'liftback', x: -26, z: 50.4, w: 1.96, d: 5, h: 1.53, yaw: .12, viewX: -28.5, viewZ: 50.4 },
+    { kind: 'minivan', x: -10, z: 42, w: 2.1, d: 5.58, h: 2.01, yaw: 0, viewX: -7.2, viewZ: 42 },
+    { kind: 'limousine', x: -44, z: 126.7, w: 2.08, d: 7.9, h: 1.70, yaw: 0, viewX: -41.8, viewZ: 126.7 },
+    { kind: 'sidecar', x: -18, z: 44.7, w: 1.97, d: 2.7, h: 1.57, yaw: 0, viewX: -16, viewZ: 44.7, offsetX: .19 },
+    { kind: 'tricycle', x: 60.5, z: 13, w: 1.57, d: 2.94, h: 1.81, yaw: 0, viewX: 62.3, viewZ: 13 },
+    { kind: 'bus', x: 74.2, z: 39.4, w: 2.82, d: 11.8, h: 3.29, yaw: Math.PI / 2, viewX: 74.2, viewZ: 36.8 },
+    { kind: 'trolleybus', x: 116, z: -34.1, w: 2.9, d: 18.24, h: 3.48, yaw: -Math.PI / 2, viewX: 116, viewZ: -31.5 },
+    { kind: 'service-tram', x: 12.4, z: -21.9, w: 2.82, d: 7.85, h: 3.40, yaw: 0, viewX: 9.6, viewZ: -21.8 },
+    { kind: 'double-decker', x: 114.5, z: -10.5, w: 3.16, d: 21.1, h: 4.63, yaw: 0, viewX: 117.6, viewZ: -10.5 }
+];
+const ferry = { kind: 'ferry', x: -161.8, z: 81.6, yaw: 0, viewX: -158.5, viewZ: 87.9 };
+const transitSolids = parked.map(({ x, z, yaw, w, d, h, offsetX = 0 }) => ({
+    x: x + offsetX * Math.cos(yaw), z: z - offsetX * Math.sin(yaw), h,
+    w: Math.abs(Math.cos(yaw)) * w + Math.abs(Math.sin(yaw)) * d,
+    d: Math.abs(Math.sin(yaw)) * w + Math.abs(Math.cos(yaw)) * d
+}));
+
+module.exports = { transitSites: [...parked, ferry], transitSolids };
+
+},
+"game/new-city-transit.js": function(require, module, exports) {
+"use strict";
+
+const T = require('../engine/three.module.min.js');
+const { Batch, lit, oval, ring, tube, stencil } = require('./model-geometry.js');
+const { groundHeight } = require('./world-layout.js');
+const { transitSites } = require('./new-city-transit-layout.js');
+
+const rubber = '#263039', dark = '#344550', steel = '#8da0a1', rim = '#b9b9aa';
+const glazing = new T.MeshPhongMaterial({
+    color: '#95b8be', side: T.DoubleSide, transparent: true, opacity: .43,
+    shininess: 58, depthWrite: false
+});
+const carPaint = new T.MeshPhongMaterial({
+    color: '#ffffff', vertexColors: true, side: T.DoubleSide, shininess: 21, specular: '#353e41'
+});
+const shadowInk = new T.MeshBasicMaterial({ color: '#16252d', transparent: true, opacity: .22, depthWrite: false });
+const waterInk = new T.MeshLambertMaterial({ color: '#385767', vertexColors: true });
+const lerp = T.MathUtils.lerp;
+
+function layer(root, batch, name, material) {
+    const mesh = batch.mesh(material);
+    mesh.name = name;
+    root.add(mesh);
+    return mesh;
+}
+
+function phase(elapsed, cycle, rise, dwell) {
+    const t = (elapsed % cycle + cycle) % cycle;
+    return Math.min(1, Math.max(0, Math.min(t / rise, (rise * 2 + dwell - t) / rise)));
+}
+
+function wheel(batch, x, z, radius, width, rimColor = rim, height = radius) {
+    const rotation = [0, 0, Math.PI / 2];
+    batch.add(tube, [x, height, z], [radius * 2, width, radius * 2], rubber, rotation);
+    batch.add(tube, [x, height, z], [radius * 1.82, width + .017, radius * 1.82], '#39454b', rotation);
+    batch.add(tube, [x, height, z], [radius * 1.29, width + .020, radius * 1.29], rimColor, rotation);
+    batch.add(tube, [x, height, z], [radius * .48, width + .035, radius * .48], dark, rotation);
+    for (const side of [-1, 1])
+        for (let i = 0; i < 5; i++) {
+            const a = i * Math.PI * .4;
+            batch.add(tube, [x + side * (width * .5 + .018), height + radius * .34 * Math.cos(a), z + radius * .34 * Math.sin(a)],
+                [radius * .17, .011, radius * .17], dark, rotation);
+        }
+}
+
+function shadow(batch, half, front, rear) {
+    batch.quad([-half, .013, front], [half, .013, front], [half, .013, rear], [-half, .013, rear], '#344752', [0, 1, 0]);
+}
+
+function profileAt(rows, z) {
+    for (let i = 1; i < rows.length; i++) {
+        const a = rows[i - 1], b = rows[i];
+        if (z <= b[0]) {
+            const t = (z - a[0]) / (b[0] - a[0]);
+            return [z, lerp(a[1], b[1], t), lerp(a[2], b[2], t), lerp(a[3], b[3], t)];
+        }
+    }
+    return rows.at(-1);
+}
+
+function pressedBody(paint, chassis, rows, axles, color, decked = true, openings = []) {
+    const [front] = rows[0], [rear] = rows.at(-1), cuts = new Set(rows.map(row => row[0]));
+    for (const [start, end] of openings) {
+        cuts.add(start);
+        cuts.add(end);
+    }
+    for (const [z, radius] of axles)
+        for (let i = 0; i <= 10; i++) {
+            const at = z + Math.cos(i * Math.PI / 10) * (radius + .052);
+            if (at > front && at < rear)
+                cuts.add(at);
+        }
+    const sections = [...cuts].sort((a, b) => a - b).map(z => {
+        const [, w, sill, belt] = profileAt(rows, z);
+        let bottom = sill;
+        for (const [position, radius] of axles) {
+            const arc = radius + .052, d = arc * arc - (z - position) ** 2;
+            if (d >= -1e-10)
+                bottom = Math.min(belt - .06, Math.max(bottom, radius + Math.sqrt(Math.max(0, d))));
+        }
+        return { z, w, bottom, belt };
+    });
+    const at = (row, x, y) => [row.w * x, row[y], row.z];
+    for (let i = 1; i < sections.length; i++) {
+        const a = sections[i - 1], b = sections[i];
+        const middle = (a.z + b.z) * .5;
+        for (const side of [-1, 1]) {
+            if (side > 0 && openings.some(([start, end]) => middle > start && middle < end))
+                continue;
+            paint.quad(at(a, side, 'bottom'), at(b, side, 'bottom'), at(b, side * .94, 'belt'), at(a, side * .94, 'belt'), color, [side, .12, 0]);
+            chassis.quad(at(b, side, 'bottom'), at(a, side, 'bottom'), at(a, side * .84, 'bottom'), at(b, side * .84, 'bottom'), dark, [0, -1, 0]);
+        }
+        if (decked)
+            paint.quad(at(a, -.94, 'belt'), at(a, .94, 'belt'), at(b, .94, 'belt'), at(b, -.94, 'belt'), color, [0, 1, 0]);
+    }
+    for (const [end, section] of [[-1, sections[0]], [1, sections.at(-1)]]) {
+        paint.quad(at(section, -1, 'bottom'), at(section, 1, 'bottom'), at(section, .94, 'belt'), at(section, -.94, 'belt'), color, [0, 0, end]);
+        chassis.box(0, section.bottom + .04, section.z + end * .017, section.w * 1.89, .105, .076, dark);
+    }
+}
+
+function cabin(body, pane, rows, color, panoramic = false) {
+    const at = (r, side, high) => [side * r[high ? 2 : 1], r[high ? 4 : 3], r[0]];
+    for (let i = 1; i < rows.length; i++) {
+        const a = rows[i - 1], b = rows[i];
+        for (const side of [-1, 1]) {
+            pane.quad(at(a, side, false), at(b, side, false), at(b, side, true), at(a, side, true), '#ffffff', [side, .2, 0]);
+            body.rod(at(a, side, true), at(b, side, true), .026, color, true);
+            body.rod(at(a, side, false), at(b, side, false), .021, dark, true);
+        }
+        const window = i === 1 || i === rows.length - 1 || panoramic;
+        (window ? pane : body).quad(at(a, -1, true), at(a, 1, true), at(b, 1, true), at(b, -1, true),
+            window ? '#ffffff' : color, [0, 1, 0]);
+    }
+    for (const row of rows) {
+        body.rod(at(row, -1, true), at(row, 1, true), .033, color, true);
+        for (const side of [-1, 1])
+            body.rod(at(row, side, false), at(row, side, true), .027, dark, true);
+    }
+}
+
+function seat(batch, x, y, z, width, color) {
+    batch.box(x, y, z, width, .11, .34, color);
+    batch.box(x, y + .24, z + .116, width, .42, .11, color, [-.14, 0, 0]);
+    batch.box(x, y + .43, z + .14, width * .65, .14, .108, '#414c53');
+    batch.box(x, y + .04, z - .167, width * .88, .015, .010, '#a0aa9e');
+}
+
+const bodies = {
+    microcar: {
+        color: '#b0c3cc', trim: '#516e86', rims: '#cbd0b9',
+        sides: [[-1.36, .67, .23, .79], [-1.25, .76, .23, .84], [-.78, .775, .23, .86], [.84, .775, .23, .88], [1.35, .69, .24, .84]],
+        glass: [[-.97, .676, .676, .85, .85], [-.60, .728, .618, .86, 1.55], [.61, .733, .623, .88, 1.57], [1.09, .685, .685, .87, .87]],
+        axles: [[-.83, .245, .64, .174], [.86, .245, .64, .174]],
+        handles: [[.54, 1.10]], seats: [[0, .48, -.08, .49]]
+    },
+    liftback: {
+        color: '#526d84', trim: '#354d61', rims: '#aeb9b2',
+        sides: [[-2.44, .77, .32, .76], [-2.31, .91, .27, .88], [-1.33, .962, .27, .95], [.91, .966, .27, 1.04], [2.08, .91, .33, 1.11], [2.42, .82, .39, 1.03]],
+        glass: [[-1.02, .89, .89, .963, .963], [-.46, .900, .70, .99, 1.49], [.38, .899, .72, 1.015, 1.49], [1.01, .888, .69, 1.05, 1.36], [2.11, .83, .83, 1.105, 1.105]],
+        axles: [[-1.49, .346, .807, .228], [1.47, .346, .807, .228]],
+        handles: [[.17, 1.07], [1.10, 1.10]], seats: [[-.49, .57, -.24, .42], [.49, .57, -.24, .42], [0, .58, .94, 1.2]]
+    },
+    minivan: {
+        color: '#738c78', trim: '#567069', rims: '#aeb5a0', panoramic: true,
+        sides: [[-2.73, .82, .38, 1.0], [-2.53, .991, .25, 1.12], [-1.67, 1.012, .25, 1.17], [1.91, 1.013, .26, 1.19], [2.69, .948, .31, 1.14]],
+        glass: [[-1.96, .96, .96, 1.15, 1.15], [-1.39, .959, .855, 1.17, 1.96], [-.35, .963, .88, 1.18, 1.99], [.80, .966, .888, 1.19, 1.99], [1.85, .954, .887, 1.19, 1.97], [2.57, .919, .832, 1.16, 1.85], [2.65, .911, .911, 1.15, 1.15]],
+        axles: [[-1.68, .375, .866, .21], [1.65, .375, .865, .21]],
+        handles: [[-.72, .99], [.72, 1.00]], seats: [-.65, .54, 1.68].flatMap(z => [[-.53, .69, z, .44], [.53, .69, z, .44]])
+    },
+    limousine: {
+        color: '#494755', trim: '#232e3a', rims: '#c8ba9e',
+        sides: [[-3.83, .89, .37, 1.03], [-3.60, 1.004, .31, 1.12], [-2.34, 1.017, .31, 1.13], [1.93, 1.018, .32, 1.17], [3.71, .961, .39, 1.17], [3.83, .91, .41, 1.09]],
+        glass: [[-1.77, .948, .948, 1.14, 1.14], [-1.22, .95, .802, 1.14, 1.65], [-.27, .966, .816, 1.15, 1.65], [.82, .967, .816, 1.16, 1.65], [1.68, .966, .819, 1.17, 1.65], [2.09, .96, .79, 1.17, 1.63], [2.73, .947, .947, 1.17, 1.17]],
+        axles: [[-2.52, .405, .859, .232], [2.47, .405, .864, .232]],
+        handles: [[-.61, 1.20], [1.51, 1.22]], seats: [[-.51, .64, -.65, .44], [.51, .64, -.65, .44], [0, .69, 1.76, 1.40]]
+    }
+};
+
+function passengerCar(root, kind) {
+    const b = new Batch(), trim = new Batch(), panes = new Batch(), lamps = new Batch(), shade = new Batch();
+    const p = bodies[kind], [front, , , hood] = p.sides[0], [rear, , , deck] = p.sides.at(-1);
+    pressedBody(b, trim, p.sides, p.axles, p.color);
+    cabin(trim, panes, p.glass, p.trim, p.panoramic);
+    for (const [z, radius, x, width] of p.axles)
+        for (const side of [-1, 1])
+            wheel(trim, side * x, z, radius, width, p.rims);
+    shadow(shade, p.sides[2][1] * .98, front + .20, rear - .20);
+    for (const [x, y, z, width] of p.seats)
+        seat(trim, x, y, z, width, kind === 'limousine' ? '#786961' : '#596d75');
+    const dashX = kind === 'microcar' ? 0 : -.46;
+    trim.add(ring, [dashX, hood + .111, p.glass[0][0] + .24], [.141, .141, .133], '#28353c', [.42, 0, 0]);
+    trim.box(0, hood - .035, p.glass[0][0] + .07, p.glass[0][1] * 1.82, .143, .19, '#364851');
+    for (const side of [-1, 1]) {
+        const x = p.sides[1][1] * .74 * side, headWidth = kind === 'liftback' ? .34 : .25;
+        trim.box(x, hood - .095, front - .008, headWidth + .04, .145, .056, dark);
+        lamps.box(x, hood - .095, front - .041, headWidth, kind === 'liftback' ? .065 : .092, .017, '#eadbc0');
+        lamps.box(side * p.sides.at(-1)[1] * .76, deck - .080, rear + .022, kind === 'liftback' ? .29 : .20, .078, .035, '#a74f51');
+        for (const [z, y] of p.handles) {
+            const [, w] = profileAt(p.sides, z);
+            trim.rod([side * w * .96, y - .07, z], [side * w * .99, y - .07, z + .16], .015, steel, true);
+            trim.rod([side * w * .964, y - .135, z + .16], [side * w * .997, y - .45, z + .175], .009, dark);
+        }
+        const mirror = p.glass[1];
+        trim.rod([side * mirror[1] * .97, mirror[3] + .04, mirror[0] + .06], [side * (mirror[1] + .117), mirror[3] + .04, mirror[0] + .07], .024, dark);
+        trim.box(side * (mirror[1] + .117), mirror[3] + .055, mirror[0] + .084, .17, .093, .14, p.trim);
+        trim.box(side * (mirror[1] + .117), mirror[3] + .055, mirror[0] + .157, .134, .071, .01, '#8c9d9e');
+    }
+    for (const side of [-1, 1]) {
+        for (let index = 1; index < p.sides.length - 1; index++) {
+            const [z0, w0, , y0] = p.sides[index - 1], [z1, w1, , y1] = p.sides[index];
+            trim.rod([side * w0, y0 - .28, z0], [side * w1, y1 - .28, z1], .025, '#3f4140', true);
+        }
+    }
+    if (kind === 'liftback') {
+        const lo = -.80, hi = .38;
+        const [, wl] = profileAt(p.sides, lo), [, wr] = profileAt(p.sides, hi);
+        trim.quad([wl+.012,.58,lo], [wr+.012,.58,hi], [wr+.012,.94,hi], [wl+.012,.94,lo], '#989387', [1,0,0]);
+        trim.box(wl+.021,.91,lo+.81,.023,.038,.15,'#bebcb1');
+        for (let j=0; j<5; j++)
+            trim.ball(wr+.017,.59+.008*(j%2),hi-.11*j,.009,.011,.033,'#825e42');
+    }
+    if (kind === 'limousine') {
+        for (const side of [-1, 1]) {
+            const r = p.glass[2], s = p.glass[3];
+            trim.quad([side * r[1] * 1.006, r[3], r[0]], [side * s[1] * 1.006, s[3], s[0]], [side * s[2] * 1.008, s[4], s[0]], [side * r[2] * 1.008, r[4], r[0]], p.trim, [side, 0, 0]);
+            trim.box(side * .829, 1.43, .30, .027, .039, .18, '#b5a388');
+        }
+        trim.box(0, 1.04, .77, 1.62, .64, .08, '#575552');
+    }
+    if (kind === 'minivan') {
+        for (const side of [-1, 1])
+            trim.rod([side * .78, 1.99, -1.40], [side * .78, 2.00, 2.04], .022, '#576364');
+    }
+    trim.box(0, deck - .175, rear + .035, .43, .091, .012, '#bac2af');
+    stencil(trim, { microcar: '77', liftback: '10', minivan: '08', limousine: '06' }[kind], [0, deck - .175, rear + .043], .013, '#38454b');
+    layer(root, shade, 'Контактная тень', shadowInk);
+    layer(root, b, 'Кузов и арки', carPaint);
+    layer(root, trim, 'Колёса, отделка и салон');
+    layer(root, panes, 'Остекление', glazing);
+    layer(root, lamps, 'Светотехника', lit);
+}
+
+function winterSidecar(root) {
+    const b = new Batch(), lamps = new Batch(), glass = new Batch(), shade = new Batch();
+    const bikeX = -.42, podX = .60, blue = '#547783';
+    for (const z of [-.86, .815])
+        wheel(b, bikeX, z, .346, .174, '#b1bdb6');
+    wheel(b, 1.03, .28, .297, .183, '#abb2a0');
+    for (const side of [-1, 1]) {
+        b.rod([bikeX + side * .102, .37, -.88], [bikeX + side * .096, .93, -.56], .034, steel);
+        b.rod([bikeX + side * .09, .43, .84], [bikeX + side * .09, .75, .28], .032, '#4a5d62');
+        b.rod([bikeX, .99, -.49], [bikeX + side * .285, 1.038, -.45], .024, '#9aa79a');
+        b.rod([bikeX + side * .222, 1.036, -.46], [bikeX + side * .295, 1.046, -.44], .038, rubber);
+    }
+    b.rod([bikeX + .06, .50, -.31], [podX + .24, .40, -.35], .054, '#58696c', true);
+    b.rod([bikeX + .07, .48, .67], [podX + .27, .40, .46], .054, '#58696c', true);
+    b.add(oval, [bikeX, .69, -.29], [.448, .415, .866], blue);
+    b.box(bikeX, .49, .18, .46, .34, .62, '#3d545a');
+    for (let i = 0; i < 5; i++)
+        b.box(bikeX, .337 + i * .043, .08, .48, .016, .36, '#879893');
+    b.box(bikeX, .849, .346, .37, .13, .61, '#3e4443', [.13, 0, 0]);
+    b.add(oval, [bikeX, .655, -.83], [.295, .162, .65], blue);
+    b.add(oval, [bikeX, .654, .78], [.29, .156, .66], blue);
+    b.add(tube, [bikeX, .985, -.75], [.251, .204, .251], '#3d4d55', [Math.PI / 2, 0, 0]);
+    lamps.add(tube, [bikeX, .985, -.863], [.196, .022, .196], '#f0ddbb', [Math.PI / 2, 0, 0]);
+    glass.quad([bikeX - .262, .922, -.666], [bikeX + .262, .922, -.666], [bikeX + .193, 1.53, -.405], [bikeX - .193, 1.53, -.405], '#ffffff');
+    b.rod([bikeX - .193, 1.53, -.405], [bikeX + .193, 1.53, -.405], .018, '#657a7d');
+    b.add(oval, [podX, .534, .077], [.795, .56, 2.01], '#6c8790');
+    b.add(oval, [podX, .694, -.227], [.687, .286, 1.05], '#4e5a61');
+    b.box(podX, .739, .413, .66, .196, .57, '#535f64', [.36, 0, 0]);
+    for (const side of [-1, 1]) {
+        const x = podX + side * .329;
+        b.rod([x, .748, -.542], [x, .754, .602], .018, '#6e8286');
+        for (const z of [-.47, -.19, .09, .36, .55])
+            b.add(oval, [x, .760, z], [.029, .021, .022], '#b4bca9');
+    }
+    b.add(oval, [1.006, .608, .277], [.321, .22, .726], '#607984');
+    lamps.box(podX + .206, .602, -.843, .152, .073, .056, '#f0ddbb');
+    lamps.box(bikeX, .686, 1.104, .165, .078, .044, '#ab5652');
+    shadow(shade, .86, -1.02, 1.11);
+    layer(root, shade, 'Тень под мотоциклом', shadowInk);
+    layer(root, b, 'Мотоцикл и крытая коляска');
+    layer(root, glass, 'Ветровой щиток', glazing);
+    layer(root, lamps, 'Фара и фонарь коляски', lit);
+}
+
+function cargoTricycle(root) {
+    const b = new Batch(), lamps = new Batch(), lid = new Batch(), shade = new Batch();
+    const green = '#61857b';
+    for (const side of [-1, 1]) {
+        wheel(b, side * .602, -.817, .286, .134);
+        b.rod([side * .52, .39, -.817], [side * .506, .38, .27], .035, dark, true);
+        b.rod([side * .11, .31, .22], [side * .08, .364, 1.015], .034, '#6f8c86');
+        b.box(side * .579, .71, -.59, .089, .58, 1.38, green);
+        for (const z of [-1.19, -.66, -.11])
+            b.box(side * .628, .715, z, .032, .54, .034, '#95a495');
+        lamps.box(side * .435, .55, -1.34, .13, .071, .048, '#edd9b9');
+    }
+    wheel(b, 0, 1.016, .328, .148);
+    b.box(0, .454, -.595, 1.16, .097, 1.415, '#5a7a72');
+    b.box(0, .734, -1.287, 1.17, .55, .069, '#789783');
+    b.box(0, .729, .078, 1.17, .56, .087, green);
+    b.box(0, .480, .401, .299, .26, .39, '#404e51');
+    b.rod([0, .379, .216], [0, .838, .803], .055, '#62837d');
+    b.rod([0, .493, .429], [0, 1.043, .385], .040, steel);
+    b.rod([-.298, 1.061, .418], [.298, 1.061, .418], .030, steel);
+    for (const side of [-1, 1])
+        b.rod([side * .224, 1.062, .417], [side * .323, 1.076, .422], .036, dark);
+    b.add(oval, [0, .895, .828], [.389, .14, .439], '#424c4b');
+    b.box(0, .617, 1.214, .166, .064, .053, '#9d4044');
+    for (const x of [-.274, .216])
+        b.box(x, .607, -.694, .38, .22, .63, x < 0 ? '#bb925e' : '#b3aba3');
+    lid.box(0, .026, -.697, 1.26, .10, 1.414, '#91ab99');
+    lid.rod([-.60, .08, -1.39], [.60, .08, -1.39], .023, dark, true);
+    const hinge = new T.Group();
+    hinge.position.set(0, 1.02, .084);
+    hinge.rotation.x = .53;
+    layer(hinge, lid, 'Откидная крышка короба');
+    root.add(hinge);
+    shadow(shade, .695, -1.29, 1.25);
+    layer(root, shade, 'Тень под коробом', shadowInk);
+    layer(root, b, 'Трёхколёсное шасси и грузовой короб');
+    layer(root, lamps, 'Передние фонари', lit);
+}
+
+function roadDoor(root, half, y, z, d, opening, color) {
+    const leaves = [-1, 1].map(side => {
+        const door = new T.Group(), frame = new Batch(), glass = new Batch(), axis = half * .91;
+        const width = d * .49;
+        frame.box(0, .31, 0, .072, .62, width, color);
+        frame.box(0, 1.78, 0, .072, .17, width, color);
+        for (const edge of [-1, 1])
+            frame.box(0, 1.18, edge * (width * .5 - .023), .073, 1.18, .046, dark);
+        frame.box(.041, .77, 0, .026, .048, width * .86, '#a99a6e');
+        glass.quad([.023, .62, -width * .44], [.023, .62, width * .44], [.023, 1.69, width * .44], [.023, 1.69, -width * .44], '#ffffff');
+        layer(door, frame, 'Дверная створка');
+        layer(door, glass, 'Дверное стекло', glazing);
+        root.add(door);
+        return {
+            door, side, axis,
+            update(t) { door.position.set(axis + t * .105, y, z + side * (width * .51 + t * width * opening)); }
+        };
+    });
+    leaves.forEach(leaf => leaf.update(0));
+    return t => leaves.forEach(leaf => leaf.update(t));
+}
+
+function coach(root, config) {
+    const { length, half, belt, roof, floor, paint, stripe, axles, doorZ, label, frontFace = true, rearFace = true } = config;
+    const b = new Batch(), trim = new Batch(), glass = new Batch(), lamps = new Batch();
+    const front = -length * .5, end = length * .5, d = 1.34;
+    const openings = doorZ.map(z => [z - d / 2, z + d / 2]);
+    pressedBody(b, trim, [[front, half * .91, floor + .03, belt], [front + .43, half, floor, belt],
+        [end - .39, half, floor, belt], [end, half * .925, floor + .031, belt]], axles, paint, false, openings);
+    trim.box(0, floor + .015, 0, half * 1.84, .10, length - .14, '#51656a');
+    for (const [axle, radius] of axles)
+        for (const side of [-1, 1])
+            wheel(trim, side * (half - .160), axle, radius, .266, '#b8b7a4');
+    const windowY = belt + .075, windowTop = roof - .45, windowX = half * .930, lip = roof - .24;
+    const landmarks = [front + .11, end - .11, ...openings.flat()].sort((a, b) => a - b);
+    for (const side of [-1, 1]) {
+        for (let i = 1; i < landmarks.length; i++) {
+            const a = landmarks[i - 1], c = landmarks[i];
+            const middle = (a + c) * .5;
+            const isDoor = side === 1 && openings.some(([start, end]) => middle > start && middle < end);
+            const count = Math.max(1, Math.ceil((c - a) / 1.52));
+            if (!isDoor)
+                for (let k = 0; k < count; k++) {
+                    const lo = lerp(a, c, k / count) + .045, hi = lerp(a, c, (k + 1) / count) - .045;
+                    glass.quad([side * windowX, windowY, lo], [side * windowX, windowY, hi], [side * (windowX - .039), windowTop, hi], [side * (windowX - .039), windowTop, lo], '#ffffff');
+                    trim.box(side * (windowX - .02), (windowY + windowTop) * .5, lo - .023, .058, windowTop - windowY + .11, .047, dark);
+                    if (k > 0)
+                        seat(trim, side * half * .535, floor + .46, lo + .42, .47, '#5c7275');
+                }
+            if (!isDoor)
+                trim.box(side * half * .953, belt - .015, middle, .043, .105, c - a, stripe);
+        }
+        trim.rod([side * half * .94, lip, front + .08], [side * half * .94, lip, end - .07], .105, paint, true);
+        trim.rod([side * half * .72, floor + 1.92, front + .78], [side * half * .72, floor + 1.92, end - .56], .021, '#a3ab96');
+        for (const z of [front + .96, end - .67, ...doorZ])
+            trim.rod([side * half * .71, floor + .095, z], [side * half * .71, floor + 1.94, z], .020, '#a4af9a');
+    }
+    trim.box(0, lip + .04, 0, half * 1.79, .21, length - .14, paint);
+    for (const z of [front + 2.3, end - 2.2]) {
+        trim.box(0, roof - .032, z, half * .79, .17, 1.02, '#768984');
+        for (let i = 0; i < 5; i++)
+            trim.box(0, roof + .058, z - .31 + .14 * i, half * .63, .021, .034, '#414f57');
+    }
+    for (const z of doorZ) {
+        trim.rod([half*.71, floor+1.03, z-.06], [half*.71, floor+1.38, z-.06], .023, '#a69675');
+        trim.box(half*.71, floor+1.21, z-.08, .073, .102, .041, '#cab17b');
+        trim.box(half*.71, floor+1.21, z-.105, .043, .054, .013, '#ac4e40');
+    }
+    if (frontFace) {
+        const { placard } = require('./fleet-placard.js');
+        placard(root, ['СХЕМА ОСТАНОВОК', 'Депо  •  Канальная  •  рынок'], [0, belt+.45, front+1.40], [.75,.28]);
+        const w = half * .865;
+        glass.quad([-w, windowY, front + .044], [w, windowY, front + .044], [w - .055, windowTop + .126, front + .151], [-w + .055, windowTop + .126, front + .151], '#ffffff');
+        trim.box(0, windowY + .06, front + .544, half * 1.63, .144, .41, '#344650');
+        trim.rod([-w, windowY + .18, front + .034], [-.11, windowY + .43, front + .063], .013, dark, true);
+        trim.rod([.066, windowY + .17, front + .031], [w * .96, windowY + .42, front + .060], .013, dark, true);
+        trim.box(0, windowTop + .14, front + .09, half * 1.57, .247, .085, '#273a42');
+        stencil(lamps, label, [0, windowTop + .14, front + .042], .031, '#e0c179', -1);
+        seat(trim, -.61, floor + .63, front + 1.06, .53, '#596466');
+        trim.add(ring, [-.60, floor + 1.18, front + .51], [.181, .181, .167], '#283a43', [.41, 0, 0]);
+        for (const side of [-1, 1]) {
+            lamps.box(side * half * .731, floor + .45, front - .016, .268, .139, .045, '#ecdfc0');
+            trim.rod([side * half * .88, belt + .51, front + .38], [side * (half + .093), belt + .68, front + .31], .035, '#455861');
+            trim.box(side * (half + .096), belt + .57, front + .32, .154, .229, .176, '#455861');
+        }
+    }
+    if (rearFace) {
+        const w = half * .852;
+        glass.quad([-w, windowY, end - .042], [w, windowY, end - .042], [w - .048, windowTop, end - .115], [-w + .048, windowTop, end - .115], '#ffffff');
+        for (const side of [-1, 1]) {
+            lamps.box(side * half * .725, floor + .46, end + .012, .217, .103, .048, '#b84e53');
+            lamps.box(side * half * .725, floor + .59, end + .013, .217, .073, .044, '#d29055');
+        }
+    }
+    layer(root, b, 'Кузов с колёсными арками', carPaint);
+    layer(root, trim, 'Салон, поручни и отделка');
+    layer(root, glass, 'Ленточное остекление', glazing);
+    layer(root, lamps, 'Маршрутное табло и фонари', lit);
+    return doorZ.map(z => roadDoor(root, half, floor, z, 1.34, .88, paint));
+}
+
+function lowFloorBus(root) {
+    const doors = coach(root, { length: 11.49, half: 1.272, belt: 1.46, roof: 3.08, floor: .35, paint: '#859b8f', stripe: '#537783',
+        axles: [[-3.52, .435], [3.38, .435]], doorZ: [-4.77, .92, 4.75], label: 'К-12' });
+    const apron = new T.Group(), plate = new Batch(), shade = new Batch();
+    apron.position.set(1.12, .42, .92);
+    plate.box(.33, 0, 0, .70, .065, 1.18, '#77888c');
+    for (let i = 0; i < 6; i++)
+        plate.box(.087 + i * .098, .034, 0, .023, .013, 1.12, '#a6aa97');
+    layer(apron, plate, 'Складной пандус');
+    root.add(apron);
+    shadow(shade, 1.24, -5.39, 5.35);
+    layer(root, shade, 'Тень под автобусом', shadowInk);
+    return ({ elapsed }) => {
+        const open = phase(elapsed + 8, 32, 1.6, 7.5);
+        doors.forEach(move => move(open));
+        apron.rotation.z = lerp(-Math.PI * .5, -.28, T.MathUtils.smoothstep(open, .37, .98));
+    };
+}
+
+function articulatedTrolley(root) {
+    const front = new T.Group(), rear = new T.Group(), bellows = new Batch(), poles = new Batch(), wire = new Batch();
+    front.position.z = -4.12;
+    rear.position.z = 5.06;
+    root.add(front, rear);
+    const doors = [
+        ...coach(front, { length: 9.60, half: 1.275, belt: 1.40, roof: 3.18, floor: .36, paint: '#466f7b',
+            stripe: '#d1ab72', axles: [[-2.68, .438], [2.81, .437]], doorZ: [-3.99, 1.93], label: '17', rearFace: false }),
+        ...coach(rear, { length: 7.87, half: 1.271, belt: 1.40, roof: 3.14, floor: .37, paint: '#466f7b',
+            stripe: '#d1ab72', axles: [[1.37, .438]], doorZ: [2.72], label: '', frontFace: false })
+    ];
+    const start = front.position.z + 4.80, end = rear.position.z - 3.935;
+    for (let j = 0; j <= 8; j++) {
+        const z = lerp(start - .022, end + .022, j / 8), inner = j % 2 === 1, w = inner ? 1.157 : 1.254;
+        const tint = inner ? '#2e4047' : '#47575c';
+        bellows.box(0, 2.918, z, w * 1.90, .226, .050, tint);
+        for (const side of [-1, 1])
+            bellows.box(side * w * .943, 1.682, z, .115, 2.47, .050, tint);
+    }
+    bellows.box(0, .452, (start + end) / 2, 2.28, .149, end - start + .12, '#45535a');
+    for (const side of [-1, 1]) {
+        const x = side * .38;
+        poles.box(x, 3.229, 2.04, .23, .145, .46, '#465962');
+        poles.rod([x, 3.35, 2.11], [x * .86, 4.23, 5.42], .030, '#7f948f');
+        poles.rod([x * .86, 4.23, 5.42], [x * .82, 4.34, 6.57], .024, '#8d9f9c');
+        poles.rod([x, 3.31, 2.11], [x, 3.79, 3.57], .022, '#576d71');
+        poles.box(x * .82, 4.358, 6.55, .099, .046, .234, '#525f61');
+        wire.rod([x * .82, 4.36, -10], [x * .82, 4.36, 10.3], .011, '#4d6774');
+    }
+    layer(root, bellows, 'Резиновая гармошка сочленения');
+    layer(root, poles, 'Токосъёмные штанги');
+    layer(root, wire, 'Провода над стоянкой');
+    return ({ elapsed }) => {
+        const open = phase(elapsed + 4, 27, 1.8, 5.7);
+        doors.forEach(move => move(open));
+    };
+}
+
+function track(batch, minimum, maximum, gauge = .719) {
+    for (const side of [-1, 1]) {
+        const x = side * gauge, z = (minimum + maximum) / 2;
+        batch.box(x, .082, z, .10, .113, maximum - minimum, '#8b9a99');
+        batch.box(x, .144, z, .056, .031, maximum - minimum, '#afbab4');
+    }
+    for (let z = minimum + .31; z < maximum; z += .68)
+        batch.box(0, .039, z, gauge * 2 + .797, .071, .199, '#6f6b54');
+}
+
+function railWheel(b, z, half) {
+    for (const side of [-1, 1]) {
+        wheel(b, side * half, z, .317, .145, '#6d7d7d', .466);
+        b.box(side * half * .94, .565, z, .23, .195, .23, '#394b53');
+    }
+    b.rod([-half, .457, z], [half, .457, z], .077, dark);
+}
+
+function serviceTram(root) {
+    const b = new Batch(), cabinBody = new Batch(), panes = new Batch(), light = new Batch(), rails = new Batch();
+    const red = '#aa6a4c';
+    const front = -3.79, end = 3.83;
+    track(rails, front - .80, end + .66);
+    for (const wheelZ of [-2.41, -1.89, 1.89, 2.41])
+        railWheel(b, wheelZ, .719);
+    b.box(0, .734, 0, 2.58, .24, 7.55, red);
+    b.box(0, .893, .754, 2.40, .143, 5.83, '#868067');
+    for (let i = 0; i < 17; i++)
+        b.box(0, .968, -1.93 + i * .327, 2.22, .017, .019, '#9d977e');
+    b.box(0, 1.163, -2.927, 2.34, .49, 1.66, red);
+    cabin(cabinBody, panes, [[-3.79, 1.105, 1.105, 1.36, 1.36], [-3.37, 1.166, .979, 1.37, 2.62],
+        [-2.47, 1.166, .998, 1.39, 2.62], [-2.02, 1.090, 1.090, 1.42, 1.42]], red);
+    b.box(0, 1.897, -2.187, 2.21, .951, .098, '#985e4c');
+    b.box(0, 2.643, -2.918, 1.94, .143, 1.22, '#6c8585');
+    for (const side of [-1, 1]) {
+        b.box(side * 1.165, 1.091, .76, .065, .25, 5.78, red);
+        b.rod([side * 1.154, 1.48, -1.89], [side * 1.154, 1.48, 3.55], .025, '#a5ad97');
+        for (const z of [-1.85, -.88, .12, 1.11, 2.11, 3.14, 3.56])
+            b.rod([side * 1.154, 1.053, z], [side * 1.154, 1.485, z], .024, steel);
+        b.box(side * 1.164, .630, 2.79, .25, .077, .536, '#657571');
+        light.box(side * .78, 1.127, front - .03, .19, .126, .043, '#eedfc4');
+    }
+    b.box(-.58, 1.547, -1.60, 1.17, 1.22, .512, '#58737b');
+    b.box(-.58, 1.553, -1.301, 1.02, 1.09, .081, '#69838a');
+    for (const z of [-.42, .42])
+        b.box(-.575, 1.55 + z, -1.253, .27, .022, .025, steel);
+    b.box(.48, 1.153, -.72, .83, .374, .79, '#908469');
+    b.box(.51, 1.265, .236, .84, .612, .83, '#aa8862');
+    for (let turn=0; turn<5; turn++)
+        b.add(ring, [-.56,1.0+turn*.033,1.86],[.36,.36,.19],'#404447',[Math.PI/2,0,0]);
+    for (const x of [.25,.65]) {
+        b.box(x,1.03,1.30,.23,.14,.41,'#77624c',[.14,0,0]);
+        b.box(x,1.00,2.18,.18,.06,.33,'#454d4c');
+        b.rod([x,1.03,2.03],[x,1.24,2.19],.026,'#7d8786');
+        b.rod([x,1.24,2.19],[x,1.03,2.34],.026,'#7d8786');
+    }
+    stencil(b,'М4',[.51,1.29,.662],.015,'#e6dab5');
+    b.rod([-.27, 2.729, -2.88], [-.20, 3.27, -2.44], .024, steel);
+    b.rod([.27, 2.729, -2.88], [.20, 3.27, -2.44], .024, steel);
+    b.rod([-.33, 3.279, -2.44], [.33, 3.279, -2.44], .025, dark, true);
+    stencil(light, 'Т-03', [0, 1.263, front - .017], .021, '#e5d1a1', -1);
+    layer(root, rails, 'Деповской путь');
+    layer(root, b, 'Открытая грузовая площадка и шкаф');
+    layer(root, cabinBody, 'Каркас кабины');
+    layer(root, panes, 'Стёкла кабины', glazing);
+    layer(root, light, 'Фонари и номер', lit);
+}
+
+function doubleDeckTrain(root) {
+    const b = new Batch(), paint = new Batch(), glass = new Batch(), light = new Batch(), rails = new Batch();
+    const front = -10.46, end = 10.40, half = 1.53, color = '#598096';
+    track(rails, front - 1.13, end + 1.04);
+    for (const z of [-7.26, -5.53, 5.49, 7.22])
+        railWheel(b, z, .718);
+    pressedBody(paint, b, [[front, 1.12, .600, 1.36], [front + .49, 1.445, .55, 1.47], [front + 1.60, half, .55, 1.53],
+        [end - .20, half, .55, 1.53], [end, 1.445, .62, 1.53]], [], color, false);
+    for (const [x, y, d, h, tint] of [[0, 1.241, 20.5, .098, '#718287'], [0, 2.597, 18.9, .196, '#aeb5a2'], [0, 4.339, 18.95, .369, '#cad1c4']])
+        b.box(x, y, .42, half * 1.812, h, d, tint);
+    for (const side of [-1, 1]) {
+        const x = side * 1.444, upperX = side * 1.354;
+        b.rod([side * 1.422, 2.651, front + 1.57], [side * 1.422, 2.651, end], .18, color, true);
+        b.rod([upperX, 4.166, front + 1.46], [upperX, 4.166, end], .121, color, true);
+        for (let i = 0; i < 9; i++) {
+            const z = -8.08 + i * 1.91;
+            const entrance = i === 1 || i === 8;
+            if (entrance) {
+                b.box(x * 1.026, 2.06, z, .088, 2.08, 1.53, '#4a6776');
+                for (const part of [-1, 1]) {
+                    glass.quad([x * 1.055, 1.65, z + part * .354 - .258], [x * 1.055, 1.65, z + part * .354 + .258],
+                        [x * 1.055, 2.52, z + part * .354 + .258], [x * 1.055, 2.52, z + part * .354 - .258], '#ffffff');
+                    b.box(x * 1.064, 1.53, z + part * .185, .025, .13, .066, '#b3b998');
+                }
+                b.box(x * 1.066, 2.03, z, .018, 2.02, .036, '#293f4a');
+            } else {
+                glass.quad([x, 1.545, z - .722], [x, 1.545, z + .722], [x, 2.405, z + .722], [x, 2.405, z - .722], '#ffffff');
+                b.box(x, 1.961, z - .845, .11, 1.026, .247, color);
+                seat(b, side * .81, 1.60, z + .28, .60, '#627c7b');
+                seat(b, side * .81, 3.11, z + .28, .60, '#6f826e');
+            }
+            glass.quad([upperX, 2.81, z - .734], [upperX, 2.81, z + .734], [upperX * .974, 3.987, z + .734],
+                [upperX * .974, 3.987, z - .734], '#ffffff');
+            b.box(upperX, 3.38, z - .85, .125, 1.23, .24, color);
+        }
+        b.box(x, 2.25, 9.36, .081, 1.42, 1.92, color);
+        for (let step = 0; step < 7; step++) {
+            b.box(side * .76, 1.338 + step * .193, -6.23 + .20 * step, .784, .079, .214, '#7d9394');
+            b.box(side * .76, 1.376 + step * .193, -6.32 + .20 * step, .741, .016, .031, '#bfae78');
+        }
+        const bottom = [side * 1.057, 1.36, front + .18], lower = [side * 1.394, 1.54, front + 1.56], upper = [side * 1.34, 3.97, front + 1.43];
+        const nose = [side * .83, 3.38, front + .98];
+        paint.quad(bottom, lower, upper, nose, color, [side, 0, -.34]);
+        light.box(side * .807, 1.266, front + .021, .343, .144, .038, '#ebddbb');
+        light.box(side * .711, 1.45, end + .02, .193, .089, .043, '#be4d57');
+    }
+    const [bottomLeft, bottomRight, topRight, topLeft] = [[-1.04, 1.41, front + .16], [1.04, 1.41, front + .16],
+        [.83, 3.39, front + .98], [-.83, 3.39, front + .98]];
+    const [glassLeft, glassRight, glassTopRight, glassTopLeft] = [[-.772, 2.06, front + .429], [.772, 2.06, front + .429],
+        [.681, 3.245, front + .920], [-.681, 3.245, front + .920]];
+    paint.quad(bottomLeft, bottomRight, glassRight, glassLeft, color, [0, 0, -1]);
+    paint.quad(bottomRight, topRight, glassTopRight, glassRight, color, [0, 0, -1]);
+    paint.quad(topRight, topLeft, glassTopLeft, glassTopRight, color, [0, 0, -1]);
+    paint.quad(topLeft, bottomLeft, glassLeft, glassTopLeft, color, [0, 0, -1]);
+    glass.quad(glassLeft, glassRight, glassTopRight, glassTopLeft, '#ffffff', [0, 0, -1]);
+    b.box(0, 1.955, front + .86, 1.48, .236, .433, '#425962');
+    b.box(-.34, 2.127, front + .86, .335, .126, .153, '#50676b', [.35, 0, 0]);
+    paint.quad([-.83, 3.39, front + .98], [.83, 3.39, front + .98], [1.32, 4.35, front + 1.58], [-1.32, 4.35, front + 1.58], color, [0, 1, -1]);
+    b.box(0, 2.683, end - .056, half * 1.883, 3.13, .125, color);
+    b.box(0, 2.24, end + .032, .834, 1.381, .043, '#455b66');
+    b.box(0, 2.476, end + .059, .681, .541, .013, '#728b90');
+    b.box(0, 4.528, 3.58, 1.082, .149, 2.16, '#738d93');
+    for (let z = 2.75; z < 4.52; z += .165)
+        b.box(0, 4.612, z, .915, .026, .051, dark);
+    stencil(light, '77', [0, 1.842, front + .304], .024, '#e3d4a2', -1);
+    layer(root, rails, 'Путь возле платформы');
+    layer(root, paint, 'Двухъярусный кузов с кабиной', carPaint);
+    layer(root, b, 'Верхний салон, тамбур и лестницы');
+    layer(root, glass, 'Два ряда пассажирских окон', glazing);
+    layer(root, light, 'Номер секции и фонари', lit);
+}
+
+function cableFerry(root) {
+    const frame = new Batch(), edges = new Batch(), glass = new Batch(), lights = new Batch(), rampBatch = new Batch(), water = new Batch();
+    const deck = new T.Group(), ramp = new T.Group(), blue = '#516e7c';
+    // The berth has a visibly cleared strip in the ice and a fixed shore anchor.
+    for (let i = 0; i < 6; i++) {
+        const a = 74.8 + i * 1.81, b = a + 1.81;
+        const x = -161.8, z = 81.6, y = groundHeight(x, z);
+        const corner = (side, at) => [side * (2.68 + .20 * Math.sin(at * 2.48)), groundHeight(x, at) - y + .018, at - z];
+        water.quad(corner(-1, a), corner(1, a), corner(1, b), corner(-1, b), '#849a9d', [0, 1, 0]);
+    }
+    layer(root, water, 'Прорубь вдоль паромного причала', waterInk);
+    const shore = new Batch();
+    shore.box(3.28,1.17,6.93,1.41,1.91,1.19,'#82918a');
+    shore.box(3.28,2.17,6.93,1.62,.14,1.39,'#526361');
+    shore.box(3.28,1.49,6.313,1.04,.49,.031,'#3d5356');
+    shore.box(3.28,1.20,6.24,1.09,.059,.25,'#b3a487');
+    for (const z of [3.92,4.91]) shore.box(2.32,.42,z,.24,.44,.87,'#89735b');
+    shore.rod([2.49,.48,4.63],[2.49,1.92,4.63],.037,steel);
+    shore.rod([2.49,1.92,4.63],[2.19,1.92,4.63],.025,steel);
+    shore.ball(2.21,1.82,4.63,.135,.148,.135,'#aa915f');
+    layer(root,shore,'Билетная будка, колокол и причальные отбойники');
+    require('./fleet-placard.js').placard(root,['КАССА ПАРОМА','Последний рейс 21:30'],[3.28,1.91,6.32],[1.11,.28],Math.PI);
+    const nose = [[-3.88, 1.75, .16, .54], [-3.54, 2.12, .11, .58], [2.94, 2.12, .11, .59], [3.72, 1.88, .16, .59]];
+    pressedBody(frame, edges, nose, [], blue);
+    frame.box(0, .662, -.038, 3.97, .13, 7.35, '#788e8c');
+    for (const side of [-1, 1]) {
+        const x = side * 2.03;
+        frame.box(x, .749, -.14, .13, .149, 7.33, '#657d7f');
+        frame.rod([x, 1.45, -3.37], [x, 1.45, 3.28], .032, '#b8c1af');
+        for (let z = -3.37; z < 3.4; z += .95)
+            frame.rod([x, .735, z], [x, 1.45, z], .027, '#99a7a0');
+        for (const z of [-2.65, .18, 2.70])
+            frame.add(tube, [x * 1.064, .578, z], [.258, .23, .258], '#374b53', [0, 0, Math.PI / 2]);
+    }
+    for (let i = 0; i < 13; i++) {
+        const z = -2.81 + i * .439;
+        frame.box(.12, .738, z, 2.45, .021, .046, '#8ca09a');
+    }
+    for (const x of [-.919, .919]) {
+        frame.rod([x, .741, -3.10], [x, .741, 3.18], .014, '#b1af83', true);
+        frame.rod([x, .817, -2.98], [x, .817, -2.19], .026, '#9ca99e');
+    }
+    frame.box(-1.38, 1.185, -.96, .896, .864, 1.65, '#81a19a');
+    frame.box(-1.38, 2.229, -.96, .956, .185, 1.72, '#adc4b3');
+    frame.box(-1.38, 1.88, -1.745, .867, .241, .071, '#698888');
+    for (const side of [-1, 1]) {
+        const x = -1.38 + side * .437;
+        for (const z of [-1.721, -.948, -.189])
+            frame.box(x, 1.854, z, .061, .637, .047, '#637f81');
+        glass.box(x, 1.877, -.939, .033, .582, 1.565, '#ffffff');
+    }
+    glass.box(-1.38, 1.888, -.160, .806, .561, .031, '#ffffff');
+    glass.box(-1.38, 1.924, -1.779, .806, .403, .031, '#ffffff');
+    frame.add(ring, [-1.35, 1.817, -1.52], [.126, .125, .100], '#3b5056', [.63, 0, 0]);
+    frame.rod([-1.38, 2.325, -.84], [-1.38, 2.66, -.84], .023, steel);
+    lights.box(-1.38, 2.647, -.84, .099, .091, .119, '#e5d3ab');
+    frame.add(tube, [1.31, .881, -.267], [.401, .575, .405], '#667c7f', [0, 0, Math.PI / 2]);
+    frame.add(tube, [1.31, .884, -.266], [.326, .583, .329], '#879289', [0, 0, Math.PI / 2]);
+    for (let i = 0; i < 4; i++)
+        frame.add(tube, [1.112 + i * .131, .885, -.267], [.332, .034, .333], '#384e55', [0, 0, Math.PI / 2]);
+    frame.rod([1.30, .870, -3.81], [1.30, .928, 3.54], .015, '#3f5359');
+    const line = new Batch(), y = groundHeight(-161.8, 81.6);
+    line.rod([1.30, .872, -3.82], [1.03, .796 - y, -20.75], .021, '#445f65');
+    line.rod([1.30, .927, 3.54], [1.01, .796 - y, 5.26], .021, '#445f65');
+    line.box(1.01, .396 - y, 5.26, .141, .800, .167, '#6a817f');
+    line.box(1.03, .396 - y, -20.75, .145, .800, .149, '#6a817f');
+    layer(root, line, 'Канат и береговые опоры');
+    ramp.position.set(0, .722, 3.60);
+    rampBatch.box(0, 0, .798, 3.33, .120, 1.61, '#768d8c');
+    for (let i = 0; i < 9; i++)
+        rampBatch.box(0, .063, .139 + i * .157, 3.18, .020, .040, '#a3ad9e');
+    for (const side of [-1, 1]) {
+        rampBatch.box(side * 1.665, .08, .80, .101, .172, 1.61, '#b2a583');
+        rampBatch.rod([side * 1.64, .07, .074], [side * 1.64, .60, .161], .028, steel);
+    }
+    layer(ramp, rampBatch, 'Откидная аппарель');
+    deck.add(ramp);
+    ramp.rotation.x = .12;
+    layer(deck, frame, 'Палуба, кабина и лебёдка');
+    layer(deck, edges, 'Бортовые отбойники');
+    layer(deck, glass, 'Остекление рубки', glazing);
+    layer(deck, lights, 'Огонь над рубкой', lit);
+    root.add(deck);
+    return ({ elapsed }) => {
+        deck.position.y = Math.sin(elapsed * .68) * .026;
+        deck.rotation.z = Math.sin(elapsed * .52) * .004;
+        ramp.rotation.x = lerp(-.62, -.02, phase(elapsed + 5, 39, 2.3, 12.0));
+    };
+}
+
+const models = {
+    microcar: ['Микрокар «Иней»', 'Канальные гаражи. Четыре небольших колеса, одноместная кабина и широкая дверь.', root => passengerCar(root, 'microcar')],
+    liftback: ['Лифтбек «Рубеж»', 'Канальные гаражи. Короткая корма, покатая остеклённая дверь и узкие задние фонари.', root => passengerCar(root, 'liftback')],
+    minivan: ['Минивэн «Смена»', 'Площадка на Канальной. Шесть кресел в три ряда и высокое панорамное остекление.', root => passengerCar(root, 'minivan')],
+    limousine: ['Представительский лимузин', 'Портовая гостиница. Широкая вставка между дверями отделяет задний салон.', root => passengerCar(root, 'limousine')],
+    sidecar: ['Зимний мотоцикл с коляской', 'Канальные гаражи. Ветровой щиток водителя, пристёгнутый чехол и отдельный фонарь коляски.', winterSidecar],
+    tricycle: ['Грузовой электротрицикл', 'Служебный ряд рынка. Грузовой короб стоит между передними колёсами, крышка откинута.', cargoTricycle],
+    bus: ['Автобус «Канал-12»', 'Стоянка на Канальной. В широкой средней двери виден складной пандус, который водитель проверяет перед рейсом.', lowFloorBus],
+    trolleybus: ['Троллейбус «Линия»', 'Площадка у Восточной станции. Две секции с гармошкой, штанги и рабочие посадочные двери.', articulatedTrolley],
+    'service-tram': ['Служебный трамвай', 'Деповской путь. В шкафу за кабиной хранят инструменты, а ящики ставят на открытую платформу.', serviceTram],
+    'double-decker': ['Двухэтажная электричка', 'Восточная станция. Из второго ряда окон виден верхний салон, лестница находится за дверью тамбура.', doubleDeckTrain],
+    ferry: ['Канатный паром', 'Южный порт, у Причала 01. У трапа виден канат лебёдки, а на открытой палубе есть место для велосипедов.', cableFerry]
+};
+
+function createCityTransit(scene) {
+    const network = new T.Group();
+    network.name = 'Частный транспорт, автобусы и паром';
+    scene.add(network);
+    const fleet = transitSites.map(pose => {
+        const [label, note, build] = models[pose.kind], root = new T.Group();
+        const id = 'new-city-transport-' + pose.kind;
+        root.name = label;
+        root.userData.cityModel = id;
+        root.position.set(pose.x, groundHeight(pose.x, pose.z), pose.z);
+        root.rotation.y = pose.yaw;
+        root.visible = false;
+        network.add(root);
+        return {
+            build, root, animate: null,
+            site: { id, label, x: pose.viewX, z: pose.viewZ, note }
+        };
+    });
+    return {
+        sites: fleet.map(vehicle => vehicle.site),
+        update(ctx) {
+            const focus = ctx.focus ?? ctx;
+            for (const vehicle of fleet) {
+                const { root } = vehicle, dx = focus.x - root.position.x, dz = focus.z - root.position.z;
+                root.visible = ctx.zone === 'street' && dx * dx + dz * dz < 95 ** 2;
+                if (!root.visible)
+                    continue;
+                if (vehicle.build) {
+                    vehicle.animate = vehicle.build(root);
+                    vehicle.build = null;
+                }
+                vehicle.animate?.(ctx);
+            }
+        }
+    };
+}
+
+module.exports = { createCityTransit };
+
+},
 "game/night-benchmark.js": function(require, module, exports) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -24280,6 +27083,81 @@ function createNightBenchmark(scene) {
                 model.dispose();
         } };
 }
+
+},
+"game/notebook-atlas.js": function(require, module, exports) {
+"use strict";
+
+const T = require('../engine/three.module.min.js');
+const { apartments, apartmentEntry, groundHeight } = require('./world-layout.js');
+const { expansionRoads } = require('./world-expansion-layout.js');
+const { regionRoads, regionSites } = require('./region-layout.js');
+const { tramStops } = require('./world-railway.js');
+const { roadStops, serviceGates } = require('./city-life-layout.js');
+const { entrances } = require('./exploration-layout.js');
+const roads = [...expansionRoads, ...regionRoads].filter(r => r.name);
+const landmarks = [
+    ...Object.values(entrances),
+    ...Object.values(tramStops).map(p => ({ x:p.x, z:p.z, label:'остановка «'+p.title+'»' })),
+    ...roadStops.map(p => ({ x:p.x, z:p.z, label:'остановка «'+p.title+'»' })),
+    ...serviceGates.map(p => ({ x:p.x, z:p.z, label:p.name })),
+    ...regionSites.map(p => ({ ...p.stop, label:p.label })),
+    ...apartments.map(a => ({ x: apartmentEntry(a).x, z: apartmentEntry(a).front + .8, label: 'подъезд дома № ' + a.id }))
+];
+function distanceToRoad(p, r) {
+    const dx = r.x2 - r.x1, dz = r.z2 - r.z1;
+    const along = Math.max(0, Math.min(1, ((p.x - r.x1) * dx + (p.z - r.z1) * dz) / (dx * dx + dz * dz || 1)));
+    return Math.hypot(p.x - r.x1 - along * dx, p.z - r.z1 - along * dz);
+}
+function approach(p) {
+    const nearest = landmarks.reduce((a, b) => Math.hypot(p.x-a.x,p.z-a.z) <= Math.hypot(p.x-b.x,p.z-b.z) ? a : b);
+    const street = roads.reduce((a,b) => distanceToRoad(p,a) <= distanceToRoad(p,b) ? a : b);
+    const dx = p.x - nearest.x, dz = p.z - nearest.z, distance = Math.round(Math.hypot(dx, dz));
+    const bearing = ['восточнее','юго-восточнее','южнее','юго-западнее','западнее','северо-западнее','севернее','северо-восточнее'];
+    const direction = bearing[(Math.round(Math.atan2(dz,dx) / (Math.PI / 4)) + 8) % 8];
+    return distance < 4 ? street.name + ' · ' + nearest.label :
+        street.name + ' · ' + nearest.label + ' · от ориентира ' + distance + ' м ' + direction;
+}
+const views = [
+    { name:'Рынок «Спектр»', caption:'Прилавок Инны под навесом', eye:[30,29], aim:[28,19,2.3] },
+    { name:'Школа № 1430', caption:'Главный вход со стороны Канальной', eye:[entrances.school1.x,entrances.school1.z+9], aim:[entrances.school1.x,entrances.school1.z,2.6] },
+    { name:'Дом № 23', caption:'Дверь под козырьком со двора', eye:[-35,22], aim:[-34.96,15.5,1.7] },
+    { name:'Диспетчерская', caption:'Вход с деповской стороны', eye:[11.1,-43], aim:[11.1,-35.8,1.8] },
+    { name:'Канальные гаражи', caption:'Въезд с бетонной площадки', eye:[-41,42], aim:[-49,46,2.2] },
+    { name:'Городская оптика', caption:'Дверь под панно с трамваем', eye:[-7,24], aim:[-5,16.6,3] },
+    { name:'Продукты у дома № 19', caption:'Вход у торца дома', eye:[37,58], aim:[35.8,55.55,1.7] },
+    { name:'Столовая «Причал»', caption:'Вход со стороны гаражной площадки', eye:[-6,39], aim:[-6,44.91,1.7] },
+    { name:'Раздевалка депо', caption:'Служебная дверь со стороны путей', eye:[-.7,-27], aim:[-4.08,-26.90,1.7] }
+];
+function createGuidePhotos(renderer, canvas, scene, world, restoreCamera, restoreScene) {
+    const cache = new Map();
+    return index => {
+        if (!views[index]) return null;
+        if (cache.has(index)) return cache.get(index);
+        const {eye, aim} = views[index], aspect = canvas.width / Math.max(1,canvas.height);
+        const shot = new T.PerspectiveCamera(62, aspect, .1, 180);
+        shot.position.set(eye[0], groundHeight(...eye)+1.65, eye[1]);
+        shot.lookAt(aim[0], groundHeight(aim[0],aim[1])+aim[2], aim[1]);
+        shot.updateMatrixWorld();
+        const thumb = document.createElement('canvas');
+        thumb.width = 320; thumb.height = 180;
+        const painter = thumb.getContext('2d');
+        if (!painter) return null;
+        try {
+            world.cull(shot);
+            renderer.render(scene, shot);
+            const w = Math.min(canvas.width,canvas.height * 16/9), h = w * 9/16;
+            painter.drawImage(canvas, (canvas.width-w)/2, (canvas.height-h)/2, w, h, 0, 0, 320, 180);
+            const src = thumb.toDataURL('image/jpeg',.82);
+            cache.set(index,src);
+            return src;
+        } finally {
+            world.cull(restoreCamera);
+            renderer.render(restoreScene(), restoreCamera);
+        }
+    };
+}
+module.exports = { approach, views, createGuidePhotos };
 
 },
 "game/offline.js": function(require, module, exports) {
@@ -26763,6 +29641,15 @@ const broadcasts_js_1 = require("./broadcasts.js");
 exports.radioStations = { night: 'Северная волна', dispatch: 'Диспетчер 77', district: 'Канальный FM' };
 const isRadioStation = (id) => typeof id === 'string' && Object.hasOwn(exports.radioStations, id);
 exports.isRadioStation = isRadioStation;
+exports.streetBulletins = {
+    'canal-lost-keys':'Канальный FM · Связка ключей в зелёном футляре у диспетчера депо.',
+    'canal-weather-snow':'Канальный FM · Снегопад, на подъездах к мосту снежная каша.',
+    'canal-weather-thaw':'Канальный FM · Оттепель. На тротуарах вода.',
+    'canal-weather-wind':'Канальный FM · Сильный ветер со стороны канала.',
+    'canal-weather-clear':'Канальный FM · У станции проясняется, дальний берег снова видно.',
+    'dispatch-yard-call':'Депо вызывает Вышку. Требуется машина к воротам.',
+    'dispatch-yard-reply':'Вышка отвечает Депо. Адрес принят.'
+};
 const library = {
     night: ['radio-north', 'radio-ice'],
     dispatch: [],
@@ -26773,11 +29660,19 @@ function stationTrack(id, count) {
     const tracks = library[id];
     return tracks.length ? tracks[count % tracks.length] : null;
 }
-function stationBulletin(id, slot, news = [], archive = false) {
+function stationBulletin(id, slot, news = [], archive = false, city = {}) {
     if (id === 'night')
         return [];
-    if (id === 'district')
+    if (id === 'district') {
+        if (slot%5===0 && city.weather) {
+            const w=city.weather;
+            const outlook=w.snow>.25 ? 'snow' : w.rain>.20 || w.wet>.55 && w.temperature>0 ? 'thaw' : w.wind>.54 ? 'wind' : 'clear';
+            return ['canal-weather-'+outlook];
+        }
+        if (slot%5===1 && !city.depotKeysReturned) return ['canal-lost-keys'];
         return (0, broadcasts_js_1.nextProgramme)(slot, news, archive);
+    }
+    if (slot%4===0) return ['dispatch-yard-call','dispatch-yard-reply'];
     const updates = news.filter(broadcasts_js_1.isProgramme);
     return slot % 3 === 1 && updates.length ? updates : [desk[slot % desk.length]];
 }
@@ -26890,7 +29785,7 @@ function regionalAtlas(names) {
         s.fillText(title.toUpperCase(), x + 14, y + 37, tw - 28);
         s.font = 'bold 11px K77Body, sans-serif';
         s.fillStyle = '#d1dbd8';
-        s.fillText(p.name + '   /   КАНАЛЬСК  2087', x + 16, y + 54, tw - 28);
+        s.fillText(p.name + '   /   КАНАЛЬСК  2022', x + 16, y + 54, tw - 28);
         captions.set(title, uv(x + 1, y + 1, tw - 2, th - 2, signs));
     }
     return { wallMap: mapOf(walls), signMap: mapOf(signs), facades, captions };
@@ -27015,7 +29910,7 @@ const industries = { radio: ['БЮРО СВЯЗИ', 'ЛИНИЯ 77', 'РАДИО
 function labelFor(b, index) {
     if (b.name)
         return b.name;
-    if (b.kind === 'container' || index % 9)
+    if (['container','cottage','garages'].includes(b.kind) || index % 9)
         return '';
     const signs = industries[b.district];
     return signs[(Math.floor(index / 9) + index % 5) % signs.length];
@@ -27039,6 +29934,37 @@ function regular(s, which, name, g, atlas) {
         const a = sides[whichSide], sn = Math.sin(a), cs = Math.cos(a), at = (whichSide % 2 ? w : d) / 2 + offset;
         trim.box(u * cs + at * sn, y, -u * sn + at * cs, whichSide % 2 ? depth : ww, hh, whichSide % 2 ? ww : depth, ink);
     };
+    if (kind==='cottage' || kind==='garages') {
+        const cottage=kind==='cottage', paint=cottage ? ['#93836a','#938776','#808670'][which%3] : '#908a7a';
+        body.box(0,h/2,0,w,h,d,paint);
+        if (cottage) {
+            const rx=w/2+.25, rz=d/2+.26, ridge=h+1.48;
+            body.quad([-rx,h,rz],[rx,h,rz],[rx,ridge,0],[-rx,ridge,0],snow);
+            body.quad([-rx,ridge,0],[rx,ridge,0],[rx,h,-rz],[-rx,h,-rz],'#b5bdba');
+            body.quad([rx,h,-rz],[rx,ridge,0],[rx,h,rz],[rx,h,rz],paint);
+            body.quad([-rx,h,rz],[-rx,ridge,0],[-rx,h,-rz],[-rx,h,-rz],paint);
+            body.box(-w*.23,h+1.14,-d*.16,.58,2.42,.58,'#896e5c');
+            for(const face of [0,1,2,3]) {
+                const span=face%2?d:w;
+                for(const fraction of [-.29,.29]) {
+                    attach(face,span*fraction,1.65,.05,1.30,1.16,.13,'#ddd2b0');
+                    attach(face,span*fraction,1.65,.13,1.10,.96,.045,'#74888a');
+                    attach(face,span*fraction,1.65,.17,.052,.98,.039,'#d9cfad');
+                }
+            }
+            attach(side,0,1.06,.08,1.09,2.12,.18,'#635b4c');
+        } else {
+            body.box(0,h+.04,0,w+.16,.12,d+.18,snow);
+            const bays=Math.max(2,Math.floor(frontSpan/3.4));
+            for (let i=0;i<bays;i++) {
+                const size=frontSpan/bays,u=(i+.5)*size-frontSpan/2;
+                attach(side,u,1.20,.06,size-.24,2.40,.15,['#6b776c','#736b5e','#8b795e'][i%3]);
+                attach(side,u,1.18,.15,.026,2.30,.025,'#554f44');
+                attach(side,u+.12,1.06,.17,.11,.11,.025,'#aaa38b');
+            }
+        }
+        return;
+    }
     const isContainer = kind === 'container', floor = isContainer ? .16 : .77;
     body.box(0, floor / 2, 0, w + .04, floor, d + .04, p.shade);
     if (isContainer) {
@@ -27709,7 +30635,13 @@ function districtLots() {
     placeFrontages(lots, true);
     return lots;
 }
-exports.regionBuildings = districtLots().map(schoolSite.accommodateCampus);
+function outerHousing(lot, index) {
+    if (lot.name || !['northpark','water','mill'].includes(lot.district) ||
+        Math.max(Math.abs(lot.x),Math.abs(lot.z)) < 330 || index%4 > 1) return lot;
+    return index%4===0 ? {...lot, kind:'cottage',w:Math.min(lot.w,10),d:Math.min(lot.d,8.5),h:3.15}
+        : {...lot, kind:'garages',d:Math.min(lot.d,7.3),h:2.80};
+}
+exports.regionBuildings = districtLots().map(schoolSite.accommodateCampus).map(outerHousing);
 exports.regionObstacles = [...exports.regionBuildings, ...exports.regionSites, ...outer_site_layout_js_1.outerSiteProps, ...schoolSite.schoolShell, schoolSite.schoolBench, schoolSite.schoolPlanter];
 const rowOfLights = (z, xs) => xs.map(x => ({ x, z, face: 0 }));
 const sideLights = (x, zs, face) => zs.map(z => ({ x, z, face }));
@@ -28619,7 +31551,7 @@ class ReplayRecorder {
         const fences = source.props?.filter(p => p.kind === 'picket' && (p.fence || p.broken)).map(p => ({
             id: p.id, x: round(p.x), z: round(p.z), broken: p.broken, fence: fenceDamage(p)
         }));
-        this.frames.push({ time: sampleTime, clock, tram: round(tram), wanted, power: power === 'normal' ? undefined : power, freight, hero: pose(hero), driven, transfer, cars, people, fences });
+        this.frames.push({ time: sampleTime, clock: clock % 1440, calendar: clock, tram: round(tram), wanted, power: power === 'normal' ? undefined : power, freight, hero: pose(hero), driven, transfer, cars, people, fences });
         let first = 0;
         while (this.frames[first].time < time - span)
             first++;
@@ -28680,6 +31612,8 @@ function validReplay(value) {
     let last = -1;
     for (const f of clip.frames) {
         if (!f || !finite(f.time, 0, 365 * 86400) || f.time <= last || !finite(f.clock, 0, 1439) || !finite(f.tram, -1, 365 * 86400) || !finite(f.wanted, 0, 3) || !validPose(f.hero) || !(f.driven === null || name(f.driven)))
+            return false;
+        if (f.calendar !== undefined && (!Number.isSafeInteger(f.calendar) || f.calendar < 0 || f.calendar % 1440 !== f.clock))
             return false;
         if (f.power !== undefined && !['normal', 'search', 'bell', 'restore'].includes(f.power))
             return false;
@@ -29453,13 +32387,18 @@ const interior_layout_js_1 = require("./interior-layout.js");
 function isServiceRoom(zone) {
     return Object.hasOwn(design, zone);
 }
+const { shops, shopInterior } = require('./neighborhood-shops.js');
 const design = {
+    optician: { title: 'ГОРОДСКАЯ ОПТИКА', tag: 'КАБИНЕТ ПОДБОРА ОЧКОВ', body:'#717b6b',top:'#bdaf94',trim:'#948775',lamp:'#f1e4cc' },
+    locker: { title: 'ТРАМВАЙНОЕ ДЕПО', tag: 'РАЗДЕВАЛКА · БРИГАДА 07',body:'#6c766c',top:'#b1a18b',trim:'#9d907e',lamp:'#ece4ca' },
+    grocery: { title:'ПРОДУКТЫ', tag:'КАНАЛЬНАЯ, 19',body:'#817764',top:'#baa27f',trim:'#988e79',lamp:'#ece4cc' },
+    canteen: { title:'СТОЛОВАЯ «ПРИЧАЛ»',tag:'ЗАВТРАК · ОБЕД · УЖИН',body:'#777f6d',top:'#bdac8c',trim:'#8c846f',lamp:'#eedcba' },
     taxipark: { title: 'ТАКСОПАРК', tag: 'СМЕНЫ · ПОДАЧА МАШИН', body: '#6a7c72', top: '#b49268', trim: '#d3a95c', lamp: '#f4c66e' },
     cafe: { title: 'ГОРЯЧИЙ ЛЁД', tag: 'ЧАЙ · ПИРОЖКИ', body: '#a1746a', top: '#b59a78', trim: '#d6b980', lamp: '#f6c096' },
     terminal: { title: 'ДЕЖУРКА ТЕРМИНАЛА', tag: 'ПРОПУСКА · УЧЁТ ГРУЗА', body: '#607a78', top: '#8f9992', trim: '#bc8d60', lamp: '#91d5c7' },
     hydro: { title: 'БЕЛАЯ ПЛОТИНА', tag: 'ГИДРОТЕХНИЧЕСКИЙ ПОСТ', body: '#576c82', top: '#8a9da7', trim: '#b7b19f', lamp: '#a1def3' },
     passage: { title: 'ДОМ № 23', tag: 'СКВОЗНОЙ ПОДЪЕЗД', body: '#777e70', top: '#b4aa86', trim: '#b49264', lamp: '#e8b466' },
-    'river-station': { title: 'РЕЧНОЙ ВОКЗАЛ', tag: 'ЗАЛ ОЖИДАНИЯ · ЮЖНЫЙ ПОРТ', body: '#435e67', top: '#b19574', trim: '#aa8659', lamp: '#b8decf' },
+    'river-station': { title: 'РЕЧНОЙ ВОКЗАЛ', tag: 'ЗАЛ ОЖИДАНИЯ · ЮЖНЫЙ ПОРТ', body: '#636f70', top: '#a6a7a0', trim: '#898e88', lamp: '#edce8d' },
     'metal-hall': { title: 'ДК «МЕТАЛЛУРГ»', tag: 'МАЛЫЙ ЗАЛ · РЕПЕТИЦИЯ 18—22', body: '#755250', top: '#a88367', trim: '#b98955', lamp: '#efbb75' },
 };
 function addServiceInterior(b, sign, room) {
@@ -29481,6 +32420,7 @@ function addServiceInterior(b, sign, room) {
         return;
     }
     for (const f of p.furniture) {
+        if (['frames','fridge','bread','dryer','lockers'].includes(f.kind)) continue;
         if (f.kind === 'counter') {
             b.box(f.x, .508, f.z, f.w, 1.016, f.d, style.body);
             b.box(f.x, 1.057, f.z, f.w + .12, .071, f.d + .13, style.top);
@@ -29488,6 +32428,16 @@ function addServiceInterior(b, sign, room) {
             for (const dx of [-f.w * .29, 0, f.w * .29]) {
                 b.box(f.x + dx, .52, f.z + f.d / 2 + .018, 1.10, .58, .034, style.top);
                 b.box(f.x + dx, .32, f.z + f.d / 2 + .038, 1.04, .026, .02, style.trim);
+            }
+            if (room === 'river-station') {
+                for (const off of [-1.65,-.53,.53,1.65]) {
+                    b.box(f.x+off,1.69,f.z,.046,1.22,.042,'#a59f88');
+                    if(Math.abs(off)>.6)
+                        b.box(f.x+off*.68,1.68,f.z,.96,1.07,.026,'#a7b4ae');
+                }
+                b.box(f.x,2.30,f.z,3.39,.082,.087,'#827f6c');
+                b.box(f.x,1.20,f.z+.18,1.05,.042,.45,'#8f8c77');
+                sign('КАССА № 1','БИЛЕТЫ',f.x-1.15,1.76,f.z+.036,.70,.32,0,'#ece3c6','#494f40');
             }
             continue;
         }
@@ -29559,6 +32509,8 @@ function addServiceInterior(b, sign, room) {
             for (const zSide of [-1, 1])
                 b.box(f.x, .381, f.z + zSide * (f.d / 2 + .018), f.w - .10, .093, .038, style.trim);
     }
+    if (Object.hasOwn(shops, room))
+        shopInterior(b, sign, room);
     if (room === 'taxipark') {
         for (let i = 0; i < 10; i++) {
             const y = 1.1 + .085 * i;
@@ -29591,6 +32543,80 @@ function addServiceInterior(b, sign, room) {
         b.lamp(bx, 2.859, 1.1, .36, .041, .67, style.lamp);
     }
 }
+
+},
+"game/shift-journal.js": function(require, module, exports) {
+"use strict";
+
+const { marketOpen } = require('./market-hours.js');
+const { schoolOutside } = require('./school-site.js');
+
+const orders = [
+    { caller: 'Семён', place: 'Рынок «Спектр» → трамвайное депо', due: 'До прохода последнего вагона', form: 'Накладная', item: 'Реле управления стрелкой · 1 шт.', text: 'У Инны запасное реле. Забери его с прилавка и принеси дежурному путейцу в депо.' },
+    { caller: 'Мастер гаража', place: 'Стоянка фургона → Канальные гаражи', due: 'До возврата машины в парк', form: 'Путевой лист', item: 'Служебный фургон · возвращение с линии', text: 'Фургон встал после смены. Осмотри его на стоянке. Запасной аккумулятор лежит у нас в гараже.' },
+    { caller: 'Лёша', place: 'Радиорынок → диспетчерская → Восточная', due: 'К сдаче сменного журнала', form: 'Квитанция', item: 'Запись переговоров дежурных · 1 кассета', text: 'На рынке оставили запись переговоров. В диспетчерской есть магнитофон. Послушай, куда отвели вагон.' }
+];
+const clockText = value => [Math.floor(value / 60) % 24, value % 60].map(n => String(n).padStart(2, '0')).join(':');
+
+class ShiftJournal {
+    constructor(saved) {
+        this.opening = Number.isInteger(saved?.opening) ? Math.min(3, Math.max(0, saved.opening)) : 0;
+        this.restoreWalk = this.opening === 1 || this.opening === 2;
+        this.messages = Array.isArray(saved?.messages) ? saved.messages.filter(m => m && typeof m.from === 'string' &&
+            typeof m.text === 'string' && Number.isSafeInteger(m.time) && m.time >= 0)
+            .slice(-40).map(m => ({ from: m.from.slice(0, 64), text: m.text.slice(0, 340), time: m.time, call: m.call === true })) : [];
+        this.lastOrder = Number.isInteger(saved?.lastOrder) ? saved.lastOrder : -1;
+    }
+    add(from, text, time, call = false) {
+        const last = this.messages.at(-1);
+        if (!text || (last?.text === text && last.from === from && time - last.time < 3)) return false;
+        this.messages.push({ from, text, time, call });
+        if (this.messages.length > 40) this.messages.shift();
+        return true;
+    }
+    order(index, time) {
+        if (index <= this.lastOrder || !orders[index]) return false;
+        this.lastOrder = index;
+        return this.add(orders[index].caller, orders[index].text, time, true);
+    }
+    walk(sim, time) {
+        if (sim.stage || sim.mission || this.opening === 3 || sim.home.inside || sim.transition || sim.home.door) return;
+        const { x, z } = sim.player;
+        if (this.restoreWalk) {
+            this.restoreWalk = false;
+            return { route: true };
+        }
+        if (this.opening === 0 && Math.hypot(x - schoolOutside.x, z - schoolOutside.z) < 16) {
+            this.opening = 1;
+            const text = 'Выходи на Канальную и иди к трамвайной остановке у «Спектра». Моё окно под полосатым навесом.';
+            this.add('Инна', text, time);
+            return { text, route: true };
+        }
+        if (this.opening === 1 && Math.hypot(x - 16, z - 24) < 32) {
+            this.opening = 2;
+            return { text: 'За поворотом — остановка 07. Слышен звон вагона со стороны депо.', bell: true };
+        }
+        if (this.opening && Math.hypot(x - 30, z - 26) < 8) {
+            this.opening = 3;
+            const text = marketOpen(time) ? 'Инна · Реле на прилавке. Сейчас упакую, и можно закрываться.' :
+                'Инна · Ряды уже закрыты. Я дождалась тебя у таблички «Выдача», держи реле.';
+            return { text, arrived: true };
+        }
+    }
+    save() { return { opening: this.opening, lastOrder: this.lastOrder, messages: this.messages.map(m => ({ ...m })) }; }
+}
+
+function correspondence(messages, escape) {
+    return messages.slice().reverse().map(m => `<article class="k-handset-entry"><header><strong>${escape(m.from)}</strong><time>${clockText(m.time)}</time></header><small>${m.call ? 'Входящий звонок' : 'Сообщение'}</small><p>${escape(m.text)}</p></article>`).join('');
+}
+
+function documentSheet(index, title, reward, complete, escape) {
+    const order = orders[index];
+    const fields = [['Заказчик', order.caller], ['Адрес', order.place], ['Срок', order.due], ['Предмет', order.item],
+        ['Оплата', Number(reward).toLocaleString('ru-RU') + ' ₽'], ['Отметка', complete ? 'Исполнено' : 'Выдано на смену']];
+    return `<details class="k-order-paper"><summary>${order.form} № ${index + 1}</summary><article><small>КАНАЛЬСК · 2022</small><h3>${escape(title)}</h3><dl>${fields.map(([field, value]) => '<dt>' + field + '</dt><dd>' + escape(value) + '</dd>').join('')}</dl></article></details>`;
+}
+module.exports = { ShiftJournal, orders, correspondence, documentSheet };
 
 },
 "game/sim-navigation.js": function(require, module, exports) {
@@ -30010,6 +33036,7 @@ class Simulation {
     cargoRail = new cargo_rail_js_1.CargoRail();
     cityTraffic = new city_timetables_js_1.CityTraffic();
     clockOffset = 0;
+    get cityCalendarMinutes() { return Math.floor((0, city_clock_js_1.districtCalendarMinutes)(this.elapsed) + this.clockOffset); }
     get cityMinutes() { return Math.floor(((0, city_clock_js_1.districtMinutes)(this.elapsed) + this.clockOffset) % 1440); }
     lastSpeaker;
     patrolFoot = new foot_patrol_js_1.FootPatrols();
@@ -30193,7 +33220,7 @@ class Simulation {
         (0, collision_js_3.setBrokenFixtures)(this.cars, this.brokenFixtures);
         (0, collision_js_3.bindCityGates)(this.cars, this.home.openedGates);
         (0, collision_js_3.setTramBody)(this.cars, (0, world_railway_js_1.linePose)(this.tramTime));
-        (0, collision_js_1.bindMarketTables)(this.cars, (0, exploration_layout_js_1.marketLayouts)(this.elapsed));
+        (0, collision_js_1.bindMarketTables)(this.cars, (0, exploration_layout_js_1.marketLayouts)(this.elapsed, this.cityCalendarMinutes));
         (0, collision_js_1.bindCargoRail)(this.cars, this.cargoRail.poses, this.cargoRail.barriers);
         if (this.validSave(saved)) {
             this.restore(saved);
@@ -30217,7 +33244,7 @@ class Simulation {
     core() {
         const { hero, cars, people, driven, mission, stage, money, wanted, search, lastSeen, elapsed, unseen, searchTime, tramTime, savedCar, jumpVelocity, transition, exchange, railRate } = this;
         const { districtPursuit, pursuitContact, lastSeenMotion } = this;
-        return copy({ v: 1, respondingPatrols: this.responders, pursuitState: this.patrolFoot.save(), streetState: this.street.save(), districtPursuit, pursuitContact, lastSeenMotion, cityLife: this.cityLife.save(), tramRider: this.tramRider.save(), motorPool: this.motorPool.save(), residence: this.home.save(), brokenFixtures: this.brokenFixtures, streetIncidents: this.streetIncidents.crashes, populationTraffic: this.populationTraffic.save(), managedWalkers: this.managedWalkers ? true : undefined, hero, cars, people, driven, mission, stage, money, wanted, search, lastSeen, elapsed, unseen, searchTime, tramTime, savedCar, jumpVelocity, transition, exchange, railRate, depotHold: this.depotHold, freight: this.cargoRail.save() });
+        return copy({ v: 1, winterOrders: 1, respondingPatrols: this.responders, pursuitState: this.patrolFoot.save(), streetState: this.street.save(), districtPursuit, pursuitContact, lastSeenMotion, cityLife: this.cityLife.save(), tramRider: this.tramRider.save(), motorPool: this.motorPool.save(), residence: this.home.save(), brokenFixtures: this.brokenFixtures, streetIncidents: this.streetIncidents.crashes, populationTraffic: this.populationTraffic.save(), managedWalkers: this.managedWalkers ? true : undefined, hero, cars, people, driven, mission, stage, money, wanted, search, lastSeen, elapsed, unseen, searchTime, tramTime, savedCar, jumpVelocity, transition, exchange, railRate, depotHold: this.depotHold, freight: this.cargoRail.save() });
     }
     snapshot() { return { ...this.core(), checkpoint: copy(this.checkpoint) }; }
     restore(s) {
@@ -30273,7 +33300,9 @@ class Simulation {
         this.streetPeople = this.people.filter(p => !p.onboard);
         this.driven = this.cars.some(c => c.id === d.driven && !c.police) ? d.driven : null;
         this.mission = (0, sim_navigation_js_1.clamp)(Math.floor(finite(d.mission, 0)), 0, 3);
-        this.stage = (0, sim_navigation_js_1.clamp)(Math.floor(finite(d.stage, 0)), 0, 2);
+        this.stage = (0, sim_navigation_js_1.clamp)(Math.floor(finite(d.stage, 0)), 0, this.mission === 1 ? 3 : 2);
+        if (!d.winterOrders && this.mission === 1 && this.stage >= 1)
+            this.stage = 3; // The accepted van in earlier saves was already running.
         this.money = Math.max(0, Math.round(finite(d.money, 0)));
         this.wanted = (0, sim_navigation_js_1.clamp)(Math.floor(finite(d.wanted, 0)), 0, 3);
         const patrols = this.cars.filter(c => c.police).map(c => c.id);
@@ -30295,7 +33324,7 @@ class Simulation {
         this.elapsed = Math.max(0, finite(d.elapsed, 0));
         for (const car of this.cars)
             (0, traffic_bypass_js_1.restoreTrafficManeuver)(car, sim_navigation_js_1.lanes[car.lane], this.elapsed);
-        (0, collision_js_1.bindMarketTables)(this.cars, (0, exploration_layout_js_1.marketLayouts)(this.elapsed));
+        (0, collision_js_1.bindMarketTables)(this.cars, (0, exploration_layout_js_1.marketLayouts)(this.elapsed, this.cityCalendarMinutes));
         this.brokenFixtures = (0, fixtures_js_1.restoreFixtures)(d.brokenFixtures, this.elapsed);
         this.streetIncidents.restore(d.streetIncidents, this.elapsed);
         (0, collision_js_3.bindRepairRig)(this.cars, this.cityLife.repair ? (0, city_life_js_1.repairPose)(this.cityLife.repair, this.elapsed) : null);
@@ -30412,9 +33441,9 @@ class Simulation {
     district() { return this.home.avatar ? (0, house_layout_js_1.houseRoom)(this.home.avatar.x, this.home.avatar.z, this.home.avatar.y) : (0, world_layout_js_1.districtAt)(this.hero.x, this.hero.z); }
     objective() {
         const goals = [
-            ['Заберите блок стрелок на рынке', 'Установите блок у диспетчерской', 'Дождитесь прохода трамвая'],
-            ['Найдите повреждённый фургон у депо', 'Доставьте фургон к гаражу'],
-            ['Заберите кассету у Инны на рынке', 'Скройтесь от патруля', 'Отнесите кассету Лёше во дворах']
+            ['Заберите запасное реле у Инны на рынке', 'Передайте реле путейцу у стрелки депо', 'Дождитесь контрольного прохода трамвая'],
+            ['Проверьте заглохший фургон у депо', 'Заберите заряженный аккумулятор у Канальных гаражей', 'Установите аккумулятор в фургон', 'Доставьте фургон к гаражу'],
+            ['Заберите запись смены у Инны', 'Прослушайте переговоры смены у диспетчерской', 'Сверьте распоряжение с вагоном в тупике Восточной']
         ];
         return this.mission < 3 ? { ...exports.campaign[this.mission], goal: goals[this.mission][this.stage] ?? goals[this.mission][0] } : { title: 'Свободный город', goal: 'Исследуйте район', reward: 0 };
     }
@@ -30423,35 +33452,32 @@ class Simulation {
             return null;
         let p;
         if (this.mission === 0)
-            p = this.stage === 0 ? world_layout_js_1.places.market : world_layout_js_1.places.depot;
+            p = this.stage === 0 ? world_layout_js_1.places.market : this.stage === 1
+                ? this.people.find(person => person.role === 'dispatcher') : world_layout_js_1.places.depot;
         if (this.mission === 1)
-            p = this.stage === 0 ? this.cars.find(c => c.id === 'service-van') : world_layout_js_1.places.garage;
+            p = this.stage === 0 || this.stage === 2 ? this.cars.find(c => c.id === 'service-van') : world_layout_js_1.places.garage;
         if (this.mission === 2)
-            p = this.stage === 0 ? world_layout_js_1.places.market : world_layout_js_1.places.hideout;
+            p = [world_layout_js_1.places.market, world_layout_js_1.places.depot, { x: 115, z: 12.2 }][this.stage];
         if (!p)
             return null;
-        return { x: p.x, z: p.z, label: this.mission === 2 && this.stage === 1 ? 'Панельные дворы' : this.objective().goal };
+        return { x: p.x, z: p.z, label: this.objective().goal };
     }
     missionAction() {
         const target = this.target();
-        if (!target || !near(this.hero, target, this.mission === 1 && this.stage === 1 ? 7.1 : 4.4) || !(0, sim_navigation_js_1.visible)(this.hero, target))
+        if (!target || !near(this.hero, target, this.mission === 1 && this.stage === 3 ? 7.1 : 4.4) || !(0, sim_navigation_js_1.visible)(this.hero, target))
             return '';
         const car = this.activeCar();
         if (car && Math.abs(car.speed) > 2.8)
             return '';
-        if (this.mission === 0 && this.stage === 0)
-            return car ? 'Выйти' : 'Забрать блок';
-        if (this.mission === 0 && this.stage === 1)
-            return this.driven ? 'Выйти' : 'Установить блок';
-        if (this.mission === 1 && this.stage === 0)
-            return car && car.id !== 'service-van' ? 'Выйти' : 'Принять фургон';
-        if (this.mission === 1 && this.stage === 1 && car?.id === 'service-van')
-            return 'Сдать фургон';
-        if (this.mission === 2 && this.stage === 0)
-            return 'Забрать кассету';
-        if (this.mission === 2 && this.stage === 2 && !this.wanted)
-            return 'Передать кассету';
-        return '';
+        if (this.mission === 1 && this.stage === 3)
+            return car?.id === 'service-van' ? 'Сдать фургон' : '';
+        const actions = [
+            ['Забрать реле у Инны', 'Передать реле путейцу', ''],
+            ['Проверить стартер', 'Забрать аккумулятор', 'Установить аккумулятор'],
+            ['Забрать запись смены', 'Прослушать переговоры', 'Сверить номер вагона']
+        ];
+        const label = actions[this.mission]?.[this.stage] ?? '';
+        return label && car ? 'Выйти' : label;
     }
     tramHint() {
         if (this.driven || this.home.inside || this.home.door || this.transition || this.exchange)
@@ -30510,9 +33536,9 @@ class Simulation {
         if (this.mission === 1)
             this.emit('speech', 'Стрелка встала! Тоня ищет водителя для фургона у депо. Адрес в телефоне.', 'Семён', 'reward1');
         if (this.mission === 2)
-            this.emit('speech', 'Фургон вернулся. Инна на рынке просит забрать старую кассету.', 'Тоня', 'garage');
+            this.emit('speech', 'Фургон вернулся. Инна просит проверить запись дежурной смены.', 'Тоня');
         if (this.mission === 3)
-            this.emit('speech', 'Запись у меня. Пусть весь район услышит, кому продали нашу линию.', 'Лёша', 'finale');
+            this.emit('speech', 'Совпало. Вагон 07 отвели в тупик по распоряжению дежурной из-за обледенения стрелки. В журнал внесли время и номер пути.', 'Лидия');
         this.saveCheckpoint();
     }
     interactionOptions() {
@@ -30560,30 +33586,37 @@ class Simulation {
             return;
         }
         switch (action) {
-            case 'Забрать блок':
+            case 'Забрать реле у Инны':
                 this.beginExchange('vendor');
                 break;
-            case 'Установить блок':
+            case 'Передать реле путейцу':
                 this.beginExchange('dispatcher');
                 break;
-            case 'Принять фургон': {
+            case 'Проверить стартер':
+                this.emit('sound', 'switch');
+                this.advance('Стартер щёлкает, лампы гаснут. На зарядной стойке Канальных гаражей есть батарея для этого фургона.', 'Тоня');
+                break;
+            case 'Забрать аккумулятор':
+                this.advance('На бирке номер сменного фургона. Батарея заряжена. Возвращайся к машине у депо.', 'Мастер');
+                break;
+            case 'Установить аккумулятор': {
                 const van = this.cars.find(c => c.id === 'service-van');
-                if (this.driven === van.id)
-                    this.acceptVan();
-                else
-                    this.enter(van);
+                if (van) van.health = Math.max(72, van.health);
+                this.emit('sound', 'switch');
+                this.advance('Лампа зарядки погасла. Отгони фургон в гараж на проверку.', 'Тоня');
                 break;
             }
             case 'Сдать фургон':
                 this.pay();
                 break;
-            case 'Забрать кассету':
-                this.stage = 1;
-                this.report(true);
-                this.emit('speech', 'Здесь запись о закрытии депо. Патруль уже у рынка. Передай кассету Лёше во дворах.', 'Инна', 'chase');
-                this.saveCheckpoint();
+            case 'Забрать запись смены':
+                this.advance('Семён оставил кассету вечерней смены. В диспетчерской депо есть рабочий магнитофон.', 'Инна');
                 break;
-            case 'Передать кассету':
+            case 'Прослушать переговоры':
+                this.emit('sound', 'switch');
+                this.advance('«Дежурная — седьмому. Стрелка обледенела. По распоряжению 18-Б уходите в тупик Восточной». Сверьте бортовой номер на месте.', 'Запись смены', 'shift-siding');
+                break;
+            case 'Сверить номер вагона':
                 this.pay();
                 break;
             case 'Сесть': {
@@ -30632,9 +33665,6 @@ class Simulation {
         if (near(mechanic, this.hero, 9))
             mechanic.lookUntil = this.elapsed + 4;
     }
-    acceptVan() {
-        this.advance('Батарея держит, но кузов помят. Довези до гаража у канала.', 'Тоня', 'delivery');
-    }
     beginExchange(role) {
         const person = this.people.find(p => p.role === role), h = this.hero;
         const angle = Math.atan2(h.z - person.z, h.x - person.x);
@@ -30664,7 +33694,7 @@ class Simulation {
         this.exchange = null;
         h.speed = 0;
         if (e.role === 'vendor')
-            this.advance('Держи блок. Семён ждёт у стрелки, севернее дворов.', 'Инна', 'market');
+            this.advance('Вот запасное реле. Передай Семёну у стрелки в депо до последнего вагона.', 'Инна');
         else {
             this.tramTime = 0;
             this.emit('sound', 'switch');
@@ -30774,7 +33804,13 @@ class Simulation {
         }
         this.emit('toast', entry ? 'У дверей нет свободного места' : 'Подъедьте к свободному месту');
     }
-    enter(c) { this.setTransition(c, 'enter'); }
+    enter(c) {
+        if (this.mission === 1 && this.stage < 3 && c.id === 'service-van') {
+            this.emit('toast', 'Аккумулятор разряжен. Проверьте фургон и найдите заряженную батарею.');
+            return;
+        }
+        this.setTransition(c, 'enter');
+    }
     leaveCar() {
         if (this.transition || this.exchange)
             return;
@@ -30940,8 +33976,6 @@ class Simulation {
         this.driven = c.id;
         Object.assign(h, { x: c.x, y: c.y, z: c.z, yaw: c.yaw });
         this.emit('toast', names[c.kind]);
-        if (this.mission === 1 && this.stage === 0 && c.id === 'service-van')
-            this.acceptVan();
     }
     garageCar() {
         if (!this.atGarage())
@@ -31071,7 +34105,7 @@ class Simulation {
         this.distantStep = this.distantClock >= (0, population_performance_js_1.distantPopulationTick)(this.populationPressure) ? this.distantClock : 0;
         if (this.distantStep)
             this.distantClock = 0;
-        (0, collision_js_1.bindMarketTables)(this.cars, (0, exploration_layout_js_1.marketLayouts)(this.elapsed));
+        (0, collision_js_1.bindMarketTables)(this.cars, (0, exploration_layout_js_1.marketLayouts)(this.elapsed, this.cityCalendarMinutes));
         this.motorPool.tick(this, dt);
         this.moveTram(dt);
         if (this.cargoRail.poses.length) {
@@ -31686,7 +34720,7 @@ class Simulation {
                 continue;
             }
             const home = homes.get(p.id) ?? p;
-            const itinerary = this.cityExtraGoals?.[p.id] ?? (ambient ? this.populationWalkers.goal(p) : commute ?? this.cityLife.goal(p, this.people, this.elapsed, dt, currentRail, minutes));
+            const itinerary = this.cityExtraGoals?.[p.id] ?? (ambient ? this.populationWalkers.goal(p) : commute ?? this.cityLife.goal(p, this.people, this.elapsed, dt, currentRail, minutes, this.cityCalendarMinutes));
             if (p.onboard)
                 continue;
             const walking = p.role === 'walker';
@@ -32074,14 +35108,10 @@ class Simulation {
             return;
         }
         if (this.search && this.searchTime > (0, patrol_plan_js_1.scanDuration)(this.wanted)) {
-            const districtPursuit = this.districtPursuit;
             this.finishPursuit(active);
             this.cityLife.note(this.elapsed, 'Розыск снят · ' + (0, world_layout_js_1.districtAt)(this.lastSeen.x, this.lastSeen.z));
-            if (this.mission !== 2 || this.stage !== 1)
-                this.emit('speech', 'Поиск окончен. Возвращаемся на маршрут.', 'Дежурный', 'patrol-clear');
+            this.emit('speech', 'Поиск окончен. Возвращаемся на маршрут.', 'Дежурный', 'patrol-clear');
             this.emit('toast', 'Розыск снят');
-            if (!districtPursuit && this.mission === 2 && this.stage === 1)
-                this.advance('Патруль ушёл. Жду во дворах за аркой.', 'Лёша', 'clear');
         }
     }
     resumePatrol(c, dt) {
@@ -33070,7 +36100,10 @@ const momentary = {
     siren: { text: 'Сирена патруля', priority: 3, range: 42, hold: 3, cooldown: 8 },
     warning: { text: 'Предупредительный сигнал', priority: 2, range: 18, hold: 2.6, cooldown: 3.5 }
 };
-const landmarkName = { substation: 'Гул подстанции', shutter: 'Дребезг роллеты', ice: 'Треск льда' };
+const landmarkName = { substation: 'Гул силовых машин', shutter: 'Дребезг роллеты', ice: 'Треск льда',
+    winch:'Тянет лебёдка парома', hydraulic:'Гудит гидравлика захвата', chain:'Цепь подъёмных ворот', dishes:'Звон посуды за окном',
+    vanStarter:'Фургон заводится на холодную', dog:'Собака за забором', door:'Хлопнула дверь подъезда', practice:'Репетиция в ДК', accordion:'Гармонь во дворе',
+    receiver:'Приёмник в гараже', flanges:'Скрип трамвая на повороте', joints:'Стук на рельсовых стыках' };
 const audible = .16;
 function directional(label, signal, near = 2.6) {
     return { text: label + ' · ' + (0, blackout_js_1.soundDirectionLabel)(signal.bearing, signal.distance, near), bearing: signal.distance < near ? undefined : signal.bearing };
@@ -33319,9 +36352,9 @@ function counterLight(parent) {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 64;
     const c = canvas.getContext('2d'), g = c.createRadialGradient(32, 32, 1, 32, 32, 32);
-    g.addColorStop(0, 'rgba(139,228,184,.73)');
-    g.addColorStop(.46, 'rgba(90,194,159,.47)');
-    g.addColorStop(1, 'rgba(66,153,132,0)');
+    g.addColorStop(0, 'rgba(245,212,160,.56)');
+    g.addColorStop(.46, 'rgba(194,158,116,.33)');
+    g.addColorStop(1, 'rgba(167,133,97,0)');
     c.fillStyle = g;
     c.fillRect(0, 0, 64, 64);
     const map = new T.CanvasTexture(canvas);
@@ -33370,9 +36403,13 @@ exports.addSpektrFrontage = function (b, light, sign, powered) {
     b.piece('box', roof.x, 2.916, roof.z, roof.w - .08, .052, roof.d - .12, '#b2c1b7', 0, 0, .12);
     b.box(roof.x, 2.64, lip, roof.w, .36, .16, '#325957');
     b.box(roof.x, 2.80, lip + .085, roof.w, .052, .045, '#a0afa2');
+    for (let lx = -roof.w * .5 + .24; lx < roof.w * .5; lx += .55) {
+        b.piece('box', roof.x + lx, 2.946, roof.z, .24, .025, roof.d - .16, '#8b5c4f', 0, 0, .12);
+        b.box(roof.x + lx, 2.64, lip + .084, .24, .34, .014, '#a36a56');
+    }
     for (const [i, s] of stalls.entries()) {
         b.box(s.x, 2.53, lip - .29, s.w * .80, .09, .23, steel);
-        light.lamp(s.x, 2.477, lip - .29, s.w * .76, .043, .14, '#b5eed3');
+        light.lamp(s.x, 2.477, lip - .29, s.w * .76, .043, .14, '#ffe0af');
         sign('0' + (i + 1), '', '#e5d3a0', '#325957', s.x - s.w * .39, 2.625, lip + .086, .49, .235);
         for (const side of [-1, 1])
             b.beam(s.x + side * s.w * .41, 2.16, front + .12, s.x + side * s.w * .41, 2.62, lip - .22, .072, steel, true);
@@ -33392,7 +36429,7 @@ exports.addSpektrFrontage = function (b, light, sign, powered) {
     b.beam(blade.x, 3.80, front - .14, blade.x, 4.59, front + .89, .09, steel, true);
     for (const side of [-1, 1])
         sign('СПЕКТР', '', '#e1eed9', '#26514d', blade.x + side * (blade.w * .5 + .005), signY, blade.z, blade.d - .13, signH - .19, side * Math.PI / 2);
-    light.lamp(blade.x, signY, blade.z + blade.d * .5 + .012, blade.w + .012, signH - .12, .04, '#a1e9bd');
+    b.box(blade.x, signY, blade.z + blade.d * .5 + .012, blade.w + .012, signH - .12, .04, '#8b8777');
     // One open component bin and two cable reels on the western counter.
     const x = stalls[0].x - stalls[0].w * .255, z = front + .66;
     b.box(x, 1.44, z, 1.56, .17, .60, '#626e62');
@@ -33881,7 +36918,7 @@ function isCourse(id) { return Object.hasOwn(exports.cityCourses, id); }
 exports.courierRoad = [{ x: 46, z: 100 }, { x: 46, z: 65 }, { x: 46, z: 30 }, { x: 46, z: -8 }, { x: 46, z: -39 }];
 exports.courierWalk = [{ x: 44, z: -40 }, { x: 39, z: -42 }, { x: 35, z: -39 }, { x: 35, z: -21 }, { x: 28, z: -15 }];
 exports.archiveSpots = ['archive0', 'archive1', 'archive2'];
-exports.archiveNames = ['Лента метеопоста 2060', 'Сменный журнал арены 2073', 'Снимок старой лесной линии 2059'];
+exports.archiveNames = ['Лента метеопоста 1995', 'Сменный журнал арены 2008', 'Снимок старой лесной линии 1994'];
 exports.eventSpots = [
     { id: 88, place: 'roadsideHeat', label: 'Помочь у перегретой машины' },
     { id: 89, place: 'parcelFind', label: 'Поднять посылку из снега' },
@@ -34048,7 +37085,8 @@ function createCityStoryVisuals(scene) {
         }
         if (terminal)
             terminal.visible = showTerminal;
-        const showTram = active?.id === 78 && active.stage >= 3 && near(f, story_city_catalog_js_1.cityPlaces.railDepot.x, story_city_catalog_js_1.cityPlaces.railDepot.z, 90);
+        const visitSiding = f.campaignMission === 2 || active?.id === 78 && active.stage >= 3;
+        const showTram = visitSiding && near(f, story_city_catalog_js_1.cityPlaces.railDepot.x, story_city_catalog_js_1.cityPlaces.railDepot.z, 90);
         if (showTram && !tram) {
             tram = spareTram();
             group.add(tram);
@@ -34577,7 +37615,7 @@ function cityAct(s, key, f, engine) {
                 engine.checkpoint();
                 return engine.notice('Находка в журнале · ' + story_city_catalog_js_1.archiveNames[story_city_catalog_js_1.archiveSpots.indexOf(key)] + '.');
             }
-            return engine.done('Три записи внесены в архив внешнего кольца. В 2060-м метеопост измерял первый зимний ветер. Арена принимала Сменные игры 2073 года. Старый лесной путь открылся в 2059-м.');
+            return engine.done('Три записи внесены в архив внешнего кольца. В 1995-м метеопост измерял первый зимний ветер. Арена принимала Сменные игры 2008 года. Старый лесной путь открылся в 1994-м.');
         case 81:
             if (n === 0)
                 return engine.next('В объявлении только размытый номер и слово «Север-8». Спроси местных.');
@@ -34707,8 +37745,8 @@ exports.portals = {
     roof: at('Канальная, 23 · подъём на крышу', -34.96, 17),
 };
 exports.oldPhotos = [
-    { at: 'photoA', year: 2051, title: 'Стрела над портом', heading: Math.atan2(-(80 - 53.5), -(97 - 56.4)), clue: 'С северного устоя Портового моста за двумя передними опорами крана К-14 видна его стрела.', story: 'Негатив подписан крановщицей Зоей. Её кран первым разгружал детали для трамвайной линии.' },
-    { at: 'photoB', year: 2060, title: 'Две сестры', heading: Math.atan2(-(-1 + 48), -(-94 + 114)), clue: 'У западной проходной ТЭЦ разворот дороги выводит обе градирни в один кадр.', story: 'Местные называли градирни Вера и Надя. У каждой смены был свой любимый башенный гудок.' },
+    { at: 'photoA', year: 1986, title: 'Стрела над портом', heading: Math.atan2(-(80 - 53.5), -(97 - 56.4)), clue: 'С северного устоя Портового моста за двумя передними опорами крана К-14 видна его стрела.', story: 'Негатив подписан крановщицей Зоей. Её кран первым разгружал детали для трамвайной линии.' },
+    { at: 'photoB', year: 1995, title: 'Две сестры', heading: Math.atan2(-(-1 + 48), -(-94 + 114)), clue: 'У западной проходной ТЭЦ разворот дороги выводит обе градирни в один кадр.', story: 'Местные называли градирни Вера и Надя. У каждой смены был свой любимый башенный гудок.' },
 ];
 
 },
@@ -35557,7 +38595,7 @@ function evidence(jobs) {
     return lines.length ? `<ul class="k-job-evidence">${lines.map(datum).join('')}</ul>` : '';
 }
 function wagonPhoto() {
-    return '<svg class="k-job-photo" viewBox="0 0 220 110" aria-label="Архивный снимок платформы. Двойной шов поднимается к лестнице."><rect width="220" height="110" fill="#c3b79b"/><path d="M0 68h220v42H0" fill="#8e8777"/><path d="M117 52q8-19 4-35h12q-3 16 5 35m11 0q6-16 4-29h10q-2 13 5 29" fill="#8c8575"/><path d="M20 45l17-10h128l20 10v31H20z" fill="#777967" stroke="#494a3d"/><path d="M31 58h137m-130-8v22m21-22v22m62-22v22m23-22v22m19-24v26m7-26v26m-7-17h7m-7 7h7" fill="none" stroke="#aaa28c"/><path d="m79 70 34-19m-32 21 34-19" stroke="#dec8a0" stroke-width="2"/><g fill="#4b4d41"><circle cx="47" cy="80" r="6"/><circle cx="61" cy="80" r="6"/><circle cx="144" cy="80" r="6"/><circle cx="158" cy="80" r="6"/></g><text x="8" y="103" fill="#e2dcc7" font-size="8" font-family="monospace">ВОСТОЧНАЯ  /  РЕМОНТ 2078</text></svg>';
+    return '<svg class="k-job-photo" viewBox="0 0 220 110" aria-label="Архивный снимок платформы. Двойной шов поднимается к лестнице."><rect width="220" height="110" fill="#c3b79b"/><path d="M0 68h220v42H0" fill="#8e8777"/><path d="M117 52q8-19 4-35h12q-3 16 5 35m11 0q6-16 4-29h10q-2 13 5 29" fill="#8c8575"/><path d="M20 45l17-10h128l20 10v31H20z" fill="#777967" stroke="#494a3d"/><path d="M31 58h137m-130-8v22m21-22v22m62-22v22m23-22v22m19-24v26m7-26v26m-7-17h7m-7 7h7" fill="none" stroke="#aaa28c"/><path d="m79 70 34-19m-32 21 34-19" stroke="#dec8a0" stroke-width="2"/><g fill="#4b4d41"><circle cx="47" cy="80" r="6"/><circle cx="61" cy="80" r="6"/><circle cx="144" cy="80" r="6"/><circle cx="158" cy="80" r="6"/></g><text x="8" y="103" fill="#e2dcc7" font-size="8" font-family="monospace">ВОСТОЧНАЯ  /  РЕМОНТ 2013</text></svg>';
 }
 function jobBoard(jobs, f) {
     const j = (0, story_catalog_js_1.districtJob)(jobs.selected) ?? story_catalog_js_1.districtCatalog[0], a = jobs.active, r = jobs.receipt(j.id), isActive = a?.id === j.id, target = isActive ? jobs.target(f) : null;
@@ -35976,7 +39014,7 @@ class DistrictJobs {
                 break;
             case 69:
                 if (!s.stage)
-                    at('foyer', 'map', 'Сверить план 2060 года');
+                    at('foyer', 'map', 'Сверить план 1995 года');
                 if (s.stage === 1)
                     at('station', 'ask', 'Расспросить кондуктора');
                 if (s.stage === 2)
@@ -37755,7 +40793,7 @@ const lines = {
 function ico(name, size = 20) {
     return `<svg aria-hidden="true" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${lines[name] ?? ''}</svg>`;
 }
-exports.logo = '<svg aria-hidden="true" viewBox="0 0 37 36" width="37" height="36" fill="currentColor"><path d="M0 0h10v15L23 0h12L19 18l16 18H22L10 21v15H0z"/><path fill="#e8a34c" d="M28 19h8v8z"/></svg>';
+exports.logo = '<svg aria-hidden="true" viewBox="0 0 40 32" width="38" height="31"><rect x="1" y="2" width="38" height="28" rx="2" fill="#e2d9b9" stroke="#635b4d"/><path fill="#383e37" d="M6 8h13v4l-6 12H8l7-12H6zm15 0h13v4l-6 12h-5l7-12h-9z"/></svg>';
 
 },
 "game/ui-layout.js": function(require, module, exports) {
@@ -37924,24 +40962,31 @@ function streetPlan(large) {
     const overview = region_layout_js_1.regionSites.map(s => ({ x: s.x, z: s.z, lines: districtText[s.id] ?? [region_layout_js_1.regionDistrictNames[s.district]], label: region_layout_js_1.regionLandmarks.find(l => l.x === s.stop.x && l.z === s.stop.z)?.label }));
     overview.push({ x: 0, z: -76, lines: ['Канальный', 'район'], label: 'Трамвайное депо' });
     const districts = overview.map(({ x, z, lines, label }, index) => `<g transform="translate(${x} ${z})" ${label ? `data-map-place="${escape(label)}" data-sector="${index >= 4 && index < region_layout_js_1.regionSites.length ? "outer" : "inner"}"` : ''}><text>${lines.map((s, i) => `<tspan x="0" dy="${i ? '1.04em' : '0'}">${escape(s)}</tspan>`).join('')}</text></g>`).join('');
-    return `<rect x="${minX}" y="${minZ}" width="${maxX - minX}" height="${maxZ - minZ}" fill="#1d2e2b" stroke="#65796c"/>
-    <path d="${mapGrid()}" fill="none" stroke="#344a42" stroke-width=".55"/>
-    <rect x="${minX}" y="${world_expansion_layout_js_1.canal.north}" width="${maxX - minX}" height="${world_expansion_layout_js_1.canal.south - world_expansion_layout_js_1.canal.north}" fill="#375a65"/>
-    <path d="${[...world_layout_js_1.apartments, ...Object.values(world_layout_js_1.buildings), ...world_expansion_layout_js_1.expansionBuildings, ...region_layout_js_1.regionBuildings].map(box).join('')}" fill="#43584e" stroke="#809083" stroke-width=".57"/>
-    <path d="${require("./school-site.js").schoolShell.map(box).join('')}" fill="#48667c" stroke="#a6c9dc" stroke-width=".65"/>
-    <path d="${region_layout_js_1.regionSites.map(box).join('')}" fill="#7b6c50" stroke="#e3b36f" stroke-width="1.25"/>
-    <g fill="none" stroke="#63736b" stroke-linecap="butt">${lanes()}</g>
-    <path d="${roads.map(exports.mapSegment).join('')}" fill="none" stroke="#9ba99a" stroke-width=".55" stroke-dasharray="2.4 2"/>
-    <path d="${region_layout_js_1.regionPaths.map(exports.mapSegment).join('')}" fill="none" stroke="#8cb3a0" stroke-width="1.6" stroke-dasharray="2.4 1.8"/>
-    <path d="${trail(market_quarter_layout_js_1.quarterWalkRoute) + trail(market_quarter_layout_js_1.quarterChaseWalk)}" fill="none" stroke="#8ec9ba" stroke-width="1.05" stroke-dasharray="1.3 .62"/>
+    const roadNames = roads.filter(r => Math.hypot(r.x2-r.x1,r.z2-r.z1) > 50).map(r => {
+        const x=(r.x1+r.x2)/2, z=(r.z1+r.z2)/2, vertical=Math.abs(r.z2-r.z1)>Math.abs(r.x2-r.x1);
+        return `<text transform="translate(${x} ${z}) rotate(${vertical ? -90 : 0})">${escape(r.name)}</text>`;
+    }).join('');
+    const numbers = world_layout_js_1.apartments.map(a => `<text x="${a.x}" y="${a.z+1.3}">${a.id}</text>`).join('');
+    const stops = Object.values(world_railway_js_1.tramStops);
+    const stopSigns = stops.filter(p => Number.isFinite(p.x)).map(p => `<g transform="translate(${p.x} ${p.z})"><rect x="-1.4" y="-1.4" width="2.8" height="2.8" rx=".3"/><text y=".9">Т</text></g>`).join('');
+    return `<rect x="${minX}" y="${minZ}" width="${maxX - minX}" height="${maxZ - minZ}" fill="#d6d4c9" stroke="#65796c"/>
+    <path d="${mapGrid()}" fill="none" stroke="#bebdb1" stroke-width=".55"/>
+    <rect x="${minX}" y="${world_expansion_layout_js_1.canal.north}" width="${maxX - minX}" height="${world_expansion_layout_js_1.canal.south - world_expansion_layout_js_1.canal.north}" fill="#9ebac0"/>
+    <path d="${[...world_layout_js_1.apartments, ...Object.values(world_layout_js_1.buildings), ...world_expansion_layout_js_1.expansionBuildings, ...region_layout_js_1.regionBuildings].map(box).join('')}" fill="#a99c87" stroke="#7b7367" stroke-width=".57"/>
+    <path d="${require("./school-site.js").schoolShell.map(box).join('')}" fill="#a9aba1" stroke="#6e817b" stroke-width=".65"/>
+    <path d="${region_layout_js_1.regionSites.map(box).join('')}" fill="#b0a18c" stroke="#896f50" stroke-width="1.25"/>
+    <g fill="none" stroke="#f4efdc" stroke-linecap="butt">${lanes()}</g>
+    <path d="${roads.map(exports.mapSegment).join('')}" fill="none" stroke="#b2a797" stroke-width=".55" stroke-dasharray="2.4 2"/>
+    <path d="${region_layout_js_1.regionPaths.map(exports.mapSegment).join('')}" fill="none" stroke="#6e8171" stroke-width="1.6" stroke-dasharray="2.4 1.8"/>
+    <path d="${trail(market_quarter_layout_js_1.quarterWalkRoute) + trail(market_quarter_layout_js_1.quarterChaseWalk)}" fill="none" stroke="#627b6b" stroke-width="1.05" stroke-dasharray="1.3 .62"/>
     <path d="M${market_quarter_layout_js_1.marketIceSlip} 58.5V89.2" fill="none" stroke="#d3b58a" stroke-width="1.12" stroke-dasharray="1.4 .72"/>
     <path d="M${cargo_rail_js_1.cargoTrack.west} ${cargo_rail_js_1.cargoTrack.z}H${cargo_rail_js_1.cargoTrack.east}" fill="none" stroke="#c2a187" stroke-width=".85" stroke-dasharray="1.4 .92"/>
     <path d="M${cargo_rail_js_1.cargoFootbridge.x} ${cargo_rail_js_1.cargoFootbridge.north}V${cargo_rail_js_1.cargoFootbridge.south}" fill="none" stroke="#9bcabe" stroke-width=".9"/>
     <g fill="none" stroke="#728776" stroke-width="1.9"><path d="M-87 43h39l15-14M-18 31v-9l-2-5V-24l11-13h52M-48 0h90M-48-21h41l9-7h17M-2 31V-42M42 47h38"/></g>
-    <path d="M-88 14H82" fill="none" stroke="#86948b" stroke-width="1.9"/><path d="${tram}" fill="none" stroke="#d1ab70" stroke-width=".95"/>
+    <path d="M-88 14H82" fill="none" stroke="#565d56" stroke-width="1.9"/><path d="${tram}" fill="none" stroke="#d1ab70" stroke-width=".95"/>
     <g stroke="#a8b8aa" stroke-width=".65">${world_expansion_layout_js_1.bridges.map(b => `<path d="M${b.x - 6.7} 58v32m13.4-32v32"/>`).join('')}</g>
     <g transform="translate(${house_layout_js_1.houseEntry.x} ${house_layout_js_1.houseEntry.z})" stroke="#b0e7d1" stroke-width="1.15" fill="#2c594e"><path d="m-3.2-.2 3.2-2.8L3.2-.2V3h-6.4Z"/><path d="M-.5 3V.6H1V3"/></g>
-    ${large ? `<g class="k-atlas-places" text-anchor="middle" font-family="sans-serif" fill="#e3ebe2" paint-order="stroke" stroke="#152621" stroke-linejoin="round">${named}</g><g class="k-atlas-districts" text-anchor="middle" font-family="sans-serif" font-weight="700" fill="#f1ead5" paint-order="stroke" stroke="#152621" stroke-linejoin="round">${districts}</g>` : ''}`;
+    ${large ? `<g class="k-atlas-print" text-anchor="middle"><g class="k-atlas-addresses">${numbers}</g><g class="k-atlas-street-names">${roadNames}</g><g class="k-atlas-stop-sign">${stopSigns}</g></g><g class="k-atlas-places" text-anchor="middle" font-family="sans-serif" fill="#25322d" paint-order="stroke" stroke="#eae6d9" stroke-linejoin="round">${named}</g><g class="k-atlas-districts" text-anchor="middle" font-family="sans-serif" font-weight="700" fill="#333c33" paint-order="stroke" stroke="#eae6d9" stroke-linejoin="round">${districts}</g>` : ''}`;
 }
 
 },
@@ -38046,7 +41091,7 @@ function paintMap(svg, state) {
     if (routesShown.get(paths) !== route) {
         routesShown.set(paths, route);
         const line = (points, color, dash = '') => points.length ? `<path d="${points.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(2) + ' ' + p.z.toFixed(2)).join(' ')}" stroke="${color}" stroke-width="${large ? 2 : 1.4}" vector-effect="non-scaling-stroke" stroke-dasharray="${dash}"/>` : '';
-        paths.innerHTML = route ? line(route.path, route.mode === 'drive' ? '#efa959' : '#99dfcb', route.mode !== 'drive' ? '.4 3' : '') + line(route.lastMile, '#99dfcb', '.4 3') + (route.tram ? line(route.tram,'#f4cf7a') + route.tram.filter((p,i)=>i%2===0).map(p=>`<path d="M-1.25 0H1.25" transform="translate(${p.x} ${p.z}) rotate(${p.yaw*180/Math.PI})" stroke="#f4cf7a" stroke-width=".45"/>`).join('') : '') : '';
+        paths.innerHTML = route ? line(route.path, route.mode === 'drive' ? '#a64525' : '#29674f', route.mode !== 'drive' ? '.4 3' : '') + line(route.lastMile, '#29674f', '.4 3') + (route.tram ? line(route.tram,'#71513a') + route.tram.filter((p,i)=>i%2===0).map(p=>`<path d="M-1.25 0H1.25" transform="translate(${p.x} ${p.z}) rotate(${p.yaw*180/Math.PI})" stroke="#71513a" stroke-width=".45"/>`).join('') : '') : '';
     }
     const pins = one('.k-map-marks'), marks = inside ? undefined : state.marks;
     const destinations = large && !inside ? state.districtDestinations : undefined;
@@ -38479,7 +41524,7 @@ const population_profile_js_1 = require("./population-profile.js");
 const defaults = {
     battery:false, toggleHolds:false, freeOrbit:false, keyboardLook:1, cameraStep:0, carFollow:1, bindings:{}, cameraDistance: 'normal', steerStick: false, radioStation: 'district', soundProfile: 'headphones',
     pedestrianDensity: population_profile_js_1.defaultPopulation.pedestrians, trafficDensity: population_profile_js_1.defaultPopulation.traffic,
-    sensitivity: 1, buttonSize: 1, volume: .65, minimap: true, radio: true, carSensitivity: 1, cabinSensitivity: .8, shoulder: 1, haptics: .5, impactMotion: .7, autoSprint: true, compactHud: false, leftHanded: false, subtitleSize: 1, goalSize: 1, layouts: (0, ui_layout_js_1.newLayouts)(), marks: []
+    sensitivity: 1, buttonSize: 1, volume: .65, minimap: true, radio: true, carSensitivity: 1, cabinSensitivity: .8, shoulder: 1, haptics: .5, impactMotion: .7, autoSprint: true, compactHud: true, leftHanded: false, subtitleSize: 1, goalSize: 1, layouts: (0, ui_layout_js_1.newLayouts)(), marks: []
 };
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const money = (value) => `${Math.round(value).toLocaleString('ru-RU')} ₽`;
@@ -38497,11 +41542,7 @@ const controlSelector = 'button,input,select,textarea,summary,[tabindex="0"]';
 const controlAttributes = ['id', 'data-action', 'data-value', 'data-setting', 'data-map-focus', 'data-map-place', 'data-color', 'data-pin-label'];
 const canFocus = el => el.offsetWidth > 0 && !el.disabled && el.tabIndex !== -1;
 const campaign = ['Последний рейс', 'Холодный пуск', 'Чужая частота'];
-const briefs = [
-    'Семён, диспетчер депо: «Последний трамвай уже на линии. Забери блок на рынке, пока вагон не дошёл до стрелки».',
-    'Мастер гаража: «Фургон встал у депо. Довези его до мастерской, пока аккумулятор ещё держит заряд».',
-    'Лёша: «Забери кассету на рынке. Если заметишь патруль, оторвись от него до встречи во дворах».',
-];
+const shiftBook = require('./shift-journal.js');
 function createUI(host, onAction) {
     const root = document.createElement('div');
     root.className = 'k-ui';
@@ -38517,10 +41558,10 @@ function createUI(host, onAction) {
     };
     root.innerHTML = `<div class="k-look" tabindex="0" role="group" aria-label="Игровое поле"></div><div class="k-top-shade"></div><div class="k-bottom-shade"></div>
     <header class="k-brand"><span class="k-emblem">${ui_icons_js_1.logo}</span><span class="k-title">КОНТУР<span>–77</span></span><time class="k-clock" aria-label="Игровое время" hidden></time></header>
-    <button class="k-mission" type="button" data-action="phone" title="Открыть журнал заказов">
+    <button class="k-mission" type="button" data-action="phone" title="Открыть журнал смены">
       <span class="k-mission-top"><span class="k-mission-kind">Заказ</span><span class="k-step">1 / 3</span></span>
       <strong class="k-mission-title">Последний рейс</strong>
-      <span class="k-objective"><span class="k-diamond" aria-hidden="true"></span><span class="k-objective-text">Заберите блок на рынке</span><span class="k-objective-distance" title="До цели по прямой" hidden></span></span>
+      <span class="k-objective"><span class="k-diamond" aria-hidden="true"></span><span class="k-objective-text">Заберите реле у Инны</span><span class="k-objective-distance" title="До цели по прямой" hidden></span></span>
     </button>
     <aside class="k-right-rail">
       <div class="k-tools"><div class="k-wallet" aria-label="Баланс"><span class="k-money">0 ₽</span></div>${iconButton('phone', 'phone', 'Телефон · J')}${iconButton('pause', 'pause', 'Пауза · Esc')}</div>
@@ -38562,7 +41603,7 @@ function createUI(host, onAction) {
         driving: false,
         missionIndex: 0,
         missionTitle: 'Последний рейс',
-        objective: 'Заберите блок на рынке',
+        objective: 'Заберите реле у Инны',
     };
     const settings = { ...defaults, impactMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : defaults.impactMotion,
         soundProfile: window.matchMedia('(pointer: coarse)').matches ? 'speaker' : 'headphones', marks: [], layouts: (0, ui_layout_js_1.newLayouts)() };
@@ -38648,7 +41689,7 @@ function createUI(host, onAction) {
         const mark = selected && settings.marks.find(m => m.x === selected.x && m.z === selected.z);
         const end = routeTarget();
         const summary = navEnd && navLeg ? (hasRoute() ? `${escape(navEnd.label)} · ${navMode === 'drive' ? 'на машине' : navMode === 'tram' ? 'трамвай 07' : 'пешком'} ${navLeg.metres} м${navLeg.walkMetres ? ' + ' + navLeg.walkMetres + ' м пешком' : ''}` : 'Нет доступного пути') : '';
-        return `<div class="k-map-options">${end ? `<div class="k-route-actions"><span>Маршрут · ${escape(end.label)}</span><button type="button" data-action="nav-walk">Пешком</button><button type="button" data-action="nav-drive">На машине</button><button type="button" data-action="nav-tram">Трамваем</button></div>` : ''}<div class="k-pin-info"><button type="button" data-action="pin-here">Подписать точку</button><span>${summary || 'I J K L — сдвинуть точку. Удержание пальцем — поставить метку.'}</span>${mark ? `<button type="button" data-action="pin-remove" data-value="${mark.id}">Удалить метку</button>` : ''}${navEnd ? '<button type="button" data-action="nav-clear">Сбросить путь</button>' : ''}</div></div>`;
+        return `<div class="k-map-options">${selected?.approach ? '<p class="k-map-approach">'+escape(selected.approach)+'</p>' : ''}${end ? `<div class="k-route-actions"><span>Маршрут · ${escape(end.label)}</span><button type="button" data-action="nav-walk">Пешком</button><button type="button" data-action="nav-drive">На машине</button><button type="button" data-action="nav-tram">Трамваем</button></div>` : ''}<div class="k-pin-info"><button type="button" data-action="pin-here">Подписать точку</button><span>${summary || 'I J K L — сдвинуть точку. Удержание пальцем — поставить метку.'}</span>${mark ? `<button type="button" data-action="pin-remove" data-value="${mark.id}">Удалить метку</button>` : ''}${navEnd ? '<button type="button" data-action="nav-clear">Сбросить путь</button>' : ''}</div></div>`;
     }
     function updateRoute(along = false) {
         navOrigin = { x: view.x, z: view.z };
@@ -38760,7 +41801,8 @@ function createUI(host, onAction) {
     function buzz(pattern) {
         if (!navigator.vibrate || settings.haptics <= 0)
             return;
-        navigator.vibrate(Math.max(5, Math.round((pattern === 'reverse' ? 35 : 20) * settings.haptics)));
+        const duration = Math.max(5, Math.round((pattern === 'reverse' ? 35 : 20) * settings.haptics));
+        navigator.vibrate(pattern === 'message' ? [duration, 80, duration] : duration);
     }
     function buzzImpact(strength) {
         if (!navigator.vibrate || settings.haptics <= 0 || strength < .12)
@@ -38879,23 +41921,29 @@ function createUI(host, onAction) {
         if (panel === 'layout')
             return `<div class="k-layout-toolbar"><div role="group" aria-label="Раскладка">${modes.map(m => `<button type="button" data-action="edit-${m}" aria-pressed="${editMode === m}">${m === 'foot' ? 'Пешком' : 'За рулём'}</button>`).join('')}</div><button data-action="edit-mirror">Отразить</button><button data-action="edit-reset">Сбросить</button><button data-action="settings">Готово</button></div><p class="k-layout-tip">Перетащите кнопку на нужное место.</p>`;
         if (panel === 'pause')
-            return `<div class="k-list">${panelRow('close', 'play', 'Продолжить игру')}${panelRow('phone', 'phone', 'Журнал заказов')}${panelRow('map', 'map', 'Карта района')}${view.atGarage ? panelRow('garage', 'garage', 'Открыть гараж') : ''}${panelLinks()}${panelRow('settings', 'settings', 'Настройки')}${panelRow('restart', 'checkpoint', 'С контрольной точки')}${document.fullscreenEnabled ? panelRow('full', 'full', document.fullscreenElement ? 'Выйти из полного экрана' : 'На весь экран') : ''}</div>${desktopHelp()}<div class="k-panel-status">${(0, ui_icons_js_1.ico)('signal', 15)}<span class="k-offline-status">${escape(offlineLabel)}</span></div>`;
+            return `<div class="k-list">${panelRow('close', 'play', 'Продолжить игру')}${panelRow('phone', 'phone', 'Журнал смены')}${panelRow('map', 'map', 'Карта района')}${view.atGarage ? panelRow('garage', 'garage', 'Открыть гараж') : ''}${panelLinks()}${panelRow('settings', 'settings', 'Настройки')}${panelRow('restart', 'checkpoint', 'С контрольной точки')}${document.fullscreenEnabled ? panelRow('full', 'full', document.fullscreenElement ? 'Выйти из полного экрана' : 'На весь экран') : ''}</div>${desktopHelp()}<div class="k-panel-status">${(0, ui_icons_js_1.ico)('signal', 15)}<span class="k-offline-status">${escape(offlineLabel)}</span></div>`;
         if (panel === 'settings')
             return `<div class="k-list">${panelRow('layout', 'arrows', 'Расстановка кнопок')}${panelRow('close', 'play', 'Проверить в игре')}</div>${populationRows()}${settingsRow('sensitivity', 'Камера пешком', 0.3, 2.5, 0.05)}${settingsRow('carSensitivity', 'Камера за машиной', .3, 2.5, .05)}${settingsRow('cabinSensitivity', 'Камера в салоне', .3, 2.5, .05)}${settingsRow('haptics', 'Сила вибрации', 0, 1, .05)}${settingsRow('impactMotion', 'Отдача камеры при ударе', 0, 1, .05)}${settingsRow('subtitleSize', 'Размер субтитров', .8, 1.8, .05)}${settingsRow('goalSize', 'Подписи целей', .8, 1.8, .05)}${panelRow('camera-distance', 'arrows', 'Дистанция камеры · ' + cameraNames[settings.cameraDistance])}${toggleRow('steerStick', 'Руление джойстиком')}${panelRow('next-station', 'signal', 'Радиостанция · ' + radio_stations_js_1.radioStations[settings.radioStation])}${toggleRow('autoSprint', 'Бег за внешним кольцом джойстика')}${toggleRow('leftHanded', 'Леворукая раскладка')}${toggleRow('compactHud', 'Свернуть баланс и приборы')}${settingsRow('buttonSize', 'Размер сенсорных кнопок', 0.75, 1.4, 0.05)}${settingsRow('volume', 'Громкость', 0, 1, 0.05)}${panelRow('sound-profile', 'signal', 'Звуковой режим · ' + sound_mix_js_1.soundProfileNames[settings.soundProfile])}${toggleRow('minimap', 'Мини-карта')}${toggleRow('radio', 'Автомобильное радио')}<div class="k-list">${panelRow('pause', 'left', 'В меню паузы')}</div>`;
         if (panel === 'map' && showArchive && view.archiveMap)
             return (0, interior_archive_js_1.archiveFigure)() + panelRow('archive-toggle', 'map', 'Вернуться к навигации');
         if (panel === 'map')
-            return `<div class="k-atlas-body"><div class="k-big-map">${(0, ui_map_js_1.mapTemplate)(true)}<span class="k-north">С</span>${view.inside ? '' : `<div class="k-atlas-zoom"><button type="button" data-action="atlas-out" aria-label="Отдалить карту" ${atlasZoom === 0 ? 'disabled' : ''}>−</button><button type="button" data-action="atlas-in" aria-label="Приблизить карту" ${atlasZoom === ui_map_js_1.zoomWidths.length - 1 ? 'disabled' : ''}>+</button></div>`}</div><nav class="k-atlas-index" aria-label="Ориентиры"><button type="button" data-map-focus="-1" aria-pressed="true">${view.inside ? (view.interiorPlan?.number ? 'Весь этаж' : 'Весь дом') : 'Весь город'}</button>${(0, ui_map_js_1.atlasPlaces)(atlasState()).map((p, i) => `<button type="button" data-map-focus="${i}" aria-pressed="false">${p.area ? `<small>${escape(p.area)}</small>` : ''}${escape(p.label)}</button>`).join('')}</nav></div>${atlasControls()}${view.archiveMap ? panelRow('archive-toggle', 'map', 'Архивная схема дворов') : ''}<div class="k-legend"><span><i class="k-you"></i>Вы</span><span><i class="k-goal"></i>Цель</span>${view.wanted ? '<span><i class="k-scan"></i>Патруль</span>' : ''}<strong>${escape(view.district)}</strong></div>`;
+            return `${view.inside ? '' : '<p class="k-atlas-edition">Канальск · муниципальный план · зима 2022</p>'}<div class="k-atlas-body"><div class="k-big-map">${(0, ui_map_js_1.mapTemplate)(true)}<span class="k-north">С</span>${view.inside ? '' : `<div class="k-atlas-zoom"><button type="button" data-action="atlas-out" aria-label="Отдалить карту" ${atlasZoom === 0 ? 'disabled' : ''}>−</button><button type="button" data-action="atlas-in" aria-label="Приблизить карту" ${atlasZoom === ui_map_js_1.zoomWidths.length - 1 ? 'disabled' : ''}>+</button></div>`}</div><nav class="k-atlas-index" aria-label="Ориентиры"><button type="button" data-map-focus="-1" aria-pressed="true">${view.inside ? (view.interiorPlan?.number ? 'Весь этаж' : 'Весь дом') : 'Весь город'}</button>${(0, ui_map_js_1.atlasPlaces)(atlasState()).map((p, i) => `<button type="button" data-map-focus="${i}" aria-pressed="false">${p.area ? `<small>${escape(p.area)}</small>` : ''}${escape(p.label)}</button>`).join('')}</nav></div>${atlasControls()}${view.archiveMap ? panelRow('archive-toggle', 'map', 'Архивная схема дворов') : ''}<div class="k-legend"><span><i class="k-you"></i>Вы</span><span><i class="k-goal"></i>Цель</span>${view.wanted ? '<span><i class="k-scan"></i>Патруль</span>' : ''}<strong>${escape(view.district)}</strong></div>`;
         if (panel === 'garage')
             return drawGarage();
         const idx = view.missionIndex;
         const campaignOrder = view.campaignObjective ?? { title: view.missionTitle, goal: view.objective, reward: view.reward };
-        return `<div class="k-list k-phone-services">${panelLinks()}</div><div class="k-phone-location">${(0, ui_icons_js_1.ico)('signal', 14)}<span>ДИСПЕТЧЕРСКАЯ СЕТЬ</span><b>77</b></div><div class="k-orders">${campaign
-            .map((name, i) => {
-            const active = i === idx, done = i < (view.completed ?? idx);
-            return `<div class="k-order ${active ? 'active' : ''} ${done ? 'done' : ''}"><span class="k-order-icon">${(0, ui_icons_js_1.ico)(done ? 'check' : i === 0 ? 'route' : i === 1 ? 'car' : 'mapPin', 23)}</span><div><small>${done ? 'ЗАВЕРШЁН' : active ? 'АКТИВНЫЙ ЗАКАЗ' : 'В ОЧЕРЕДИ'}</small><strong>${escape(active ? campaignOrder.title : name)}</strong>${active ? `<p>${escape(briefs[i])}</p><p class="k-phone-goal">${escape(campaignOrder.goal)}</p>` : ''}</div>${active && campaignOrder.reward ? `<b>+${money(campaignOrder.reward)}</b>` : ''}</div>`;
-        })
-            .join('')}</div>${idx < 3 ? `<div class="k-list">${panelRow('map', 'map', 'Показать на карте')}${panelRow('restart', 'checkpoint', 'С контрольной точки')}</div>` : ''}`;
+        const messages = shiftBook.correspondence(view.shiftMessages ?? [], escape);
+        const records = campaign.map((name, i) => {
+            const active = i === idx, done = i < idx, order = shiftBook.orders[i];
+            const reward = view.campaignPay?.[i] ?? (active ? campaignOrder.reward : 0);
+            const paper = active || done ? shiftBook.documentSheet(i, name, reward, done, escape) : '';
+            return `<section class="k-order ${active ? 'active' : done ? 'done' : ''}"><div><small>${done ? 'Исполнено' : active ? 'Текущий заказ' : 'В очереди'} · ${escape(order.caller)}</small><strong>${escape(name)}</strong>${active ? '<p>'+escape(campaignOrder.goal)+'</p>' : ''}${paper}</div></section>`;
+        }).join('');
+        return `<div class="k-handset-bar"><time>${escape(view.clock ?? '')}</time><b>${money(view.money)}</b></div>
+            <h3>Звонки и сообщения</h3><div class="k-handset-log">${messages || '<p>Новых сообщений пока нет.</p>'}</div>
+            <h3>Заказы смены</h3><div class="k-orders">${records}</div>
+            ${idx < 3 ? panelRow('map','map','Адрес текущего заказа') + panelRow('restart','checkpoint','С контрольной точки') : ''}
+            <details class="k-book-models"><summary>Справочник и службы</summary><div class="k-list k-phone-services">${panelLinks()}</div></details>`;
     }
     function focusPanel(previous) {
         const controls = [...dialogContent.querySelectorAll(controlSelector)].filter(canFocus);
@@ -38912,8 +41960,8 @@ function createUI(host, onAction) {
             pause: ['КОНТУР-77 · ВЕРСИЯ 3.3', 'Пауза'],
             layout: ['УПРАВЛЕНИЕ', 'Расстановка кнопок'], alternatives: ['РЯДОМ', 'Выбор действия'],
             laptop:['УПРАВЛЕНИЕ','Ноутбук и клавиши'], settings: ['СИСТЕМА', 'Настройки'],
-            map: ['НАВИГАЦИЯ', view.inside ? (view.interiorId && view.interiorId !== 'house' ? (view.interiorPlan?.name ?? view.district) : 'План дома № 23') : 'Карта города'],
-            phone: ['ТЕЛЕФОН', 'Журнал заказов'],
+            map: ['ГОРОДСКОЙ АТЛАС', view.inside ? (view.interiorId && view.interiorId !== 'house' ? (view.interiorPlan?.name ?? view.district) : 'План дома № 23') : 'Карта города'],
+            phone: ['ТЕЛЕФОН', 'Журнал смены'],
             garage: ['КАНАЛЬНЫЕ ГАРАЖИ', 'Мастерская'],
         };
         dialog.classList.toggle('k-atlas', panel === 'map');
@@ -39519,9 +42567,9 @@ function createUI(host, onAction) {
             setText(missionDistance, metres(Math.hypot(view.x - view.target.x, view.z - view.target.z)));
         const campaignActive = view.missionIndex < campaign.length;
         step.hidden = !view.sideStage && !campaignActive;
-        setText(step, view.sideStage ? `Этап ${view.sideStage.step} / ${view.sideStage.total}` : `${view.missionIndex + 1} / ${campaign.length}`);
+        setText(step, view.sideStage ? `Этап ${view.sideStage.step} / ${view.sideStage.total}` : `${(view.campaignStage ?? 0) + 1} / ${[3,4,3][view.missionIndex] ?? 3}`);
         mission.dataset.action = view.sidePanel ?? (view.sideStage ? 'district-jobs' : 'phone');
-        mission.title = view.sidePanel === 'outer-tour' ? 'Открыть журнал объезда' : view.sideStage ? 'Открыть заказы района' : 'Открыть журнал заказов';
+        mission.title = view.sidePanel === 'outer-tour' ? 'Открыть журнал объезда' : view.sideStage ? 'Открыть заказы района' : 'Открыть журнал смены';
         setText(missionKind, view.sideStage ? 'Районный заказ' : campaignActive ? 'Заказ' : 'Свободная смена');
         const primary = view.actions?.[0];
         const label = primary?.choiceLabel ?? primary?.label ?? view.hint;
@@ -39624,6 +42672,15 @@ function createUI(host, onAction) {
             atlasZoom = ui_map_js_1.atlasDistrictZoom;
             drawPanel();
         },
+        openingRoute(point, from) {
+            if (navEnd) return;
+            navOrigin = {x:from.x,z:from.z};
+            navEnd = point;
+            navMode = 'walk';
+            navLeg = (0, ui_navigation_js_1.routeTo)(navOrigin, navEnd, navMode);
+            mapRoute = { ...navLeg, mode: navMode };
+        },
+        messageFeedback() { buzz('message'); },
         clearRoute(point) {
             if (navEnd && (point === undefined || point && navEnd.x === point.x && navEnd.z === point.z)) {
                 navEnd = null;
@@ -39847,6 +42904,18 @@ const rattlePresets = {
 };
 exports.vehicleRattleRate = 24000;
 function vehicleRattleSample(kind) {
+    if (kind.startsWith('starter-')) {
+        const diesel = kind==='starter-diesel', duration=diesel?1.54:1.11;
+        const data = new Float32Array(Math.round(exports.vehicleRattleRate*duration));
+        let phase=0;
+        for(let i=0;i<data.length;i++){
+            const t=i/exports.vehicleRattleRate;
+            phase+=2*Math.PI*(72+72*clamp((t/(duration*.73)-.56)*2.5)+14*Math.sin(41*t))/exports.vehicleRattleRate;
+            const pulse=.32+.68*Math.max(0,Math.cos(t*(diesel?43:53)));
+            data[i]=(Math.sin(phase)*.42+Math.sin(2.7*phase)*.20+Math.sin(6*phase)*.08)*pulse*Math.min(1,t*70,(duration-t)*9);
+        }
+        return data;
+    }
     const preset = rattlePresets[kind];
     const data = new Float32Array(Math.ceil(preset.duration * exports.vehicleRattleRate));
     let seed = preset.body + 1533, low = 0, mid = 0;
@@ -39890,7 +42959,8 @@ function createVehicleAudio(ctx, destination) {
         oscillator.start();
     const waves = new Map();
     const samples = new Map();
-    let current, split = 0, nextTrim = 0, nextDamage = 0, nextCargo = 0, nextIce = 0;
+    const lastStart = new Map();
+    let current, presentCar, split = 0, nextTrim = 0, nextDamage = 0, nextCargo = 0, nextIce = 0;
     function play(kind, level, pan, at) {
         let sample = samples.get(kind);
         if (!sample) {
@@ -39918,7 +42988,12 @@ function createVehicleAudio(ctx, destination) {
     return {
         output,
         update(road, frame, speed, train, duck, lift, at) {
-            const kind = road?.kind;
+            const kind = road?.kind, car = road?.vehicleId ?? kind;
+            if (car && presentCar !== car && speed < 1 && !motors[kind]?.electric && at-(lastStart.get(car)??-Infinity)>75) {
+                play(['pickup','suv','utility'].includes(kind)?'starter-diesel':'starter-petrol',.30*duck,-.09,at);
+                lastStart.set(car,at);
+            }
+            presentCar=car;
             if (kind !== current) {
                 current = kind;
                 if (kind) {
@@ -41973,17 +45048,21 @@ function passengerPosition(passenger, route, elapsed, index, inside) {
     const door = { x: river.centre, z: 3.65 };
     const waitingYaw = passenger.x < river.centre ? -Math.PI / 2 : Math.PI / 2;
     const travel = route ? Math.max(0, elapsed - route.at) : 0;
+    const counter = { x: river.dispatcher.x + (index-1)*.48, z: river.dispatcher.z + .86 };
+    const exitAt = route?.cashier ? 5.8 : 0;
     if (inside) {
         if (!route) return { ...passenger, yaw: waitingYaw, speed: 0 };
-        return travel < exitWalk ? walk(passenger, door, travel / exitWalk) : null;
+        if (route.cashier && travel < 3) return walk(passenger, counter, travel / 3);
+        if (travel < exitAt) return {...counter, yaw: 0, speed: 0};
+        return travel < exitAt + exitWalk ? walk(route.cashier ? counter : passenger, door, (travel-exitAt) / exitWalk) : null;
     }
-    if (!route || travel < exitWalk) return null;
+    if (!route || travel < exitAt + exitWalk) return null;
     const stop = river[route.mode];
     const waiting = { x: stop.x + (index - 1) * .52, z: stop.z + .55 + index * .09 };
     const sidewalk = { x: river.door.x, z: river.door.z + 1.7 };
     const first = distance(river.door, sidewalk) / pace;
     const second = distance(sidewalk, waiting) / pace;
-    const outside = travel - exitWalk;
+    const outside = travel - exitWalk - exitAt;
     if (outside < first) return walk(river.door, sidewalk, outside / first);
     if (outside < first + second) return walk(sidewalk, waiting, (outside - first) / second);
     return outside < first + second + 24 ? { ...waiting, yaw: Math.PI, speed: 0 } : null;
@@ -42005,6 +45084,12 @@ function makeDisplay(scene) {
     const display = new T.Mesh(new T.PlaneGeometry(3.85, .85), new T.MeshBasicMaterial());
     display.name = 'Табло рейсов';
     display.position.set(river.display.x, 2.24, river.display.z);
+    const notice = new T.Mesh(new T.PlaneGeometry(.96,.62),new T.MeshBasicMaterial({
+        map:signTexture('РЕЙС ЗАДЕРЖАН','ЗАМЕНА — АВТОБУС 12','#4c4e45','#dfd7b8',1.55)
+    }));
+    notice.position.set(2.56,-.38,.013);
+    notice.rotation.z=-.035;
+    display.add(notice);
     scene.add(display);
     return display;
 }
@@ -42064,10 +45149,11 @@ function createVenueView(scene) {
         stands?.forEach(stand => stand.visible = false);
         if (c.zone === river.door.zone && c.indoorScene) {
             display ??= makeDisplay(c.indoorScene);
+            display.children[0].visible = station.open;
             const signature = text.join('\n');
             if (displayText !== signature) {
                 display.material.map?.dispose();
-                display.material.map = signTexture(text[0], text[1], station.open ? '#f3c681' : '#b8dfcf', '#263f49', 3.85 / .85);
+                display.material.map = signTexture(text[0], text[1], '#edc678', '#353933', 3.85 / .85);
                 display.material.needsUpdate = true;
                 displayText = signature;
             }
@@ -42249,7 +45335,7 @@ function footstepSurface(surface, x, z, weather) {
     if (surface === 'snow' && weather.temperature > .5 && weather.wet > .5)
         return 'slush';
     if (surface === 'asphalt' && roadIceAt(x, z, weather) > .26)
-        return 'ice';
+        return exports.frozenRoads.some(p => Math.hypot(x-p.x,z-p.z) < 3.0) ? 'grit' : 'ice';
     if (surface === 'asphalt' && weather.wet > .55)
         return 'wet';
     return surface;
@@ -42469,11 +45555,160 @@ function streetWeather(scene) {
 }
 
 },
+"game/winter-errands.js": function(require, module, exports) {
+'use strict';
+
+const { surfaceAt } = require('./world-layout.js');
+const step = (x, z, label, reply, quiz) => ({ x, z, label, reply, quiz });
+const question = (prompt, right, wrong) => ({ prompt, right, wrong });
+
+const errands = [
+    { id: 'plough', title: 'Проезд для трактора', pay: 450, steps: [
+        step(-38.8, 17.18, 'Расспросить дворника у дома № 23', 'Серый универсал загородил въезд. Сосед у скамьи знает, чей он.'),
+        step(-35.4, .4, 'Поговорить с соседом у дома № 31', '«Вадим сегодня дома. Вторая дверь, четвёртый этаж, квартира 18. Скажите, что трактор уже здесь».'),
+        step(-34.96, 16.6, 'Вызвать хозяина по домофону', 'Вадим забрал ключи и переставил универсал. Дворнику освободили проезд.',
+            question('На домофоне дома № 23 наберите квартиру Вадима.', 'Квартира 18', 'Квартира 8')) ] },
+    { id: 'track', title: 'Обход с путейцем', pay: 680, steps: [
+        step(7.8, -38.4, 'Получить обходной лист у путейца', 'Идём от депо к рынку. Сверь состояние рельса, настила и стыка. Мастер будет ждать у каждой отметки.'),
+        step(6.8, -32, 'Осмотреть головку рельса', 'На рельсе корка льда. Мастер ставит в журнале отметку о зачистке.'),
+        step(6.2, -9, 'Проверить край деревянного настила', 'Один конец доски качается. Путеец помечает доску мелом для плотников.'),
+        step(10.5, 23.1, 'Сверить свежий стык с журналом', 'Сверка окончена. Старый стык заменён в первую смену, дорожная бригада получила две заявки.') ] },
+    { id: 'post', title: 'Стёртый адрес', pay: 510, steps: [
+        step(141.3, -18.2, 'Взять посылку в ночном окне', 'На этикетке остались «Кан…» и номер 4. В квитанции под скрепкой есть ещё одна подсказка.'),
+        step(141.3, -18.2, 'Посмотреть квитанцию', 'Квитанция № 214. Получатель — мастер, отправитель — завод измерительных приборов.'),
+        step(141.3, -18.2, 'Найти накладную в книге поступлений', 'В строке 214 указан киоск № 4 на радиорынке. Инна распишется за приём.',
+            question('Строка 214 — Канальный рынок, № 4. Строка 241 — Канальная улица, дом 4. Куда отправить посылку?', 'Киоск № 4, радиорынок', 'Дом 4, Канальная улица')),
+        step(30, 25.3, 'Получить подпись Инны', 'Инна приняла измеритель и подписала квитанцию. Почтовое отправление доставлено.') ] },
+    { id: 'water', title: 'Проба до закрытия', pay: 740, steps: [
+        step(134.2, 120.7, 'Взять пробу у речного лаборанта', 'Пломба № 16, вода взята у причала. Передвижная лаборатория у метеостанции принимает до 19:00.'),
+        step(117.8, -401.55, 'Передать опломбированную пробу', 'Пломба цела, температура вписана в журнал. Лаборатория приняла пробу текущей смены.') ] },
+    { id: 'glass', title: 'Стекло для сменного фургона', pay: 810, steps: [
+        step(-40, 42, 'Принять ящик в Канальных гаражах', 'Склад подготовил лобовое стекло в деревянной раме. Подгоните автомобиль к месту выдачи.'),
+        step(-40, 42, 'Закрепить ящик в машине', 'Ящик закреплён в вашей машине. Сохраняйте скорость на ровном асфальте, сбрасывайте перед колеёй. Разгрузка у депо.'),
+        step(12, -39, 'Разгрузить стекло у депо', 'Механик снял защитную раму. Стекло поступило на замену в сменный фургон.') ] },
+    { id: 'gate', title: 'Последний день проходной', pay: 620, steps: [
+        step(-55, -117, 'Расспросить смену у ТЭЦ', 'Старая проходная закрывается. Узнай, где договорились встречаться рабочие, и принеси адрес к концу смены.'),
+        step(-24.5, -23.8, 'Записать воспоминания у хлебного окна', 'Раньше машинисты встречали первую смену здесь. Пекарь говорит, что вечером они идут в столовую у порта.'),
+        step(-146, 103.5, 'Расспросить портового сменщика', '«Теперь встречаемся у хлебного окна по пятницам. Это место найдёт и мастер, и ученик».'),
+        step(-55, -117, 'Передать договорённость рабочим', 'На проходной вывесили записку о встречах у хлебного окна. Рабочие разных смен знают новый адрес.') ] },
+    { id: 'mitten', title: 'Варежка с биркой', pay: 320, steps: [
+        step(-73.3, -607, 'Поднять варежку у борта', 'В синюю варежку вшита бирка «Секция 07». На доске у входа есть расписание.'),
+        step(-66.3, -607, 'Свериться с расписанием секций', 'Группа 07 собирается у сквера Полярников после занятия. Тренер ждёт у дорожки.',
+            question('07 — фигурное катание, сбор в сквере. 17 — хоккей, сбор у раздевалки. Где искать владельца?', 'У дорожки в сквере', 'У хоккейной раздевалки')),
+        step(-70, -634, 'Вернуть варежку тренеру', 'На второй варежке такая же бирка. Тренер передал пару хозяйке и снял объявление о пропаже.') ] }
+];
+const within = (p, q, radius) => Math.hypot(p.x - q.x, p.z - q.z) <= radius;
+const guides = errands.map(job => [job.title, job.steps[0].x, job.steps[0].z, job.steps[0].label]);
+
+function createErrands() {
+    let stages = {}, waterDay = -1, glassCar = null, trackAt = null, nextRattle = 0, lastSpeed = 0;
+    const index = job => stages[job.id] ?? 0;
+    function restore(raw) {
+        stages = {};
+        for (const job of errands) {
+            const value = raw?.stages?.[job.id];
+            if (Number.isInteger(value) && value >= 0 && value <= job.steps.length) stages[job.id] = value;
+        }
+        waterDay = Number.isInteger(raw?.waterDay) ? raw.waterDay : -1;
+        glassCar = typeof raw?.glassCar === 'string' ? raw.glassCar : null;
+        trackAt = Number.isFinite(raw?.trackAt) && raw.trackAt >= 0 ? raw.trackAt : null;
+        nextRattle = lastSpeed = 0;
+    }
+    function nearby(c, job) {
+        const i = index(job), s = job.steps[i];
+        if (!s || c.zone !== 'street' || c.sim.tramRider?.onboard) return false;
+        if (job.id === 'glass' && i >= 1)
+            return !!c.car && (i === 1 || glassCar === c.car.id) && Math.abs(c.car.speed) < 1 && within(c.player, s, 7.2);
+        return !c.car && within(c.player, s, 2.8);
+    }
+    function actions(c) {
+        return errands.filter(j => nearby(c,j)).map(job => ({ id: job.id, label: job.steps[index(job)].label }));
+    }
+    function act(id, c) {
+        const job = errands.find(j => j.id === id);
+        if (!job || !nearby(c, job)) return;
+        const i = index(job), s = job.steps[i], day = Math.floor(c.calendarMinutes / 1440);
+        const wait = (time, label, message) => c.choose(job.title, [
+            { label, run() { c.waitUntil(time); } }, { label: 'Вернуться позже', run() {} }
+        ], message);
+        if (id === 'post' && i === 0 && c.minutes >= 360 && c.minutes < 1260)
+            return wait(1260, 'Дождаться 21:00', 'Ночное окно работает с 21:00 до 06:00.');
+        if (id === 'water' && i === 0 && (c.minutes < 480 || c.minutes >= 1110))
+            return wait(480, 'Дождаться 08:00', 'Пробы выдают с 08:00 до 18:30. Приёмная закрывается в 19:00.');
+        if (id === 'water' && i === 1 && (day !== waterDay || c.minutes >= 1140)) {
+            stages.water = 0;
+            c.notify('Приёмная уже закрылась. Эту пробу списали. Следующую можно взять утром на причале.');
+            c.persist();
+            return;
+        }
+        const finish = () => {
+            if (index(job) !== i) return;
+            stages[id] = i + 1;
+            if (id === 'track') trackAt = c.sim.elapsed;
+            if (id === 'water' && i === 0) waterDay = day;
+            if (id === 'glass' && i === 1) glassCar = c.car.id;
+            const next = job.steps[i + 1];
+            if (next) c.addMapPin(next.x, next.z, next.label);
+            else c.sim.money += job.pay;
+            const text = s.reply + (next ? '' : ' Оплата ' + job.pay + ' ₽.');
+            c.record(job.title + ' · ' + text);
+            c.notify(text);
+            c.persist();
+        };
+        if (!s.quiz) return finish();
+        const options = [ { label: s.quiz.right, run: finish }, { label: s.quiz.wrong, run() { c.notify('Подсказка не совпала. Запись осталась в блокноте.'); } } ];
+        c.choose(job.title, id === 'post' ? options.reverse() : options, s.quiz.prompt);
+    }
+    function update(c) {
+        if (stages.glass !== 2 || !glassCar) return;
+        if (!c.sim.cars.some(v => v.id === glassCar)) {
+            stages.glass = 1;
+            glassCar = null;
+            c.notify('Машину вывезли со стоянки. В гаражах подготовили запасную раму.');
+            c.persist();
+            return;
+        }
+        if (c.car?.id !== glassCar) return;
+        const speed = Math.abs(c.car.speed);
+        const surface = surfaceAt(c.car.x, c.car.z);
+        if (c.sim.elapsed >= nextRattle && speed > 5 && (surface !== 'asphalt' || Math.abs(speed - lastSpeed) > 1.6)) {
+            c.audio?.effect?.('cargo-glass');
+            c.notify('Стекло звякнуло в раме. Притормозите у колеи.');
+            nextRattle = c.sim.elapsed + 8;
+        }
+        lastSpeed = speed;
+    }
+    function agenda() {
+        return errands.filter(j => index(j) > 0 && index(j) < j.steps.length).map(j => ({ title: j.title, goal: j.steps[index(j)].label }));
+    }
+    return { restore, save: () => ({ stages: { ...stages }, glassCar, waterDay, trackAt }), act, actions, agenda, update,
+        get glassVehicle() { return glassCar; },
+        get trackAt() { return trackAt; },
+        stage: id => stages[id] ?? 0, complete: id => errands.some(j => j.id === id && index(j) === j.steps.length) };
+}
+
+module.exports = { errands, guides, createErrands };
+
+},
 "game/winter-light.js": function(require, module, exports) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.winterBudget = exports.winterBudgets = void 0;
 exports.patrolFlash = patrolFlash;
+const lamps = {
+    crossing: ['#f2eee8','#ded8cc'], port: ['#f0ede4','#d5d9d0'], works: ['#efc286','#d59861'],
+    market: ['#ffe3b6','#f4c390'], yard: ['#f4d4a2','#dcab7c'], avenue: ['#ffe2a0','#ffa95c']
+};
+function lampFamily(f) {
+    if(f.crosswalk) return 'crossing';
+    if(f.z>86) return 'port';
+    if(f.z < -57 || (f.x < -86 && f.z < 25)) return 'works';
+    if(f.x>16 && f.x<80 && f.z>3 && f.z<28) return 'market';
+    if(Math.abs(f.x)>52 && f.z>-48 && f.z<25) return 'yard';
+    return 'avenue';
+}
+exports.lampFamily = lampFamily;
+exports.lampPalette = lamps;
 exports.inHeadlight = inHeadlight;
 exports.winterBudgets = [
     { flakes: 44, lit: 16, puffs: 3, halo: 46, tracks: 17 },
@@ -42495,6 +45730,582 @@ function inHeadlight(x, y, z, b) {
     const width = .28 + distance * .174, height = .39 + distance * .104;
     return Math.max(0, 1 - offset / width) * Math.max(0, 1 - Math.abs(h - .72) / height) * (1 - distance / 18);
 }
+
+},
+"game/winter-residents.js": function(require, module, exports) {
+'use strict';
+const T = require('../engine/three.module.min.js');
+const { Batch, tube, ring } = require('./model-geometry.js');
+const { createPerson } = require('./model-people.js');
+const { groundHeight } = require('./world-layout.js');
+const { schoolOutside } = require('./school-site.js');
+const { marketHours } = require('./market-hours.js');
+const smooth=(v,a,b)=>T.MathUtils.smoothstep(v,a,b);
+function mesh(parent,name,draw) {
+    const batch=new Batch();
+    draw(batch);
+    const part=batch.mesh();
+    part.name=name;
+    parent.add(part);
+    return part;
+}
+function resident(parent,variant,label) {
+    const actor=createPerson('resident',variant);
+    actor.root.name=label;
+    parent.add(actor.root);
+    return actor;
+}
+function schoolEntrance(group) {
+    const actor=resident(group,11,'Посетитель у входа в школу');
+    const neck=actor.root.getObjectByName('neck'), spine=actor.root.getObjectByName('spine');
+    const boot=actor.root.getObjectByName('right-knee');
+    const hood=mesh(neck,'Капюшон на шнурке',b=>{
+        b.ball(0,.17,.079,.22,.20,.18,'#615e60');
+        for(const side of [-1,1]) b.ball(side*.099,.13,.014,.059,.137,.12,'#726b68');
+    });
+    const glasses=mesh(neck,'Очки в проволочной оправе',b=>{
+        for(const side of [-1,1]) b.add(ring,[side*.045,.128,-.112],[.039,.024,.018],'#756c60');
+        b.rod([-.017,.133,-.112],[.017,.133,-.112],.003,'#766c60');
+    });
+    const cloth=mesh(spine,'Платок для очков',b=>b.box(0,0,0,.085,.019,.077,'#abb3ae',[.12,.22,0]));
+    return c=>{
+        const t=c.elapsed%43;
+        actor.root.visible=t<28;
+        if(!actor.root.visible)return;
+        const walkIn=smooth(t,0,4), walkAway=smooth(t,17,28);
+        actor.root.position.set(.82,0,2.1-1.72*walkIn+8*walkAway);
+        actor.root.rotation.y=walkAway>0?Math.PI:0;
+        const lowerHood=smooth(t,8,10)-smooth(t,15,17);
+        hood.position.set(0,-.33*lowerHood,.087*lowerHood);
+        const wiping=smooth(t,10,11)-smooth(t,14,15);
+        glasses.position.set(0,-.25*wiping,-.095*wiping);
+        cloth.visible=wiping>.10;
+        cloth.position.set(.023*Math.sin(t*7),.43,-.196);
+        const reaching=lowerHood>.06;
+        actor.update(c.dt,t<4||t>17?.73:0,false,{handTargets: reaching?[[.015,.44,-.19],[.12*Math.cos(t*6),.45,-.21]]:undefined, duck:t>=4&&t<8?.13:0});
+        if(t>=4 && t<8) boot.rotation.x-=.33*Math.abs(Math.sin(t*5));
+    };
+}
+function driver(group) {
+    const actor=resident(group,0,'Водитель с зимней щёткой');
+    const brush=mesh(actor.root.getObjectByName('right-elbow'),'Скребок и длинная щётка',b=>{
+        b.rod([0,-.25,-.02],[0,-.67,-.06],.014,'#796c55');
+        b.box(0,-.68,-.06,.218,.05,.085,'#4d5856');
+        for(let i=0;i<12;i++)b.box(-.096+i*.017,-.71,-.06,.007,.052,.066,'#b9b199');
+    });
+    const roofSnow=mesh(group,'Снег на левой стороне крыши',b=>{
+        for(let j=0;j<5;j++)b.ball(-.53+j*.14,1.994,-.65,.155,.049,.56,'#d5dcdb');
+    });
+    const windshield=mesh(group,'Наледь в углу стекла',b=>{
+        b.quad([-.86,1.22,-1.92],[-.46,1.22,-1.92],[-.45,1.66,-1.61],[-.82,1.66,-1.61],'#becbca',[0,1,-1]);
+    });
+    const schedule=mesh(actor.root.getObjectByName('spine'),'Путевой лист за поясом',b=>{
+        b.box(.105,.025,-.173,.093,.144,.012,'#dad2b6',[-.04,0,-.13]);
+        for(let j=0;j<5;j++) b.box(.103,.061-j*.016,-.182,.060,.003,.004,'#817f72');
+    });
+    return c=>{
+        const t=c.elapsed%155;
+        actor.root.visible=t<41;
+        roofSnow.visible=t<12;
+        windshield.visible=t<24;
+        if(!actor.root.visible)return;
+        const along=smooth(t,10,16)-smooth(t,28,33);
+        actor.root.position.set(-1.38,0,-.58-along*1.02);
+        actor.root.rotation.y=-Math.PI/2;
+        const clearing=t<24, stroke=.5+.5*Math.sin(t*(t<12?2.5:4.6));
+        const y=t<12?.52:.34;
+        actor.update(c.dt,0,false,{handTargets:clearing?[null,[.20-.27*stroke,y+.09*stroke,-.34]]:undefined});
+        brush.visible=clearing;
+        brush.rotation.x=-1.45+.35*stroke;
+        schedule.visible=!clearing;
+        if(t<12)roofSnow.scale.x=Math.max(.08,1-t/12);
+        const scraped=smooth(t,12,24);
+        windshield.scale.y=1-.64*scraped;
+        windshield.position.y=1.22*(1-windshield.scale.y);
+    };
+}
+function marketStall(group) {
+    const actor=resident(group,3,'Продавщица торговых рядов');
+    actor.root.position.set(.86,0,-.30);
+    actor.root.rotation.y=1.1;
+    mesh(group,'Прилавок с ящиками радиодеталей',b=>{
+        b.box(0,.63,0,1.12,.12,.61,'#87745c');
+        for(const x of [-.47,.47])for(const z of [-.22,.22])b.box(x,.32,z,.066,.64,.066,'#6e6656');
+        for(const x of [-.54,.54])b.box(x,1.13,-.28,.042,2.26,.042,'#666962');
+        b.rod([-.56,2.25,-.28],[.56,2.25,-.28],.04,'#6d6961');
+        b.box(-.23,.83,0,.42,.26,.39,'#866e55');
+        b.box(.39,.74,.12,.22,.07,.19,'#5c605c');
+    });
+    const canopy=mesh(group,'Сворачиваемый навес',b=>{
+        for(let i=0;i<10;i++)b.box(-.54+i*.12,0,.43,.12,.048,.86,i%2?'#b7b09b':'#895e51');
+    });
+    canopy.position.set(0,2.23,-.28);
+    const stock=mesh(group,'Лоток предохранителей',b=>{
+        b.box(0,0,0,.30,.06,.21,'#596966');
+        for(let j=0;j<4;j++)b.box(-.090+j*.06,.054,0,.035,.047,.088,'#b09e78');
+    });
+    return c=>{
+        const h=marketHours(c.calendarMinutes), m=c.minutes;
+        const opened=smooth(m,h.open-7,h.open+2)-smooth(m,h.close-3,h.close+6);
+        canopy.scale.z=.055+.945*opened;
+        stock.position.set(-.23+opened*.36,.85-.04*opened,.01);
+        actor.root.visible=(m>=h.open-8 && m<h.open+18)||(m>=h.close-15 && m<h.close+8);
+        if(!actor.root.visible)return;
+        const cash=m>=h.close-15 && m<h.close-3;
+        const lifting=m>=h.close-3;
+        const handY=lifting?.55:cash?.16:.08+.105*Math.sin(c.elapsed*2.3);
+        actor.update(c.dt,0,false,{handTargets:[[-.11,handY,-.29],[.12+.055*Math.sin(c.elapsed*4),handY,-.31]],
+            duck: cash?.18:.12});
+    };
+}
+function powerShift(group){
+    const employees=[5,0,10,8].map((style,i)=>resident(group,style,i<2?'Ночная смена ТЭЦ':'Дневная смена ТЭЦ'));
+    return c=>{
+        const shift=c.minutes%720;
+        const active=shift>=345&&shift<368; // 05:45–06:08 and 17:45–18:08
+        employees.forEach((actor,i)=>{
+            actor.root.visible=active;
+            if(!active)return;
+            const side=i<2?-1:1, colleague=i%2;
+            const arrive=smooth(shift,345+colleague,352+colleague), depart=smooth(shift,359+colleague,367);
+            const x=side*(8-7*arrive-9*depart);
+            actor.root.position.set(x,0,colleague*.82-side*.48);
+            actor.root.rotation.y=side*Math.PI/2;
+            actor.update(c.dt,(arrive>0&&arrive<1||depart>0&&depart<1)?.75:0,false,{conversation:shift>=353&&shift<360});
+        });
+    };
+}
+function createWinterResidents(parent) {
+    const scenes=[
+        {x:schoolOutside.x,z:schoolOutside.z,make:schoolEntrance},
+        {x:-10,z:42,make:driver},
+        {x:39.5,z:20.9,make:marketStall},
+        {x:-27,z:-82,make:powerShift}
+    ];
+    return (ctx,focus)=>{
+        for(const site of scenes) {
+            const near=Math.hypot(focus.x-site.x,focus.z-site.z)<32;
+            if(!site.group && near) {
+                site.group=new T.Group();
+                site.group.position.set(site.x,groundHeight(site.x,site.z),site.z);
+                parent.add(site.group);
+                site.update=site.make(site.group);
+            }
+            if(site.group) {
+                site.group.visible=near;
+                if(near)site.update(ctx);
+            }
+        }
+    };
+}
+module.exports={createWinterResidents};
+
+},
+"game/winter-shift-view.js": function(require, module, exports) {
+'use strict';
+const T = require('../engine/three.module.min.js');
+const { Batch } = require('./model-geometry.js');
+const { groundHeight } = require('./world-layout.js');
+const { createPerson } = require('./model-people.js');
+const { createVehicle } = require('./model-cars.js');
+const { specs } = require('./vehicle-cabin.js');
+const { river } = require('./venue-layout.js');
+const { signTexture } = require('./world-textures.js');
+
+const clamp = n => Math.max(0, Math.min(1, n));
+
+function createWinterShiftView(scene) {
+    if (!scene) return () => {};
+    const root = new T.Group(), scenes = [];
+    root.name = 'Городская зима · смены и поручения';
+    scene.add(root);
+    function exhibit(name, x, z, build) {
+        const group = new T.Group();
+        group.name = name;
+        group.position.set(x, groundHeight(x,z), z);
+        group.visible = false;
+        root.add(group);
+        let draw;
+        scenes.push((c, state) => {
+            group.visible = c.zone === 'street' && Math.hypot(c.player.x-x,c.player.z-z) < 55;
+            if (!group.visible) return;
+            if (!draw) draw = build(group);
+            draw(c, state);
+        });
+    }
+    function paint(group, draw) {
+        const b = new Batch();
+        draw(b);
+        const mesh = b.mesh();
+        group.add(mesh);
+        return mesh;
+    }
+    function placard(group, x, y, z, w, h) {
+        const card = new T.Mesh(new T.PlaneGeometry(w,h), new T.MeshLambertMaterial({ color: '#fffdfa', side: T.DoubleSide }));
+        card.position.set(x,y,z);
+        group.add(card);
+        let last = '';
+        return (title, sub) => {
+            if (typeof document === 'undefined' || last === title + sub) return;
+            last = title + sub;
+            card.material.map?.dispose();
+            card.material.map = signTexture(title, sub, '#373a34', '#dad5bd', w/h);
+            card.material.needsUpdate = true;
+        };
+    }
+    function vehicle(group, kind, color, x, z, yaw) {
+        const model = createVehicle(kind, color), body = model.root;
+        body.position.set(x,0,z);
+        body.rotation.y = yaw;
+        group.add(body);
+        return body;
+    }
+    function walker(group, variant, job = 'resident') {
+        let actor;
+        return (c, visible, x, z, angle, walking, posture = {}) => {
+            if (!visible) { if (actor) actor.root.visible = false; return; }
+            if (!actor) { actor = createPerson(job, variant); group.add(actor.root); }
+            actor.root.visible = true;
+            actor.root.position.set(x,groundHeight(group.position.x+x,group.position.z+z)-group.position.y,z);
+            actor.root.rotation.y = angle;
+            actor.update(c.dt,walking ? .85 : 0,false,posture);
+        };
+    }
+    function board(group, w = 1.75) {
+        paint(group,b => {
+            for (const side of [-1,1]) b.box(w*.38*side, .91, -.09, .08, 1.82, .08, '#64675c');
+            b.box(0,1.68,0,w+.14,.87,.09,'#766951');
+        });
+        return placard(group,0,1.68,.053,w,.75);
+    }
+    exhibit('Расписание у проходной ТЭЦ',-55,-117,g => {
+        const hours = board(g);
+        const van = vehicle(g,'van','#beaa83',1,-2.9,Math.PI/2);
+        const workers = [walker(g,4),walker(g,15),walker(g,8)];
+        return (c,s) => {
+            hours('ДО ПРОХОДНОЙ', s.weekend ? 'СБ–ВС   07:00 · 15:00 · 23:00' : 'ПН–ПТ   07:00 · 09:00 · 15:00 · 17:00 · 23:00');
+            const phase = s.shuttlePhase;
+            van.visible = phase !== null;
+            if (van.visible) van.position.x = -1 + (phase < 0 ? -Math.min(phase+5,5)+5 : Math.max(0,phase-3)*3);
+            workers.forEach((p,i) => p(c,phase !== null && phase < 4, -2.3+i*.6, 1.9 - 2.4*clamp(((phase??0)+2-i)/3),0,phase >= -2 && phase < 2));
+        };
+    });
+    exhibit('Хлебный фургон у дома № 19',35.8,55.55,g => {
+        const van = vehicle(g,'van','#dac39e',-3,2.5,-Math.PI/2);
+        const queue = [walker(g,1),walker(g,5),walker(g,8),walker(g,17)];
+        const crates = paint(g,b => {
+            for(let i=0;i<3;i++) {
+                b.box(1.05,.18+i*.25,.76,.68,.23,.39,'#a58660');
+                for(const side of [-1,1]) b.box(1.05+side*.28,.20+i*.25,.76,.04,.28,.42,'#6f634b');
+            }
+        });
+        return (c,s) => {
+            const offset = c.minutes - s.shopOpens;
+            van.visible = offset >= -22 && offset < 11;
+            van.position.x = -3 - Math.max(0,-17-offset)*2 - Math.max(0,offset-6)*2;
+            crates.visible = offset >= -16 && offset < 26;
+            queue.forEach((p,i) => p(c,offset >= -12+i*3 && offset < 9+i*2,
+                -.20+i*.46, .85+i*.70+.55*clamp((-offset-7+i*3)/3),0,false));
+        };
+    });
+    exhibit('Расчистка у дома № 23',-38.8,17.18,g => {
+        const snow = paint(g,b => b.box(0,.035,1.7,2.1,.07,3.2,'#d8d9cf'));
+        const bank = paint(g,b => b.ball(1.48,.21,1.8,.91,.56,3.3,'#bfc2ba'));
+        const car = vehicle(g,'wagon','#858985',-2.3,1.6,0);
+        const worker = walker(g,6,'mechanic');
+        return (c,s) => {
+            car.visible = !s.ownerMoved;
+            snow.scale.x = 1 - .96*s.cleared;
+            bank.scale.y = .38 + 1.2*s.cleared;
+            worker(c,c.minutes >= 380 && c.minutes < 520,-1,clamp((c.minutes-380)/140)*3.1,0,false);
+        };
+    });
+    exhibit('Ограждение опасной наледи',-30.5,16.6,g => {
+        const barrier = paint(g,b => {
+            for(const side of [-1,1]) {
+                b.box(side*1.35,.46,0,.06,.92,.06,'#a36e3c');
+                b.box(side*1.35,.06,0,.42,.12,.32,'#79765e');
+            }
+            for(let i=0;i<12;i++) b.box(-1.25+i*.227,.74,0,.23,.088,.025,i%2?'#d4cdb2':'#a85648');
+        });
+        const porter = walker(g,6), passer = walker(g,10);
+        return (c,s) => {
+            barrier.visible = s.thaw;
+            porter(c,s.thaw,-1.8, .48,1.5,false);
+            const t = (c.sim.elapsed%12)/12;
+            passer(c,s.thaw,-3+6*t,.5+Math.sin(t*Math.PI)*1.4,-Math.PI/2,true);
+        };
+    });
+    exhibit('Погрузочное окно и весовая причала',-146,103.5,g => {
+        const boardText = board(g);
+        const shutters = paint(g,b => {
+            for(let i=0;i<10;i++) b.box(0,1.1+i*.15,-1.45,2.65,.145,.13,'#727871');
+        });
+        const stock = paint(g,b => {
+            for(let i=0;i<4;i++) {
+                b.box(1.3+i*.48,.25,-.7,.44,.50,.55,'#a28861');
+                b.box(1.3+i*.48,.25,-.416,.04,.52,.03,'#706350');
+            }
+        });
+        const loader = walker(g,12,'mechanic');
+        return (c,s) => {
+            const t=(1+Math.sin(c.sim.elapsed*.33))*.5;
+            stock.visible = s.port === 'unload';
+            shutters.scale.y = s.port === 'closed' ? 1 : .16;
+            shutters.position.y = s.port === 'closed' ? 0 : 1.95;
+            loader(c,stock.visible,-1+t*2,-.1,Math.cos(c.sim.elapsed*.33)>0?-Math.PI/2:Math.PI/2,true,{carry:'parcel'});
+            boardText('СКЛАД ПРИЧАЛА', s.port === 'closed' ? 'ЗАКРЫТО · ОХРАНА У ПРОХОДНОЙ' : s.port === 'unload' ? 'УТРЕННЯЯ ПРИЁМКА ЯЩИКОВ' : 'ВЕСОВАЯ ОТКРЫТА · ОКНО 2');
+        };
+    });
+    exhibit('Объявление на остановке',17.1,22.6,g => {
+        const sheet = board(g,1.35);
+        return (c,s) => sheet(s.detour ? 'ОБЪЕЗД · АВТОБУС 12' : 'АВТОБУС 12', s.detour ? 'ПОСАДКА У РЕЧНОГО ВОКЗАЛА · ВОСТОЧНЫЙ ВХОД' : 'МЕСТО ПОСАДКИ · КАНАЛЬНАЯ');
+    });
+    for (const [alternate, x, z] of [[false,17.1,27.5],[true,river.bus.x,river.bus.z+2.4]]) {
+        exhibit(alternate ? 'Рейс 12 на объезде' : 'Рейс 12 у рынка',x,z,g => {
+            const bus = vehicle(g,'van','#c8ba91',0,0,-Math.PI/2);
+            placard(bus,0,1.51,-2.39,.55,.24)('12','КАНАЛЬНАЯ');
+            const rider = walker(g,4);
+            return (c,s) => {
+                const phase=s.busPhase;
+                bus.visible = alternate === s.detour && (phase>=16 || phase>=0 && phase<3);
+                bus.position.x = phase>=16 ? (phase-18)*1.6 : phase*2.1;
+                const boarding = alternate === s.detour && phase>=10;
+                rider(c,boarding,-.7+clamp((phase-17)/2),-2+clamp((phase-17)/2),Math.PI,phase>=17);
+            };
+        });
+    }
+    exhibit('Афиши у ледовой арены',-66.3,-607,g => {
+        const sheet = board(g,1.62);
+        return (c,s) => sheet(s.matchTitle,s.matchLine);
+    });
+    exhibit('Гаражные объявления',-40.7,41.4,g => {
+        const sheet = board(g);
+        return (c,s) => sheet(s.keysReturned ? 'КЛЮЧИ ПЕРЕДАНЫ ХОЗЯИНУ' : 'НАЙДЕНЫ КЛЮЧИ В ЗЕЛЁНОМ ЧЕХЛЕ',s.notice);
+    });
+    exhibit('Мастер на обходе',6.8,-4,g => {
+        const master = walker(g,5,'mechanic');
+        const stations = [[7.8,-38.4],[6.8,-32],[6.2,-9],[10.5,23.1]];
+        return (c,s) => {
+            const to = stations[s.trackStage], from = stations[s.trackStage-1];
+            if (!to || !from) { master(c,false); return; }
+            const dx = to[0]-from[0], dz = to[1]-from[1];
+            const t = s.trackAt === null ? 1 : clamp((c.sim.elapsed-s.trackAt)*1.25 / Math.hypot(dx,dz));
+            master(c,true,from[0]+dx*t-g.position.x+.65,from[1]+dz*t-g.position.z,
+                t<1 ? Math.atan2(-dx,-dz) : 1.4,t<1);
+        };
+    });
+    exhibit('Приёмная секции 07',-70,-634,g => {
+        const coach = walker(g,13);
+        return (c,s) => coach(c,s.mittenStage >= 1,.65,.3,2.4,false);
+    });
+    const glassCrate = paint(root,b => {
+        b.box(0,.38,0,1.28,.68,.10,'#829b99');
+        for (const side of [-1,1]) {
+            b.box(side*.69,.38,0,.075,.76,.25,'#af916e');
+            b.box(0,.38+side*.35,0,1.44,.072,.26,'#b19a78');
+            b.box(side*.37,.38,0,.047,.79,.29,'#656358');
+        }
+        b.rod([-.68,.1,.16],[.68,.65,.16],.027,'#9f845e',true);
+    });
+    glassCrate.name = 'Стекло в транспортной раме';
+    return (c,s) => {
+        scenes.forEach(draw=>draw(c,s));
+        const car = s.glassStage === 2 ? c.sim.cars.find(v => v.id === s.glassVehicle) : null;
+        const x = car?.x ?? -39, z = car?.z ?? 43;
+        glassCrate.visible = c.zone === 'street' && (s.glassStage === 1 || !!car) && Math.hypot(c.player.x-x,c.player.z-z)<65;
+        if (glassCrate.visible) {
+            glassCrate.position.set(x,car ? car.y+specs[car.kind].roof+.035 : groundHeight(x,z),z);
+            glassCrate.rotation.y = car?.yaw ?? 0;
+        }
+    };
+}
+
+module.exports = { createWinterShiftView };
+
+},
+"game/winter-shifts.js": function(require, module, exports) {
+'use strict';
+const { marketHours } = require('./market-hours.js');
+const { createErrands, guides: errandGuides } = require('./winter-errands.js');
+const { createWinterShiftView } = require('./winter-shift-view.js');
+const { river } = require('./venue-layout.js');
+const { bindThawBarrier } = require('./collision.js');
+
+const boards = [
+    ['workers','Автобус проходной ТЭЦ',-55,-117,'Рейсы рабочего автобуса по дням недели.'],
+    ['bread','Привоз хлеба у дома № 19',35.8,55.55,'Фургон приезжает к служебному входу перед открытием магазина.'],
+    ['yard','Уборка двора',-38.8,17.18,'Дворник расчищает проход от подъезда к улице.'],
+    ['thaw','Обход под карнизом',-30.5,17.4,'Дворовой проход у оттепельного ограждения.'],
+    ['port','Весовая причала 01',-146,103.5,'График приёмки и окно взвешивания ящиков.'],
+    ['reroute','Доска объездов автобуса 12',16.5,24.5,'При переносе остановки указано место посадки.'],
+    ['rink','Афиши и счёт у арены',-66.3,-607,'Афиша сегодняшнего матча и результаты прошлой встречи.'],
+    ['news','Объявления гаражного кооператива',-40.7,41.4,'Потерянные ключи, график отключений и дата собрания.'],
+    ['keys','Бюро находок депо',10.5,-38.25,'У диспетчера лежат найденные на линии вещи.']
+];
+const guides = [...errandGuides, ...boards.map(([,label,x,z,desc]) => [label,x,z,desc])];
+const weekdayTimes = [420,540,900,1020,1380], weekendTimes = [420,900,1380];
+const teams = ['Литейщик','Канал','Полярник','Вагоностроитель'];
+const near = (p,x,z) => Math.hypot(p.x-x,p.z-z) < 2.8;
+const clock = n => String(Math.floor(n/60)).padStart(2,'0') + ':' + String(n%60).padStart(2,'0');
+const match = day => teams[(day+4)%4] + ' — ' + teams[(day+5)%4];
+const score = day => (2+(day+3)%3) + ':' + ((day+4)%3);
+function shiftState(c, errands, state) {
+    const day = Math.floor(c.calendarMinutes/1440), minute = c.minutes;
+    const weekend = (day+4)%7 >= 5;
+    const departures = weekend ? weekendTimes : weekdayTimes;
+    const departure = departures.find(t => minute >= t-5 && minute < t+7);
+    const nowPlaying = minute >= 1140, posted = minute >= 1215;
+    const resultDay = posted ? day : day-1;
+    const ownerMoved = errands.complete('plough');
+    return {
+        day, weekend, departures, shuttlePhase: departure === undefined ? null : minute-departure,
+        shopOpens: marketHours(c.calendarMinutes).open, ownerMoved,
+        cleared: Math.max(ownerMoved ? 1 : 0, Math.min(1, Math.max(0,(minute-380)/140))),
+        thaw: c.calendarMinutes < state.barrierUntil,
+        port: minute < 360 || minute >= 1200 ? 'closed' : minute < 620 ? 'unload' : 'weigh',
+        detour: minute >= 1100 && minute < 1160,
+        busPhase: minute >= 360 && minute < 1320 ? (minute+5)%20 : -1,
+        matchTitle: posted ? 'ИТОГ МАТЧА · '+score(day) : (nowPlaying ? 'МАТЧ ИДЁТ' : 'СЕГОДНЯ В 19:00'),
+        matchLine: match(day) + (posted ? ' · '+score(day) : ' · Прошлый матч '+match(resultDay)+' '+score(resultDay)),
+        notice: (day < 1 ? 'Вода · отключение в субботу' : 'Отключение перенесли на понедельник')
+            + (errands.complete('gate') ? ' · Рабочие встречаются у хлебного окна' : day < 1 ? ' · Собрание ожидает даты' : ' · Собрание в среду в 19:00'),
+        keysReturned: state.keys === 2, mittenStage: errands.stage('mitten'), trackStage: errands.stage('track'),
+        glassStage: errands.stage('glass'), glassVehicle: errands.glassVehicle, trackAt: errands.trackAt
+    };
+}
+function createWinterShifts(scene) {
+    const errands = createErrands(), view = createWinterShiftView(scene);
+    let state = { keys:0, barrierUntil:0 };
+    function actions(c) {
+        const local = errands.actions(c);
+        if (c.zone !== 'street' || c.car || c.sim.tramRider?.onboard) return local;
+        for (const [id,label,x,z] of boards)
+            if (near(c.player,x,z)) local.push({ id: 'board-'+id, label });
+        return local;
+    }
+    function act(id,c) {
+        if (!id.startsWith('board-')) return errands.act(id,c);
+        const entry = boards.find(([key]) => id === 'board-'+key);
+        if (!entry || !actions(c).some(row => row.id === id)) return;
+        const [key,label] = entry, s = shiftState(c,errands,state);
+        const lines = {
+            workers: (s.weekend ? 'Выходной день. Рейсы для дежурной смены' : 'Будний день. Выходы заводских смен') + ' · '+s.departures.map(clock).join(', '),
+            bread: 'Доставка к '+clock(s.shopOpens-20)+'. Магазин открывается в '+clock(s.shopOpens)+'.',
+            yard: s.cleared >= 1 ? 'Проход к дороге расчищен. Снег сдвинут к бордюру.' : 'Утреннюю дорожку от подъезда чистят с 06:20 до 08:40.',
+            thaw: s.thaw ? 'С карниза падает лёд. Дворник оградил проход. Обойдите через двор вдоль скамейки.' : 'Дворовой тротуар открыт.',
+            port: {closed:'Ворота склада закрыты до 06:00. Дежурит охрана.',unload:'У причала принимают ящики до 10:20.',weigh:'Весовая принимает машины до 20:00.'}[s.port],
+            reroute: s.detour ? 'Канальная закрыта для автобуса на час вечерней разгрузки. До 19:20 посадка у Речного вокзала. Идите к набережной и поверните направо у касс. Отправления в 18:35, 18:55 и 19:15.' : 'Остановка действует. В часы вечерней разгрузки посадку переносят к Речному вокзалу с 18:20 до 19:20.',
+            rink: s.matchTitle+' · '+s.matchLine+(errands.complete('mitten') ? '. Варежку вернули секции 07.' : '. Утеряна синяя варежка секции 07.'),
+            news: (s.keysReturned ? 'Ключи в зелёном чехле вернулись владельцу. ' : 'Ключи в зелёном чехле ждут хозяина в депо. ') + s.notice,
+            keys: state.keys === 0 ? 'На брелоке телефон кооператива. Диспетчер просит занести ключи сторожу Канальных гаражей.' : state.keys === 1 ? 'Сторож ждёт у доски гаражного кооператива.' : 'Сторож вернул связку хозяину.'
+        };
+        const choices = [];
+        if (key === 'keys' && state.keys === 0) choices.push({ label:'Взять ключи для сторожа', run() {
+            state.keys=1; c.addMapPin(-40.7,41.4,'Вернуть ключи сторожу'); c.record('Ключи из депо нужно вернуть сторожу Канальных гаражей.'); c.persist();
+        } });
+        if (key === 'news' && state.keys === 1) choices.push({ label:'Отдать зелёный чехол с ключами', run() {
+            state.keys=2; c.sim.depotKeysReturned = true; c.record('Сторож вернул ключи владельцу и снял объявление.'); c.persist();
+        } });
+        if (key === 'reroute' && s.detour) choices.push({label:'Отметить временную остановку',run() { c.addMapPin(river.bus.x,river.bus.z,'Автобус 12 · пересадка у вокзала'); }});
+        let wait;
+        if (key === 'workers') wait = s.departures.find(t=>t>c.minutes+5) ?? s.departures[0];
+        if (key === 'bread') wait = s.shopOpens-20;
+        if (key === 'port') wait = s.port === 'closed' ? 360 : s.port === 'unload' ? 620 : 1200;
+        if (key === 'rink' && c.minutes < 1215) wait = c.minutes < 1140 ? 1140 : 1215;
+        if (Number.isInteger(wait)) choices.push({label:'Подождать до '+clock(wait),run() {
+            if (!c.waitUntil(wait)) c.notify('Остановитесь в безопасном месте.');
+        }});
+        choices.push({ label:'Закрыть',run(){} });
+        c.choose(label, choices, lines[key]);
+    }
+    function update(c) {
+        if ((c.weather?.temperature??-1) > .7 && c.calendarMinutes >= state.barrierUntil)
+            state.barrierUntil = c.calendarMinutes + 90;
+        c.sim.depotKeysReturned = state.keys === 2;
+        errands.update(c);
+        const shift = shiftState(c,errands,state);
+        // Give anyone standing on the line enough time to leave before placing the rail.
+        if (c.sim.cars) bindThawBarrier(c.sim.cars,shift.thaw,
+            c.zone === 'street' && Math.abs(c.player.x+30.5)<1.75 && Math.abs(c.player.z-16.6)<.4);
+        view(c,shift);
+    }
+    return {
+        act, actions, update, agenda: () => errands.agenda(),
+        save: () => ({...state, errands:errands.save()}),
+        restore(data) {
+            state = { keys:[1,2].includes(data?.keys) ? data.keys : 0,
+                barrierUntil:Number.isSafeInteger(data?.barrierUntil) ? data.barrierUntil : 0 };
+            errands.restore(data?.errands);
+        }
+    };
+}
+
+module.exports = { createWinterShifts, guides, shiftState };
+
+},
+"game/winter-street-sounds.js": function(require, module, exports) {
+'use strict';
+const {metal} = require('./venue-layout.js');
+const {vehicleRattleSample,vehicleRattleRate} = require('./vehicle-audio.js');
+const {serviceSites} = require('./new-city-services-layout.js');
+const waste = serviceSites.find(s=>s.id==='city-side-loader').body;
+const site = (key,kind,x,z,range,gain,period,length,hours,offset=0) => ({key,kind,x,z,range,gain,period,length,hours,offset});
+const shopSounds = [
+    site('thermal-turbines','substation',-38,-89,228,.43,1,1),
+    site('ferry-cable','winch',-161.8,81.6,26,.86,8.5,1.1,[360,1290]),
+    site('waste-pump','hydraulic',waste.x,waste.z,22,.67,11.86,1.1),
+    site('yard-door','door',-34.9,16,18,.70,18,.52,[340,1420],3.4),
+    site('kitchen','dishes',-31,13.6,15,.66,9,.69,[390,1380],2.3),
+    site('garage-dog','dog',-49,45.5,29,.56,21,.77,undefined,7),
+    site('old-minivan','vanStarter',-10,42,19,.72,155,.40,undefined,127),
+    site('garage-gate','chain',-37.7,41,23,.63,24,.99,[420,1280],11),
+    site('garage-receiver','receiver',-42,42,15,.42,9.2,1.45,[420,1330]),
+    site('canal-player','accordion',-24.2,17.5,19,.71,3.2,1.27,[540,1260],.6),
+    site('club-practice','practice',metal.door.x,metal.door.z,22,.67,4.5,1.48,[metal.opens,metal.closes])
+];
+const tau=Math.PI*2;
+const music = { practice:[196,247,294,277,247], accordion:[294,330,370,330,294], receiver:[220,262,294,330,247] };
+function streetSample(kind,rate) {
+    if (kind==='vanStarter') {
+        const starter=vehicleRattleSample('starter-diesel');
+        const data=new Float32Array(Math.floor(starter.length*rate/vehicleRattleRate));
+        for(let i=0;i<data.length;i++)data[i]=starter[Math.floor(i*vehicleRattleRate/rate)];
+        return data;
+    }
+    const notes=music[kind], length=notes?1.43:kind==='hydraulic'||kind==='winch'?1.02:.77;
+    const data=new Float32Array(Math.round(rate*length));
+    let seed=31981, low=0;
+    for(let i=0;i<data.length;i++){
+        const t=i/rate;
+        seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+        const noise=seed/2147483648-1;
+        low+=.12*(noise-low);
+        const attack=Math.min(1,t*90), fade=Math.min(1,(length-t)*15);
+        let v=0;
+        if(notes){
+            const n=Math.min(4,Math.floor(t/.285)), age=t-n*.285, hz=notes[n];
+            const env=Math.min(1,age*23)*Math.exp(-age*(kind==='accordion'?2.8:5.7));
+            v=env*(Math.sin(t*tau*hz)*.29 + Math.sin(t*tau*hz*2)*.11 + Math.sin(t*tau*hz*1.005)*.078);
+        } else if(kind==='dishes'||kind==='chain'||kind==='joints'||kind==='door'){
+            const strikes=kind==='chain'?.078:kind==='joints'?.185:kind==='door'?.47:.225;
+            const age=t%strikes, nth=Math.floor(t/strikes);
+            const hz=kind==='dishes'?1380+nth*217:kind==='chain'?661:kind==='door'?74:158;
+            v=(.32*Math.sin(t*tau*hz)+.17*Math.sin(t*tau*hz*2.71)+.35*noise)*Math.exp(-age*(kind==='chain'?45:30))*Math.exp(-t*(kind==='chain'?.7:2.4));
+        } else if(kind==='dog'){
+            const age=t%.34, hz=116+125*Math.exp(-age*7);
+            v=Math.max(0,Math.sin(age*11))*Math.exp(-age*8)*(.62*Math.sin(t*tau*hz)+.20*Math.sin(t*tau*hz*2.9)+.25*low);
+        } else if(kind==='flanges'){
+            v=(.24*Math.sin(t*tau*898+2*Math.sin(t*21))+.12*Math.sin(t*tau*1348)+low*.48)*Math.sin(Math.PI*t/length);
+        } else {
+            const hz=kind==='hydraulic'?118:74;
+            v=(.24*Math.sin(t*tau*hz+3*Math.sin(t*8))+.15*Math.sin(t*tau*hz*2)+low*.46)*(.58+.42*Math.cos(t*(kind==='winch'?29:5)));
+        }
+        data[i]=v*attack*fade;
+    }
+    return data;
+}
+module.exports={shopSounds,streetSample};
 
 },
 "game/world-batch.js": function(require, module, exports) {
@@ -43321,11 +47132,20 @@ function regularBuilding(f, n, b, walls, sign) {
     }
     if (f.name) {
         const width = Math.min(front.width - 1.2, Math.max(5.2, f.name.length * .60)), sy = industrial ? h * .78 : residential ? h * .55 : h * .77;
-        const ink = kind === 'brick' || industrial ? '#ffd49a' : kind === 'dock' ? '#c8e7e0' : '#9fe1da';
+        const ink = f.name === 'ФОРМОВОЧНЫЙ ЦЕХ' ? '#b6b19b' : industrial ? '#d7c4a1' : '#e2debe';
         local(0, sy, .19, width + .27, 1.53, .20, '#3c535b');
         const badge = front.point(0, .31);
-        sign(f.name, industrial ? 'СЕВПРОМ · ПРОМЫШЛЕННАЯ ЛИНИЯ' : kind === 'dock' ? 'УПРАВЛЕНИЕ РЕЧНОГО ФЛОТА' : 'КАНАЛЬСК · ГОРОДСКАЯ СЕТЬ', ink, '#354952', badge.x, sy, badge.z, width, 1.31, front.angle);
-        local(0, sy - .78, .18, width * .77, .045, .11, industrial ? '#d7a96f' : '#7cc7c3');
+        sign(f.name, f.name === 'ФОРМОВОЧНЫЙ ЦЕХ' ? 'КОРПУС № 4 · 1976' : industrial ? 'СЕВПРОМ · ПРОМЫШЛЕННАЯ ЛИНИЯ' : kind === 'dock' ? 'УПРАВЛЕНИЕ РЕЧНОГО ФЛОТА' : 'КАНАЛЬСК · ГОРОДСКАЯ СЕТЬ', ink, '#354952', badge.x, sy, badge.z, width, 1.31, front.angle);
+        local(0, sy - .78, .18, width * .77, .045, .11, '#918b78');
+        if (f.name === 'ФОРМОВОЧНЫЙ ЦЕХ') {
+            const offset=front.width*.27, p=front.point(offset,.33);
+            sign('ШИНОМОНТАЖ', 'РЕМОНТ КАМЕР · 08—20', '#593d2c','#d4bd80',p.x,3.89,p.z,4.12,.71,front.angle);
+            const pile=front.point(offset+2.1,.61);
+            for(let i=0;i<4;i++) {
+                b.cyl(pile.x,.14+i*.24,pile.z,.68,.24,'#484a46');
+                b.cyl(pile.x,.266+i*.24,pile.z,.29,.012,'#383b38');
+            }
+        }
     }
     b.cyl(x + w / 2 + .08, h / 2, z + d * .40, .12, h - .2, '#667781');
 }
@@ -43637,6 +47457,9 @@ const market_quarter_layout_js_1 = require("./market-quarter-layout.js");
 const world_expansion_layout_js_1 = require("./world-expansion-layout.js");
 const { placeWalls, warmSurfaceAt } = require("./world-life-place-layout.js");
 const { neighborhoodKiosk } = require("./world-life-neighbor-layout.js");
+const { transitSolids } = require("./new-city-transit-layout.js");
+const { serviceSolids } = require("./new-city-services-layout.js");
+const { industrySolids } = require("./new-city-industry-layout.js");
 exports.places = {
     spawn: { x: -34, z: 42 }, garage: { x: -43, z: 43 },
     market: { x: 30, z: 26 }, depot: { x: 12, z: -39 },
@@ -43733,7 +47556,9 @@ exports.tramSupports = [
 exports.freightWagons = [-18, -6, 6].map(z => ({ x: 120.85, z, w: 2.59, d: 9.64, h: 2.99 }));
 exports.obstacles = [
     neighborhoodKiosk,
+    ...require('./district-winter-details.js').streetSolids,
     ...placeWalls,
+    ...transitSolids, ...serviceSolids, ...industrySolids,
     ...cargo_rail_js_1.cargoShedSides,
     ...Object.values(blackout_js_1.blackoutProps),
     ...exploration_layout_js_1.explorationObstacles, ...city_life_layout_js_1.serviceFence, ...city_life_layout_js_1.roadStopProps, ...market_quarter_layout_js_1.quarterWorkrooms, ...market_quarter_layout_js_1.quarterProps,
@@ -43948,8 +47773,8 @@ const { createPerson } = require('./model-people.js');
 
 const entrance = apartmentEntry(apartments.find(building => building.id === 19));
 const floodStops = [
-    { x: -40.3, z: 60.05, label: 'Отметки большой воды', note: 'Красные риски на парапете отмечают уровень воды в 2051, 2064 и 2072 годах. Самая высокая — май 2064. Следующий указатель стоит на другом краю спуска к каналу, восточнее.' },
-    { x: -31.65, z: 60.05, label: 'След на спуске', note: 'В 2064-м вода здесь перелилась через парапет. По тёмной полосе на опоре видно, где начинался старый спуск. По северному берегу пройдите дальше на восток к дому № 19. У входа сохранилась ещё одна отметка.' },
+    { x: -40.3, z: 60.05, label: 'Отметки большой воды', note: 'Красные риски на парапете отмечают уровень воды в 1986, 1999 и 2007 годах. Самая высокая — май 1999. Следующий указатель стоит на другом краю спуска к каналу, восточнее.' },
+    { x: -31.65, z: 60.05, label: 'След на спуске', note: 'В 1999-м вода здесь перелилась через парапет. По тёмной полосе на опоре видно, где начинался старый спуск. По северному берегу пройдите дальше на восток к дому № 19. У входа сохранилась ещё одна отметка.' },
     { x: entrance.x - 1.75, z: entrance.front + 1.23, label: 'Отметка у дома № 19', note: 'Здесь вода дошла до порога старого входа. После паводка порог подняли на две ступени, а почтовые ящики перевесили выше. Под табличкой виден шов от прежнего крыльца.' }
 ];
 const tracksStart = { x: 20.8, z: 22.2 };
@@ -43995,7 +47820,7 @@ function panel(panels, title, text, x, y, z, w, h, angle = 0, ink = '#dfca9e', b
 function floodView(view) {
     view(floodStops[0], 32, (root, b, panels) => {
         const face = canal.north - .388;
-        for (const [i, label] of ['2051', 'МАЙ 2064', '2072'].entries()) {
+        for (const [i, label] of ['1986', 'МАЙ 1999', '2007'].entries()) {
             const y = [.125, .355, .215][i], x = floodStops[0].x + i * .82;
             b.box(x + .13, y, face, .70, .028, .028, '#895a51');
             b.box(x + .38, y - .04, face - .004, .034, .094, .026, '#79574d');
@@ -44011,7 +47836,7 @@ function floodView(view) {
             if (i % 2 === 0)
                 b.box(px - .10, .245 - i % 3 * .029, z + .001, .023, .14 + .018 * i, .015, '#857c75');
         }
-        panel(panels, 'УРОВЕНЬ 2064', 'ДОМ 19  ←', x + .26, .74, z - .015, 1.25, .29, Math.PI, '#dfc6a9', '#59676c');
+        panel(panels, 'УРОВЕНЬ 1999', 'ДОМ 19  ←', x + .26, .74, z - .015, 1.25, .29, Math.PI, '#dfc6a9', '#59676c');
     });
     view(floodStops[2], 32, (root, b, panels) => {
         const { x } = floodStops[2], z = entrance.front + .052;
@@ -44019,7 +47844,7 @@ function floodView(view) {
         b.box(x, .124, z, 1.20, .031, .026, '#6a7274');
         for (let i = 0; i < 5; i++)
             b.box(x + (i - 2) * .24, .185, z, .023, .11, .019, '#6a7274');
-        panel(panels, 'МАЙ 2064', 'СТАРЫЙ ПОРОГ', x, .67, z + .026, .69, .32, 0, '#dbbc9a', '#63584e');
+        panel(panels, 'МАЙ 1999', 'СТАРЫЙ ПОРОГ', x, .67, z + .026, .69, .32, 0, '#dbbc9a', '#63584e');
     });
 }
 
@@ -44616,7 +48441,7 @@ function filmTexture(index) {
         c.fillRect((i * 443 + index * 29) % 254, (i * i * 11 + i * 31) % 144, i % 8 ? .56 : 2, .65);
     c.fillStyle = '#2c2924'; c.fillRect(0, 123, 256, 21);
     c.fillStyle = '#e0c89c'; c.font = 'bold 10px monospace';
-    c.fillText(['КАНАЛЬНАЯ ДО ЭСТАКАДЫ', 'КРАН К–14 · 2051', 'СЕВЕРНАЯ ТЭЦ · 2060'][index], 8, 137);
+    c.fillText(['КАНАЛЬНАЯ ДО ЭСТАКАДЫ', 'КРАН К–14 · 1986', 'СЕВЕРНАЯ ТЭЦ · 1995'][index], 8, 137);
     return texture(canvas);
 }
 
@@ -45011,8 +48836,23 @@ function deliveryPoint(scene, point, i) {
         thermos(flasks, (j - (i < 0 ? 1 : 0)) * .240, 1.028, -.026, ['#9c5e4d', '#517776', '#718451'][j]);
     const delivered = flasks.mesh();
     group.add(body.mesh(), delivered);
+    let foundCase;
+    if(i===0) {
+        const cup = new Batch();
+        cup.add(require('./model-geometry.js').tube,[.37,1.10,-.06],[.13,.15,.13],'#d3c6a6');
+        cup.box(.44,1.12,-.06,.039,.083,.039,'#d3c6a6');
+        require('./model-geometry.js').stencil(cup,'07',[.37,1.11,.012],.007,'#566755');
+        group.add(cup.mesh());
+        const keys=new Batch();
+        keys.box(-.37,1.055,.05,.19,.051,.11,'#4d6047');
+        keys.box(-.36,1.071,.065,.16,.023,.10,'#687e53');
+        keys.rod([-.28,1.073,.03],[-.19,1.073,.06],.009,'#aea78b');
+        keys.add(require('./model-geometry.js').ring,[-.25,1.078,.035],[.026,.023,.023],'#bdbca6',[Math.PI/2,0,0]);
+        foundCase=keys.mesh(); group.add(foundCase);
+    }
     let actor;
     return (c, active, served) => {
+        if(foundCase) foundCase.visible=!c.sim.depotKeysReturned;
         delivered.visible = i < 0 ? active : served;
         if (i < 0)
             return;
@@ -45287,7 +49127,9 @@ function createNeighbors(scene) {
     }
     function serve(c, i) {
         if (!nightShift(c) || delivery?.shift !== shiftOf(c) || delivery.step !== i) {
-            c.show(stops[i].name, 'Дежурный пост. Ночная развозка начинается в кафе «Горячий лёд» после 19:00.');
+            const greeted = delivery?.step>i && delivery.shift===shiftOf(c);
+            c.show(stops[i].name, greeted ? ['Семён поднимает кружку с номером 07. «Согрелся, спасибо. Как там дорога?»','«Узнала по термосу. Чай горячий, вся смена довольна!»','«Опять к нам? На эстакаде тебя уже знают. За чай спасибо».'][i]
+                : 'Дежурный пост. Ночная развозка начинается в кафе «Горячий лёд» после 19:00.');
             return;
         }
         delivery.step++;
@@ -45864,18 +49706,28 @@ const { createPlaces } = require('./world-life-places.js');
 const { createEvents } = require('./world-life-events.js');
 const { createDiscoveries } = require('./world-life-discoveries.js');
 const { createNeighbors } = require('./world-life-neighbors.js');
+const { createCityPeople } = require('./new-city-people.js');
+const { createCityTransit } = require('./new-city-transit.js');
+const { createCityServices } = require('./new-city-services.js');
+const { createCityIndustry } = require('./new-city-industry.js');
 
 function createWorldLife(scene) {
     const modules = {
         places: createPlaces(scene), events: createEvents(scene),
-        discoveries: createDiscoveries(scene), neighbors: createNeighbors(scene)
+        discoveries: createDiscoveries(scene), neighbors: createNeighbors(scene),
+        people: createCityPeople(scene), transit: createCityTransit(scene),
+        services: createCityServices(scene), industry: createCityIndustry(scene)
     };
     const entries = Object.entries(modules);
     const sites = entries.flatMap(([key, module]) => module.sites.map(site => ({ ...site, key })));
-    const guides = sites.filter(site => site.guide !== false).map(site => {
+    const guides = [], peopleGuides = [], vehicleGuides = [];
+    for (const site of sites) {
+        if (site.guide === false)
+            continue;
         const point = site.guidePosition ?? site;
-        return [site.label, point.x, point.z, site.guideNote ?? site.note];
-    });
+        const list = site.key === 'people' ? peopleGuides : ['transit', 'services', 'industry'].includes(site.key) ? vehicleGuides : guides;
+        list.push([site.label, point.x, point.z, site.guideNote ?? site.note]);
+    }
     let vista = null;
 
     function context(c) {
@@ -45902,7 +49754,7 @@ function createWorldLife(scene) {
         ];
     }
     return {
-        guides, actions,
+        guides, peopleGuides, vehicleGuides, actions,
         get lookout() { return vista?.view ?? null; },
         restore(data) {
             vista = null;
@@ -46597,7 +50449,8 @@ exports.garageMasonry = garageMasonry;
 exports.cabinetPlate = cabinetPlate;
 exports.garageDoor = garageDoor;
 exports.signTexture = signTexture;
-exports.opticMural = opticMural;
+exports.handTicket = handTicket;
+exports.tramMosaic = tramMosaic;
 const THREE = require("../engine/three.module.min.js");
 const world_layout_js_1 = require("./world-layout.js");
 const puddles_js_1 = require("./puddles.js");
@@ -46793,20 +50646,13 @@ function districtFloor() {
         const z = zroad ? (side ? 30 : -46) + (rnd() - .5) * 10 : rnd() * 117 - 66;
         rect(x, z, rnd() * 2 + .1, rnd() * .21 + .04, rnd() > .5 ? 'rgba(138,159,181,.12)' : 'rgba(12,24,41,.10)');
     }
-    for (const [x, z, col] of [[28, 23, '118,231,224'], [35, 22, '243,125,83'], [-44, 44, '235,171,88'], [-8.15, 18.5, '123,225,183']]) {
-        pool(x, z, 6, .95, 'rgba(' + col + ',.30)', 'rgba(' + col + ',0)');
-    }
-    pool(-8.15, 25.5, 7.2, 1.40, 'rgba(102,185,164,.18)', 'rgba(102,185,164,0)');
-    for (let i = 0; i < 48; i++) {
-        const z = 18 + rnd() * 12.8, x = -8.15 + (rnd() - .5) * (1.7 + (z - 18) * .35);
-        rect(x, z, .2 + rnd() * 1.65, .04 + rnd() * .085, 'rgba(161,215,187,' + (.09 + rnd() * .19) + ')');
-    }
-    for (const [x, z, r, tint] of [[-45.2, 42, 3.8, '111,233,235'], [-46, 48.6, 2.5, '255,88,77'], [28, 23.8, 3.5, '97,233,223'], [35.3, 24.2, 2.6, '255,104,96']]) {
-        pool(x, z, r, 1.28, 'rgba(' + tint + ',.36)', 'rgba(' + tint + ',0)');
-        for (let k = 0; k < 42; k++) {
-            const d = (rnd() - .5) * 5.1;
-            rect(x + (rnd() - .5) * (2 + Math.abs(d) * .32), z + d, .15 + rnd() * .80, .035 + rnd() * .067, 'rgba(' + tint + ',' + (.065 + rnd() * .19) + ')');
-        }
+    // Slush collects in wheel ruts and ploughed ridges on the Kanálnaya carriageway.
+    for (let i = 0; i < 620; i++) {
+        const x = -81 + rnd() * 163;
+        const nearKerb = i % 3 === 0, side = i % 2 ? 1 : -1;
+        const z = 30 + side * (nearKerb ? 4.8 : 2.1) + (rnd() - .5) * .65;
+        rect(x, z, .15 + rnd() * .87, .035 + rnd() * .12,
+            nearKerb ? 'rgba(171,166,153,.39)' : 'rgba(145,141,131,.22)');
     }
     puddles_js_1.districtPuddles.forEach(([x, z, rx, rz, angle, light], i) => (0, graphics_pavement_js_1.paintMeltwater)(c, x, z, rx, rz, angle, light, 739 + i * 101));
     for (const [x, z, a] of [[-33.2, 34.8, 1.57], [-23, 34.8, 1.57], [38.7, 25, 1.57], [41.2, -13, 0], [-54.8, -27, 0], [17, -51, 1.57]])
@@ -46880,6 +50726,18 @@ function districtFloor() {
     }
     canalWalk.paintWalk(c, random(1946));
     canalWalk.paintExitTracks(c);
+    // Two shovelled walks meet the salted road. The shortcut by the beds stays single-file.
+    line(-36,16,-36,21.4,1.45,'rgba(124,120,104,.47)');
+    line(-36,21.4,-32,23.2,1.36,'rgba(127,121,106,.44)');
+    line(-25,37.4,-17,40.3,.56,'rgba(148,145,130,.49)');
+    for(let i=0;i<21;i++) {
+        const f=i/20;
+        rect(-25+8*f+(i%2)*.11,37.4+2.9*f,.105,.23,'rgba(103,102,91,.55)');
+    }
+    for(let i=0;i<95;i++) {
+        const x=24+rnd()*17,z=22.8+rnd()*.62;
+        rect(x,z,.065+rnd()*.18,.036+rnd()*.09,'rgba(125,115,91,.56)');
+    }
     canalWalk.paintMarketBay(c, random(3229));
     rect(0, 74, 200, 23, '#7596a9');
     for (let i = 0; i < 390; i++) {
@@ -46951,6 +50809,15 @@ function occupiedPane(kind) {
         c.moveTo(0, 0); c.lineTo(cream ? 19 : 10, 0); c.lineTo(8, 53); c.lineTo(0, 60); c.fill();
         c.fillRect(cream ? 35 : 44, 0, 3.2, 64);
         if (cream) c.fillRect(0, 20, 80, 2.3);
+        if (kind === 'reading') {
+            c.fillStyle = '#564c42'; c.fillRect(20, 36, 2, 23);
+            c.fillStyle = '#e7ce9c'; c.beginPath();
+            c.moveTo(11, 38); c.lineTo(32, 38); c.lineTo(27, 27); c.lineTo(15, 27); c.fill();
+        }
+        if (kind === 'kitchen') {
+            c.fillStyle = '#a89d77'; c.fillRect(2, 8, 22, 18); c.fillRect(27, 8, 17, 18);
+            c.fillStyle = '#766d58'; c.fillRect(0, 48, 67, 5);
+        }
         c.fillStyle = '#8e7e6c';
         c.fillRect(53, 51, 12, 7); c.fillRect(56, 44, 5, 7);
         c.fillStyle = '#a39178';
@@ -46994,6 +50861,10 @@ function facade(cols, rows, seed, routeFace = false, stairCol = -1) {
             c.save();
             c.translate(x * 64, y * 68);
             fill(0, 0, 64, 68, 'rgba(' + (rnd() > .48 ? '29,41,53' : '240,219,187') + ',' + (.025 + rnd() * .095) + ')');
+            if ((x*3+y*7+seed)%17===0) {
+                fill(2.8,3,59,63, 'rgba(197,191,166,.32)');
+                fill(3,3,59,1.1,'rgba(219,210,190,.65)');
+            }
             fill(0, 0, 64, 1.5, '#535e6a');
             fill(0, 1.5, 64, .9, 'rgba(205,203,190,.56)');
             fill(0, 0, 1.4, 68, '#56616c');
@@ -47290,6 +51161,22 @@ function garageDoor(bay) {
         }
     return texture(element);
 }
+function handTicket(item, price) {
+    const { context: c, element } = canvas(300, 150);
+    c.fillStyle='#dfd3ac';
+    c.fillRect(0,0,300,150);
+    c.strokeStyle='#a29a80'; c.lineWidth=2;
+    c.strokeRect(6,5,288,137);
+    c.translate(150,77); c.rotate(-.025); c.textAlign='center';
+    c.fillStyle='#474a72';
+    c.font='italic 29px Georgia, serif';
+    c.fillText(item,0,-15,274);
+    c.font='bold italic 47px Georgia, serif';
+    c.fillText(price+' ₽',0,42,264);
+    const map=texture(element);
+    map.userData.signText=item+' · '+price+' ₽';
+    return map;
+}
 function signTexture(title, sub, ink, back, ratio, number = '') {
     const w = 768, h = Math.max(110, Math.round(w / ratio)), { context: c, element } = canvas(w, h);
     c.fillStyle = back;
@@ -47320,101 +51207,45 @@ function signTexture(title, sub, ink, back, ratio, number = '') {
     map.userData.signText = [title, sub, number].filter(Boolean).join(' · ');
     return map;
 }
-function opticMural() {
-    const { context: c, element } = canvas(512, 600), rnd = random(2407);
-    c.fillStyle = '#254c54';
+function tramMosaic() {
+    const { context: c, element } = canvas(512, 600), rnd = random(1986);
+    c.fillStyle = '#d2c6a6';
     c.fillRect(0, 0, 512, 600);
-    c.fillStyle = '#2d5660';
-    c.fillRect(21, 18, 470, 564);
-    c.strokeStyle = '#6b9790';
-    c.lineWidth = 2;
-    c.strokeRect(32, 29, 448, 542);
-    for (let i = 0; i < 1100; i++) {
-        c.fillStyle = i % 2 ? 'rgba(211,219,181,.07)' : 'rgba(12,29,40,.12)';
-        c.fillRect(21 + rnd() * 471, 20 + rnd() * 562, 1 + rnd() * 4, 1 + rnd() * 2);
+    const shades = ['#a7b7ad', '#8caaad', '#789298', '#d6bf96'];
+    for (let i = 0; i < 4; i++) {
+        c.fillStyle = shades[i];
+        c.fillRect(14, 20 + i * 105, 484, 115);
     }
-    c.fillStyle = '#a8c8b6';
-    c.font = 'bold 24px K77Display';
-    c.fillText('ГОРОДСКАЯ ОПТИКА', 52, 80);
-    c.textAlign = 'right';
-    c.fillStyle = '#f2b76f';
-    c.fillText('24', 460, 80);
-    c.textAlign = 'left';
-    const cx = 256, cy = 278;
-    c.lineCap = 'round';
-    c.lineJoin = 'round';
-    c.strokeStyle = '#a4e1cb';
-    c.lineWidth = 19;
-    c.beginPath();
-    c.moveTo(54, cy);
-    c.bezierCurveTo(152, 145, 335, 128, 457, cy);
-    c.bezierCurveTo(344, 408, 167, 427, 54, cy);
-    c.closePath();
+    // The pale winter sun, truss bridge and two-colour tram form three bands of colour.
+    c.fillStyle = '#dfb46e'; c.beginPath(); c.arc(364, 101, 48, 0, 2 * Math.PI); c.fill();
+    c.fillStyle = '#677672';
+    for (let n = 0; n < 9; n++) {
+        const h = 30 + rnd() * 68;
+        c.fillRect(14 + n * 56, 236 - h, 34 + rnd() * 17, h);
+    }
+    c.fillStyle = '#718d96'; c.fillRect(14, 312, 484, 140);
+    c.fillStyle = '#3f514f'; c.fillRect(14, 300, 484, 16);
+    c.strokeStyle = '#556961'; c.lineWidth = 11; c.beginPath();
+    c.moveTo(14, 298);
+    for (let n = 1; n <= 10; n++) c.lineTo(14 + n * 48, n % 2 ? 361 : 298);
     c.stroke();
-    c.fillStyle = '#21444d';
-    c.beginPath();
-    c.arc(cx, cy, 103, 0, 2 * Math.PI);
-    c.fill();
-    c.lineWidth = 15;
-    c.strokeStyle = '#75c5b5';
-    c.stroke();
-    for (let i = 0; i < 16; i++) {
-        const a = i * Math.PI / 8;
-        c.strokeStyle = i % 4 ? '#4c8c89' : '#e8b479';
-        c.lineWidth = i % 4 ? 4 : 7;
-        c.beginPath();
-        c.moveTo(cx + Math.cos(a) * 88, cy + Math.sin(a) * 88);
-        c.lineTo(cx + Math.cos(a) * 75, cy + Math.sin(a) * 75);
-        c.stroke();
-    }
-    c.strokeStyle = '#edb473';
-    c.lineWidth = 11;
-    c.beginPath();
-    c.arc(cx, cy, 57, -.72, 5.12);
-    c.stroke();
-    c.fillStyle = '#94dfcd';
-    c.beginPath();
-    c.arc(cx, cy, 35, 0, 2 * Math.PI);
-    c.fill();
-    c.fillStyle = '#e0f3dc';
-    c.beginPath();
-    c.arc(cx + 10, cy - 13, 9, 0, 2 * Math.PI);
-    c.fill();
-    c.strokeStyle = '#bb9c73';
-    c.lineWidth = 5;
-    for (const s of [-1, 1]) {
-        c.beginPath();
-        c.moveTo(cx + s * 61, cy - 100);
-        c.lineTo(cx + s * 105, cy - 143);
-        c.lineTo(cx + s * 143, cy - 143);
-        c.stroke();
-        c.fillStyle = '#ebc28b';
-        c.beginPath();
-        c.arc(cx + s * 146, cy - 143, 6, 0, 2 * Math.PI);
-        c.fill();
-        c.beginPath();
-        c.moveTo(cx + s * 91, cy + 94);
-        c.lineTo(cx + s * 125, cy + 125);
-        c.lineTo(cx + s * 161, cy + 125);
-        c.stroke();
-    }
-    c.fillStyle = '#9bdbbf';
-    c.font = 'bold 45px K77Display';
-    c.fillText('СЕРВИС ЗРЕНИЯ', 49, 492, 414);
-    c.fillStyle = '#e0b881';
-    c.font = 'bold 21px K77Display';
-    c.fillText('РЕМОНТ СЕНСОРОВ', 51, 533);
-    for (let i = 0; i < 7; i++) {
-        c.fillStyle = i < 4 ? '#b9976e' : '#638784';
-        c.fillRect(338 + i * 16, 515, 9, 17);
-    }
-    for (const x of [30, 482])
-        for (const y of [27, 574]) {
-            c.fillStyle = '#aab3a5';
-            c.beginPath();
-            c.arc(x, y, 3.7, 0, Math.PI * 2);
-            c.fill();
+    c.fillStyle = '#d4c39b'; c.fillRect(101, 221, 273, 69);
+    c.fillStyle = '#9b553d'; c.fillRect(101, 269, 273, 22);
+    c.fillStyle = '#485d59';
+    for (let n = 0; n < 7; n++) c.fillRect(109 + n * 38, 231, 31, 29);
+    c.fillStyle = '#ebe0bb'; c.font = 'bold 24px sans-serif'; c.fillText('07', 346, 251, 24);
+    c.strokeStyle = '#4a5651'; c.lineWidth = 5; c.beginPath();
+    c.moveTo(195, 221); c.lineTo(226, 194); c.lineTo(247, 209); c.lineTo(225, 221); c.stroke();
+    c.fillStyle = '#d4c39b'; c.fillRect(14, 452, 484, 128);
+    c.fillStyle = '#485950'; c.font = 'bold 34px sans-serif'; c.fillText('ВАГОННЫЙ МОСТ', 35, 508, 442);
+    c.font = '22px sans-serif'; c.fillText('КАНАЛЬСК   ·   1986', 37, 548);
+    for (let y = 0; y < 600; y += 8) {
+        for (let x = (y % 16 ? -4 : 0); x < 512; x += 10) {
+            c.fillStyle = rnd() > .52 ? 'rgba(255,244,206,.08)' : 'rgba(53,45,31,.10)';
+            c.fillRect(x, y, 9, 7);
+            c.fillStyle = 'rgba(120,111,90,.28)'; c.fillRect(x, y + 7, 10, 1); c.fillRect(x + 9, y, 1, 7);
         }
+    }
     return texture(element);
 }
 
@@ -47546,7 +51377,9 @@ function addTram(scene, b) {
         for (const z of [-3.5, -2.8, 2.8, 3.5])
             car.piece('round', side * 1.02, .46, z, .72, .24, .72, '#303844', 0, Math.PI / 2);
         car.box(side * 1.2, .76, 0, .08, .15, 9.8, '#89a5a4');
-        panels.place('line', () => (0, world_textures_js_1.signTexture)('ЛИНИЯ 07', 'ДЕПО · РЫНОК', '#ffce76', '#363d41', 5.1), side * 1.274, 2.13, 0, 1.35, .31, side * Math.PI / 2);
+        panels.place('line', () => (0, world_textures_js_1.signTexture)('ЛИНИЯ 07', 'ДЕПО · РЫНОК', '#292e29', '#dad4bf', 5.1), side * 1.274, 2.13, 0, 1.35, .31, side * Math.PI / 2);
+        panels.place('fleet-number', () => (0, world_textures_js_1.signTexture)('№ 407', 'КАНАЛЬСКОЕ ДЕПО', '#363e39', '#d1c6aa', 3.4),side*1.235,1.28,2.01,.76,.24,side*Math.PI/2);
+        panels.place('depot-sticker', () => (0, world_textures_js_1.signTexture)('ДЕПО 1', 'ОСМОТР ПРОЙДЕН', '#4d594b', '#bcbca2', 2),side*1.28,2.23,4.43,.29,.15,side*Math.PI/2);
     }
     for (const f of [-1, 1]) {
         car.box(0, 2.14, f * 5.10, 2.23, .94, .11, '#1f3443');
@@ -47622,6 +51455,9 @@ function createWorld(scene) {
     const sign = (title, sub, ink, back, x, y, z, w, h, ry = 0, num = '') => {
         labels.place([title, sub, ink, back, num].join('|'), () => (0, world_textures_js_1.signTexture)(title, sub, ink, back, w / h, num), x, y, z, w, h, ry);
     };
+    const { marketOpen } = require('./market-hours.js');
+    const { districtCalendarMinutes } = require('./city-clock.js');
+    const dawnTint = { value: 0 };
     const metal = '#54616d', snow = '#d9dfe1', dark = '#343f4a';
     const paving = new THREE.MeshBasicMaterial({ map: (0, world_textures_js_1.districtFloor)(), color: '#c9d2de' });
     const aggregate = (0, world_textures_js_1.grainTexture)();
@@ -47675,7 +51511,7 @@ function createWorld(scene) {
             for (let row = 0; row < rows - 1; row++) {
                 if (!stair && (row < from || row >= from + count))
                     continue;
-                const kind = stair ? 'stair' : (row + col + seed) % 3 === 0 ? 'cream' : 'amber';
+                const kind = stair ? 'stair' : ['kitchen', 'amber', 'reading', 'cream'][(row + col + seed) % 4];
                 const cx = x + direction * ((col + (stair ? .5 : 31.5 / 64)) * bay - width * .5);
                 const cy = top - (row + (stair ? 33 : 32.5) / 68) * storey;
                 windows.place(kind, () => (0, world_textures_js_1.occupiedPane)(kind),
@@ -47714,7 +51550,7 @@ function createWorld(scene) {
         b.cyl(x - w * .23, h + 1.9, z + 1, .09, 3.8, '#788893');
         b.beam(x - w * .23 - 1, h + 3.3, z + 1, x - w * .23 + 1, h + 3.3, z + 1, .045, metal);
         for (const k of [-1, 1])
-            b.cyl(x + k * (w / 2 - .22), h / 2, z + d / 2 + .12, .15, h, metal);
+            b.cyl(x + k * (w / 2 - .22), h / 2, z + d / 2 + .12, .15, h, id%4===0 && k>0 ? '#acb5b2' : metal);
         const floors = Math.round(h / 2.95);
         for (let n = 1; n < floors; n++) {
             const y = (n + .1) * (h - .5) / floors;
@@ -47727,6 +51563,15 @@ function createWorld(scene) {
                 for (const k of [-1, 1])
                     b.box(bx + k * 1.12, y + .52, bz, .11, .73, .75, '#7d8991');
                 b.box(bx, y + .95, bz + .38, 2.46, .07, .14, snow);
+                if ((n + id) % 3 === 1) {
+                    b.box(bx, y + 1.67, bz + .37, 2.26, 1.36, .055, '#91a2a1');
+                    for (const v of [-1.12, -.35, .36, 1.12])
+                        b.box(bx + v, y + 1.64, bz + .415, .051, 1.40, .075, '#ded8bd');
+                    b.box(bx, y + 2.37, bz + .06, 2.45, .085, .79, '#b8b9ab');
+                } else if ((n+id)%4===0) {
+                    for (const side of [-1,1])
+                        b.box(bx+side*.89,y+1.16,bz+.06,.32,.36,.29,'#a18468');
+                }
             }
         }
         if (id !== 24) {
@@ -47760,7 +51605,7 @@ function createWorld(scene) {
         }
         else {
             b.box(ex, doorBase + 1.22, front + .085, 1.72, 2.44, .18, '#384856');
-            b.box(ex, doorBase + 1.24, front + .20, 1.19, 2.19, .13, '#425761');
+            b.box(ex, doorBase + 1.24, front + .20, 1.19, 2.19, .13, ['#585e50', '#6b594b', '#465956'][id % 3]);
             b.box(ex + .41, doorBase + 1.02, front + .30, .06, .26, .085, '#b4b7b6');
             for (const side of [-1, 1])
                 b.box(ex + side * .80, doorBase + 1.24, front + .22, .17, 2.49, .32, finish.jamb);
@@ -47804,8 +51649,8 @@ function createWorld(scene) {
         const intercom = (0, world_street_js_1.intercomMount)(a);
         b.box(intercom.x, 1.42, intercom.z - .116, .42, .68, .205, '#344550');
         b.box(intercom.x, 1.55, intercom.z - .006, .34, .31, .065, '#293c49');
-        b.lamp(intercom.x - .151, 1.42, intercom.z + .032, .027, .44, .028, '#71cec9');
-        sign('СКАН ЛИЦА', 'ДОМОФОН', '#a4dacf', '#354954', intercom.x, 1.205, intercom.z + .002, .34, .14);
+        b.lamp(intercom.x - .151, 1.42, intercom.z + .032, .027, .44, .028, '#a9ae80');
+        sign('ВЫЗОВ', 'ДОМОФОН', '#a4dacf', '#354954', intercom.x, 1.205, intercom.z + .002, .34, .14);
         if (id === 23) {
             b.box(ex, awningY + .26, front + awningD * .92, 1.10, .54, .085, '#435b69');
             sign('23', 'КАНАЛЬНАЯ', '#f1e9ce', '#325467', ex, awningY + .26, front + awningD * .92 + .046, 1.05, .50);
@@ -47813,6 +51658,7 @@ function createWorld(scene) {
         else
             sign(String(id), 'КАНАЛЬНАЯ', '#d9e1de', '#435963', x + w * .34, 2.43, front + .282, 1.18, .70);
     }
+    require('./district-winter-details.js').addDistrictDetails(b, sign, world_layout_js_1);
     windows.flush();
     windowLayer.visible = false;
     for (const pane of windowLayer.children) {
@@ -47915,17 +51761,17 @@ function createWorld(scene) {
             b.box(xx, 1.8, front - .038, .08, 3.6, .09, '#647676');
         if (j === 0) {
             b.box(fx + .21, 4.03, z, .33, 1.10, 8.15, '#384853');
-            sign('КАНАЛЬНЫЕ ГАРАЖИ', 'РЕМОНТ · ПОКРАСКА', '#b6f3e1', '#244952', fx + .39, 4.02, z, 7.95, .97, Math.PI / 2);
-            b.lamp(fx + .396, 3.53, z - .29, .082, .045, 7.20, '#71e2da');
+            sign('КАНАЛЬНЫЕ ГАРАЖИ', 'РЕМОНТ · ПОКРАСКА', '#e8ddbc', '#4b574a', fx + .39, 4.02, z, 7.95, .97, Math.PI / 2);
+            b.box(fx + .396, 3.53, z - .29, .082, .045, 7.20, '#827b6b');
             const bladeX = fx + .90, bladeZ = front + .83;
             b.beam(fx, 3.07, bladeZ, bladeX + .60, 3.07, bladeZ, .13, metal, true);
             b.box(bladeX, 2.53, bladeZ, 1.22, 1.23, .22, '#37505a');
             for (const side of [-1, 1])
-                sign('СТО', '24 ЧАСА', '#adf0df', '#285664', bladeX, 2.54, bladeZ + side * .116, 1.16, 1.10, side < 0 ? Math.PI : 0);
-            b.lamp(bladeX + .64, 2.54, bladeZ, .06, 1.19, .22, '#93e5d9');
+                sign('СТО', '24 ЧАСА', '#e1d5b3', '#525a50', bladeX, 2.54, bladeZ + side * .116, 1.16, 1.10, side < 0 ? Math.PI : 0);
+            b.box(bladeX + .64, 2.54, bladeZ, .06, 1.19, .22, '#8b8977');
             for (const az of [-3.12, 3.12])
-                b.lamp(fx + .20, 1.92, z + d * .24 + az, .13, 2.63, .062, '#ee7c72');
-            b.lamp(fx + .25, 3.17, z + d * .24, .1, .060, 6.10, '#ff9c83');
+                b.box(fx + .20, 1.92, z + d * .24 + az, .13, 2.63, .062, '#8f8170');
+            b.lamp(fx + .25, 3.17, z + d * .24, .1, .085, .73, '#ffe0b6');
             sign('ГАРАЖИ', 'КАНАЛЬНАЯ УЛИЦА', '#deb98c', '#3f5458', x, 2.55, front - .105, 7.4, 1.35, Math.PI);
             b.cyl(fx - .45, 2.14, z + d / 2 + .2, .17, 4.23, '#66777b');
         }
@@ -48019,8 +51865,8 @@ function createWorld(scene) {
     const marketLight = new world_batch_js_1.Batches(poweredMarket);
     const spektrLight = require("./spektr-frontage.js").addSpektrFrontage(b, marketLight, sign, poweredMarket);
     const stalls = [
-        { g: world_layout_js_1.buildings.kiosk, tag: 'СПЕКТР', sub: 'РАДИОДЕТАЛИ · МОДУЛИ', light: '#83f1e2', awning: '#366d70' },
-        { g: world_layout_js_1.buildings.booth, tag: 'ИМПЛАНТЫ', sub: 'ДИАГНОСТИКА И РЕМОНТ', light: '#ffab97', awning: '#9c5854' },
+        { g: world_layout_js_1.buildings.kiosk, tag: 'СПЕКТР', sub: 'РАДИОДЕТАЛИ · МОДУЛИ', light: '#f1ddae', awning: '#366d70' },
+        { g: world_layout_js_1.buildings.booth, tag: 'РЕМОНТ ТЕЛЕФОНОВ', sub: 'ИННА · МАГНИТОЛЫ И ПРИЁМНИКИ', light: '#eedfc0', awning: '#9c5854' },
         { g: world_layout_js_1.buildings.booth2, tag: 'ПАЯЛЬНАЯ', sub: 'МАСТЕРСКАЯ № 4', light: '#ffeeae', awning: '#888455' },
         { g: world_layout_js_1.buildings.booth3, tag: 'СВЯЗЬ', sub: 'БЫТОВАЯ ЭЛЕКТРОНИКА', light: '#a5cfdf', awning: '#517b8e' }
     ];
@@ -48032,7 +51878,7 @@ function createWorld(scene) {
         for (let i = 0; i < 6; i++) {
             const dx = x - w * .37 + i * w * .145;
             b.box(dx, 1.75, front + .22, .64, .55, .12, ['#374e5b', '#6d7778', '#7c776b'][i % 3]);
-            marketLight.lamp(dx, 1.77, front + .295, .40, .29, .025, i % 2 ? '#85aaa9' : '#bdad86');
+            b.box(dx, 1.77, front + .295, .40, .29, .025, i % 2 ? '#85aaa9' : '#bdad86');
         }
         b.box(x, .64, front + .47, w - .45, 1.23, 1.16, '#657577');
         b.box(x, 1.30, front + .47, w - .32, .12, 1.22, '#b1b0a3');
@@ -48042,7 +51888,18 @@ function createWorld(scene) {
             const dx = x - w * .34 + j * w * .164;
             b.box(dx, 1.48, front + .64, .57, .24, .39, ['#475b63', '#a6a391', '#8f7366'][j % 3]);
             if (j % 2 === 0)
-                marketLight.lamp(dx, 1.51, front + .84, .23, .09, .025, m.light);
+                b.box(dx, 1.51, front + .84, .23, .09, .025, m.light);
+        }
+        const goods = [['Провод, м', '30'],['Телефон б/у','900'],['Лампа','45'],['Приёмник','350']][n];
+        const tx=x+w*.25;
+        b.box(tx,1.39,front+.97,.51,.27,.032,'#b5a789');
+        labels.place('ticket-'+n,()=>world_textures_js_1.handTicket(...goods),tx,1.39,front+.99,.49,.25,0);
+        if (n===1) {
+            b.box(x,1.44,front+.74,.47,.17,.23,'#8b7d5d');
+            b.box(x-.08,1.45,front+.862,.19,.08,.019,'#62635a');
+            for(let i=0;i<3;i++) b.box(x+.08+i*.034,1.46,front+.863,.014,.091,.016,'#504e46');
+            b.beam(x+.16,1.52,front+.75,x+.41,1.82,front+.77,.018,'#a6aaa0');
+            b.piece('box',x-.37,1.385,front+.81,.12,.028,.22,'#454c48',-.20);
         }
         if (n >= 2) {
             b.piece('box', x, 2.81, front + .78, w + .62, .16, 2.1, m.awning, 0, 0, .12);
@@ -48054,42 +51911,49 @@ function createWorld(scene) {
         }
         b.box(x, 3.32, z + .35, w + .34, 1.0, .35, '#354950');
         sign(m.tag, m.sub, m.light, n === 1 ? '#583a42' : '#2a4a51', x, 3.32, z + .55, w + .17, .9);
-        marketLight.lamp(x, 3.79, z + .56, w - .20, .056, .075, m.light);
+        b.box(x, 3.79, z + .56, w - .20, .056, .075, '#888575');
         if (n < 2) {
             const edge = x + w / 2 - .19;
             b.box(edge + .23, 2.0, front + 1.14, .65, .88, .16, '#34444d');
-            sign(n === 0 ? 'Ω' : 'ИМ', 'СЕРВИС', m.light, n === 1 ? '#583a42' : '#295156', edge + .23, 2.01, front + 1.237, .59, .79);
-            marketLight.lamp(edge + .57, 2.0, front + 1.16, .045, .84, .19, m.light);
+            sign(n === 0 ? 'Ω' : 'Р', 'СЕРВИС', m.light, n === 1 ? '#583a42' : '#295156', edge + .23, 2.01, front + 1.237, .59, .79);
+            b.box(edge + .57, 2.0, front + 1.16, .045, .84, .19, m.light);
         }
     }
     marketLight.flush();
     const blackoutProps = (0, blackout_view_js_1.createBlackoutProps)(district);
     for (const post of world_layout_js_1.marketMasts)
         b.cyl(post.x, 1.31, post.z, .09, 2.62, '#6c8887');
-    sign('РЫНОК СПЕКТР', 'РАДИОРЯДЫ · ВОСТОЧНЫЙ ВХОД', '#9de6d9', '#365653', 31, 6.21, 17.04, 11.4, 1.26);
+    sign('РЫНОК СПЕКТР', 'РАДИОРЯДЫ · ВОСТОЧНЫЙ ВХОД', '#e4d9b4', '#365653', 31, 6.21, 17.04, 11.4, 1.26);
     const ox = -8.15, front = 15.68;
+    const { spectacleFrame } = require('./neighborhood-shops.js');
     b.box(ox, 9.30, front, 6.15, 7.26, .31, '#334b54');
-    labels.place('optic-eye', world_textures_js_1.opticMural, ox, 9.30, front + .18, 5.89, 6.96, 0);
+    labels.place('canal-tram-mosaic', world_textures_js_1.tramMosaic, ox, 9.30, front + .18, 5.89, 6.96, 0);
     for (const side of [-1, 1]) {
         b.box(ox + side * 3.09, 9.28, front + .08, .13, 7.34, .36, '#687b7c');
-        b.lamp(ox + side * 3.10, 9.34, front + .28, .066, 6.85, .075, '#99deca');
+        b.box(ox + side * 3.10, 9.34, front + .28, .066, 6.85, .075, '#827d70');
     }
     b.box(ox, 2.05, 15.97, 8.45, 3.90, .85, '#374e52');
     for (const dx of [-2.91, -1.13, .69]) {
         b.box(ox + dx, 1.95, 16.45, 1.63, 2.15, .10, '#476a70');
         b.box(ox + dx, 1.97, 16.52, 1.38, 1.77, .06, dx < 0 ? '#82a6a2' : '#989b84');
         b.box(ox + dx, 2.36, 16.56, 1.42, .065, .06, '#536c70');
+        for (let row=0;row<2;row++){
+            const y = 1.35 + row*.43;
+            b.box(ox+dx,y,16.61,1.30,.035,.15,'#a99b87');
+            for (let n=-1;n<=1;n++)
+                spectacleFrame(b,ox+dx+n*.39,y+.105,16.72,1.13,n===0?'#715349':'#4d514a');
+        }
         b.box(ox + dx, .68, 16.51, 1.61, .27, .10, '#647675');
     }
     b.box(ox + 2.72, 1.39, 16.47, 1.56, 2.74, .16, '#3c5058');
     b.box(ox + 2.72, 1.70, 16.57, 1.16, 1.58, .045, '#6b8b8b');
     b.box(ox + 3.18, 1.16, 16.63, .066, .48, .095, '#c7c7b1');
     b.box(ox, 3.75, 16.47, 8.79, .65, 1.33, '#374c50');
-    b.lamp(ox, 3.37, 16.99, 8.38, .075, .16, '#a0e1ce');
+    b.box(ox, 3.37, 16.99, 8.38, .075, .16, '#8e8e80');
     b.box(ox, 4.58, 16.09, 8.85, 1.37, .55, '#344951');
-    sign('НЕЙРОСВЯЗЬ', 'ОПТИЧЕСКИЕ ИМПЛАНТЫ', '#b3efcf', '#325953', ox, 4.58, 16.39, 8.60, 1.23, 0, '24');
-    b.lamp(ox - 4.40, 4.57, 16.35, .09, 1.34, .11, '#ffc487');
-    sign('ПРИЁМ', '09—23', '#e8c38a', '#49625d', ox + .68, 1.78, 16.60, 1.02, .47);
+    sign('ГОРОДСКАЯ ОПТИКА', 'ПОДБОР ОЧКОВ · РЕМОНТ ОПРАВ', '#f0e4c3', '#525d51', ox, 4.58, 16.39, 8.60, 1.23, 0, '24');
+    b.box(ox - 4.40, 4.57, 16.35, .09, 1.34, .11, '#aaa189');
+    sign('ПРИЁМ', '09—19 · ПН—СБ', '#e8c38a', '#49625d', ox + .68, 1.78, 16.60, 1.02, .47);
     const sx = world_street_js_1.stop.x, sz = world_street_js_1.stop.z;
     b.box(sx, 1.25, sz - 1.1, 4.75, 2.31, .13, '#647984');
     for (const dx of [-2.46, 2.46])
@@ -48149,15 +52013,25 @@ function createWorld(scene) {
     const devices = (0, world_street_js_1.createStreetDevices)(district, b), tram = (0, world_tram_js_1.addTram)(district, b);
     b.flush();
     far.flush();
+    const firstWallSheet = district.children.length;
     walls.flush();
+    for (const sheet of district.children.slice(firstWallSheet)) {
+        sheet.material.onBeforeCompile = shader => {
+            shader.uniforms.dawnTint = dawnTint;
+            shader.vertexShader = 'varying float facadeHeight;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n facadeHeight=position.y;');
+            shader.fragmentShader = 'varying float facadeHeight; uniform float dawnTint;\n' + shader.fragmentShader.replace('#include <map_fragment>',
+                '#include <map_fragment>\n diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(1.17,1.05,.95)+vec3(.018,.008,.0),dawnTint*smoothstep(9.,22.,facadeHeight));');
+        };
+    }
     labels.flush();
     return { setTramCabin: tram.setCabin, setHouseDoor(open) { accessibleDoor.update(open); spill(open); }, cull(camera) { visibility.update(camera); cullRegion(camera); cullStreetDetail(camera); }, isBlocked: world_layout_js_1.isBlocked, groundHeight: world_layout_js_1.groundHeight, surfaceAt: world_layout_js_1.surfaceAt, signalGreen: world_layout_js_1.signalGreen, districtAt: world_layout_js_1.districtAt, obstacles: world_layout_js_1.obstacles, bounds: world_layout_js_1.bounds, getTramPosition: tram.getPosition, getStreetState: devices.state, getFixtureState: fixtureView.state,
-        update(t, tramTime, subject, broken = fixtures_js_1.intact, power = 'normal', daylight = 0) {
+        update(t, tramTime, subject, broken = fixtures_js_1.intact, power = 'normal', daylight = 0, calendar = districtCalendarMinutes(t), wet = .65) {
+            dawnTint.value = Math.max(0,1-Math.abs(calendar%1440/60-7.35)/1.3);
             const rail = tram.update(tramTime);
-            poweredMarket.visible = power === 'normal';
+            poweredMarket.visible = power === 'normal' && marketOpen(calendar);
             spektrLight(daylight);
             blackoutProps(power, t);
-            fixtureView.update(t, broken, subject, power, daylight);
+            fixtureView.update(t, broken, subject, power, daylight, wet);
             entryLights(daylight, power);
             const dusk = THREE.MathUtils.smoothstep(1 - daylight, .18, .82);
             windowLayer.visible = dusk > .012;

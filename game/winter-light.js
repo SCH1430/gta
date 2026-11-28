@@ -2,6 +2,20 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.winterBudget = exports.winterBudgets = void 0;
 exports.patrolFlash = patrolFlash;
+const lamps = {
+    crossing: ['#f2eee8','#ded8cc'], port: ['#f0ede4','#d5d9d0'], works: ['#efc286','#d59861'],
+    market: ['#ffe3b6','#f4c390'], yard: ['#f4d4a2','#dcab7c'], avenue: ['#ffe2a0','#ffa95c']
+};
+function lampFamily(f) {
+    if(f.crosswalk) return 'crossing';
+    if(f.z>86) return 'port';
+    if(f.z < -57 || (f.x < -86 && f.z < 25)) return 'works';
+    if(f.x>16 && f.x<80 && f.z>3 && f.z<28) return 'market';
+    if(Math.abs(f.x)>52 && f.z>-48 && f.z<25) return 'yard';
+    return 'avenue';
+}
+exports.lampFamily = lampFamily;
+exports.lampPalette = lamps;
 exports.inHeadlight = inHeadlight;
 exports.winterBudgets = [
     { flakes: 44, lit: 16, puffs: 3, halo: 46, tracks: 17 },

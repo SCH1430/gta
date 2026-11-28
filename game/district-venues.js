@@ -143,6 +143,18 @@ function createDistrictVenues(scene) {
     }
 
     function update(c) {
+        // After the first announcements the cashier routes any passengers the player hasn't helped.
+        if (c.minutes >= 1105 && c.minutes < passengerShiftEnd) {
+            if (station.day !== dayOf(c)) station = initialStation(dayOf(c));
+            river.passengers.forEach((p, i) => {
+                const minute = 1105 + i * 3;
+                if (station.routes[i] || c.minutes < minute) return;
+                station.routes[i] = { mode: p.route, at: Math.max(0, c.sim.elapsed - (c.minutes - minute) * 2), cashier: true };
+                if (c.zone === river.door.zone && c.minutes === minute)
+                    c.notify(p.name + ' у кассы: «' + p.question + '» Марина показывает выход к ' + (p.route === 'bus' ? 'автобусу 12.' : 'стоянке такси.'));
+                c.persist?.();
+            });
+        }
         const shift = stationState(c);
         const rehearsal = rehearsalOpen(c.minutes);
         const inside = c.zone === metal.door.zone;
@@ -178,7 +190,7 @@ function createDistrictVenues(scene) {
         station = initialStation(Number.isSafeInteger(raw?.station?.day) ? raw.station.day : -1);
         station.routes = river.passengers.map((passenger, i) => {
             const route = raw?.station?.routes?.[i];
-            return route?.mode === passenger.route && isTime(route.at) ? { mode: route.mode, at: route.at } : null;
+            return route?.mode === passenger.route && isTime(route.at) ? { mode: route.mode, at: route.at, ...(route.cashier ? {cashier:true} : {}) } : null;
         });
         spoke = raw?.spoke === true;
         stands = [0, 1].map(i => spoke && raw?.stands?.[i] === true);

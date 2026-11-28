@@ -25,7 +25,7 @@ function surveyPrint() {
     g.font = 'bold 22px K77Display';
     g.fillText('СХЕМА ДВОРОВ', 23, 38);
     g.font = '14px K77Body';
-    g.fillText('БЮРО ИНВЕНТАРИЗАЦИИ       2060 г.', 24, 58);
+    g.fillText('БЮРО ИНВЕНТАРИЗАЦИИ       1995 г.', 24, 58);
     g.strokeStyle = '#8c9077';
     g.lineWidth = 15;
     g.beginPath();

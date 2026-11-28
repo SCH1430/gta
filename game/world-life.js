@@ -5,18 +5,28 @@ const { createPlaces } = require('./world-life-places.js');
 const { createEvents } = require('./world-life-events.js');
 const { createDiscoveries } = require('./world-life-discoveries.js');
 const { createNeighbors } = require('./world-life-neighbors.js');
+const { createCityPeople } = require('./new-city-people.js');
+const { createCityTransit } = require('./new-city-transit.js');
+const { createCityServices } = require('./new-city-services.js');
+const { createCityIndustry } = require('./new-city-industry.js');
 
 function createWorldLife(scene) {
     const modules = {
         places: createPlaces(scene), events: createEvents(scene),
-        discoveries: createDiscoveries(scene), neighbors: createNeighbors(scene)
+        discoveries: createDiscoveries(scene), neighbors: createNeighbors(scene),
+        people: createCityPeople(scene), transit: createCityTransit(scene),
+        services: createCityServices(scene), industry: createCityIndustry(scene)
     };
     const entries = Object.entries(modules);
     const sites = entries.flatMap(([key, module]) => module.sites.map(site => ({ ...site, key })));
-    const guides = sites.filter(site => site.guide !== false).map(site => {
+    const guides = [], peopleGuides = [], vehicleGuides = [];
+    for (const site of sites) {
+        if (site.guide === false)
+            continue;
         const point = site.guidePosition ?? site;
-        return [site.label, point.x, point.z, site.guideNote ?? site.note];
-    });
+        const list = site.key === 'people' ? peopleGuides : ['transit', 'services', 'industry'].includes(site.key) ? vehicleGuides : guides;
+        list.push([site.label, point.x, point.z, site.guideNote ?? site.note]);
+    }
     let vista = null;
 
     function context(c) {
@@ -43,7 +53,7 @@ function createWorldLife(scene) {
         ];
     }
     return {
-        guides, actions,
+        guides, peopleGuides, vehicleGuides, actions,
         get lookout() { return vista?.view ?? null; },
         restore(data) {
             vista = null;

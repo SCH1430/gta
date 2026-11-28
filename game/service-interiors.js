@@ -6,13 +6,18 @@ const interior_layout_js_1 = require("./interior-layout.js");
 function isServiceRoom(zone) {
     return Object.hasOwn(design, zone);
 }
+const { shops, shopInterior } = require('./neighborhood-shops.js');
 const design = {
+    optician: { title: 'ГОРОДСКАЯ ОПТИКА', tag: 'КАБИНЕТ ПОДБОРА ОЧКОВ', body:'#717b6b',top:'#bdaf94',trim:'#948775',lamp:'#f1e4cc' },
+    locker: { title: 'ТРАМВАЙНОЕ ДЕПО', tag: 'РАЗДЕВАЛКА · БРИГАДА 07',body:'#6c766c',top:'#b1a18b',trim:'#9d907e',lamp:'#ece4ca' },
+    grocery: { title:'ПРОДУКТЫ', tag:'КАНАЛЬНАЯ, 19',body:'#817764',top:'#baa27f',trim:'#988e79',lamp:'#ece4cc' },
+    canteen: { title:'СТОЛОВАЯ «ПРИЧАЛ»',tag:'ЗАВТРАК · ОБЕД · УЖИН',body:'#777f6d',top:'#bdac8c',trim:'#8c846f',lamp:'#eedcba' },
     taxipark: { title: 'ТАКСОПАРК', tag: 'СМЕНЫ · ПОДАЧА МАШИН', body: '#6a7c72', top: '#b49268', trim: '#d3a95c', lamp: '#f4c66e' },
     cafe: { title: 'ГОРЯЧИЙ ЛЁД', tag: 'ЧАЙ · ПИРОЖКИ', body: '#a1746a', top: '#b59a78', trim: '#d6b980', lamp: '#f6c096' },
     terminal: { title: 'ДЕЖУРКА ТЕРМИНАЛА', tag: 'ПРОПУСКА · УЧЁТ ГРУЗА', body: '#607a78', top: '#8f9992', trim: '#bc8d60', lamp: '#91d5c7' },
     hydro: { title: 'БЕЛАЯ ПЛОТИНА', tag: 'ГИДРОТЕХНИЧЕСКИЙ ПОСТ', body: '#576c82', top: '#8a9da7', trim: '#b7b19f', lamp: '#a1def3' },
     passage: { title: 'ДОМ № 23', tag: 'СКВОЗНОЙ ПОДЪЕЗД', body: '#777e70', top: '#b4aa86', trim: '#b49264', lamp: '#e8b466' },
-    'river-station': { title: 'РЕЧНОЙ ВОКЗАЛ', tag: 'ЗАЛ ОЖИДАНИЯ · ЮЖНЫЙ ПОРТ', body: '#435e67', top: '#b19574', trim: '#aa8659', lamp: '#b8decf' },
+    'river-station': { title: 'РЕЧНОЙ ВОКЗАЛ', tag: 'ЗАЛ ОЖИДАНИЯ · ЮЖНЫЙ ПОРТ', body: '#636f70', top: '#a6a7a0', trim: '#898e88', lamp: '#edce8d' },
     'metal-hall': { title: 'ДК «МЕТАЛЛУРГ»', tag: 'МАЛЫЙ ЗАЛ · РЕПЕТИЦИЯ 18—22', body: '#755250', top: '#a88367', trim: '#b98955', lamp: '#efbb75' },
 };
 function addServiceInterior(b, sign, room) {
@@ -34,6 +39,7 @@ function addServiceInterior(b, sign, room) {
         return;
     }
     for (const f of p.furniture) {
+        if (['frames','fridge','bread','dryer','lockers'].includes(f.kind)) continue;
         if (f.kind === 'counter') {
             b.box(f.x, .508, f.z, f.w, 1.016, f.d, style.body);
             b.box(f.x, 1.057, f.z, f.w + .12, .071, f.d + .13, style.top);
@@ -41,6 +47,16 @@ function addServiceInterior(b, sign, room) {
             for (const dx of [-f.w * .29, 0, f.w * .29]) {
                 b.box(f.x + dx, .52, f.z + f.d / 2 + .018, 1.10, .58, .034, style.top);
                 b.box(f.x + dx, .32, f.z + f.d / 2 + .038, 1.04, .026, .02, style.trim);
+            }
+            if (room === 'river-station') {
+                for (const off of [-1.65,-.53,.53,1.65]) {
+                    b.box(f.x+off,1.69,f.z,.046,1.22,.042,'#a59f88');
+                    if(Math.abs(off)>.6)
+                        b.box(f.x+off*.68,1.68,f.z,.96,1.07,.026,'#a7b4ae');
+                }
+                b.box(f.x,2.30,f.z,3.39,.082,.087,'#827f6c');
+                b.box(f.x,1.20,f.z+.18,1.05,.042,.45,'#8f8c77');
+                sign('КАССА № 1','БИЛЕТЫ',f.x-1.15,1.76,f.z+.036,.70,.32,0,'#ece3c6','#494f40');
             }
             continue;
         }
@@ -112,6 +128,8 @@ function addServiceInterior(b, sign, room) {
             for (const zSide of [-1, 1])
                 b.box(f.x, .381, f.z + zSide * (f.d / 2 + .018), f.w - .10, .093, .038, style.trim);
     }
+    if (Object.hasOwn(shops, room))
+        shopInterior(b, sign, room);
     if (room === 'taxipark') {
         for (let i = 0; i < 10; i++) {
             const y = 1.1 + .085 * i;

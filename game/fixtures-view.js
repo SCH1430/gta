@@ -113,8 +113,9 @@ class Instances {
     }
 }
 const lampInk = new T.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
-const sodiumBulb = new T.Color('#ffe2a0'), sodiumPool = new T.Color('#ff9645');
-const crossingBulb = new T.Color('#ddf2ff'), crossingPool = new T.Color('#abd9f5');
+const { lampFamily, lampPalette } = require('./winter-light.js');
+const fixturePalette = Object.fromEntries(Object.entries(lampPalette).map(([family, pair]) =>
+    [family, pair.map(ink=>new T.Color(ink))]));
 const signalInk = new T.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
 const debrisMat = new T.MeshLambertMaterial({ color: 0xffffff });
 const red = new T.Color('#ff6750'), green = new T.Color('#75e4b6'), dark = new T.Color('#39484d');
@@ -175,8 +176,8 @@ function createFixtures(scene) {
     }
     return {
         state: () => ({ ...info }),
-        update(elapsed, broken = fixtures_js_1.intact, focus, power = 'normal', daylight = 0) {
-            pools.mesh.material.opacity = .05 + .79 * (1 - daylight);
+        update(elapsed, broken = fixtures_js_1.intact, focus, power = 'normal', daylight = 0, wet = .65) {
+            pools.mesh.material.opacity = (.05 + .76 * (1 - daylight)) * (.43 + .57*wet);
             const x = focus?.x ?? 0, z = focus?.z ?? 0, phase = ((0, world_layout_js_1.signalGreen)('x', elapsed) ? 1 : 0) + ((0, world_layout_js_1.signalGreen)('z', elapsed) ? 2 : 0);
             const changed = broken !== old || elapsed < last;
             const cutChanged = cut !== (power !== 'normal');
@@ -216,11 +217,11 @@ function createFixtures(scene) {
                 if (near)
                     shoes.push(local.makeScale(.40, .105, .40).setPosition(f.x, base + .048, f.z));
                 if (powered) {
-                    lamps.push(part(m, 0, lampHeight - .105, 2.14, .39, .037, .81), f.crosswalk ? crossingBulb : sodiumBulb);
+                    lamps.push(part(m, 0, lampHeight - .105, 2.14, .39, .037, .81), fixturePalette[lampFamily(f)][0]);
                     if (d < 57 ** 2) {
                         const sine = Math.sin(f.face), cosine = Math.cos(f.face);
                         const px = f.crosswalk?.x ?? f.x + sine * 3.55, pz = f.crosswalk?.z ?? f.z + cosine * 3.55;
-                        const ink = f.crosswalk ? crossingPool : sodiumPool;
+                        const ink = fixturePalette[lampFamily(f)][1];
                         temp.position.set(px, (0, world_layout_js_1.groundHeight)(px, pz) + .039, pz);
                         temp.rotation.set(0, f.face, 0);
                         temp.scale.set(f.crosswalk ? 7.2 : 6.4, 1, f.crosswalk ? 12.5 : 9.0);
@@ -237,6 +238,14 @@ function createFixtures(scene) {
                     const go = (0, world_layout_js_1.signalGreen)(f.axis, elapsed);
                     lenses.push(part(m, 0, 3.21, .206, 1, 1, 1), !disabled && !go ? red : dark);
                     lenses.push(part(m, 0, 2.78, .206, 1, 1, 1), !disabled && go ? green : dark);
+                    if (!disabled && !record && near) {
+                        const px=f.x+Math.sin(f.face)*1.45, pz=f.z+Math.cos(f.face)*1.45;
+                        temp.position.set(px, (0, world_layout_js_1.groundHeight)(px,pz)+.041,pz);
+                        temp.rotation.set(0,f.face,0);
+                        temp.scale.set(.60,1,2.75);
+                        temp.updateMatrix();
+                        pools.push(temp.matrix, go ? green : red);
+                    }
                 }
                 if (record) {
                     const age = Math.max(0, elapsed - record.at);

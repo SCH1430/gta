@@ -135,6 +135,19 @@ function dashboard(kind, series) {
         for (const px of [.139, .173])
             body.add(tube, [px, y - .119, consoleZ + .026], [.026, .013, .026], '#798684', [Math.PI / 2, 0, 0]);
     }
+    // A clipped parking slip, heater controls and the equipment used on shift.
+    body.box(.33, s.roof - .123, s.a + .29, .18, .012, .10, '#e1d4ab', [.12, 0, .04]);
+    for (const knob of [-.08, 0, .08]) {
+        body.add(tube, [knob, y - .192, consoleZ + .060], [.039, .019, .039], '#545555', [Math.PI / 2, 0, 0]);
+        body.box(knob, y - .181, consoleZ + .073, .004, .012, .004, '#d7cfac');
+    }
+    if (work || kind === 'van' || kind === 'taxi') {
+        body.box(.30, y - .18, consoleZ + .055, .21, .072, .105, '#333a39');
+        body.box(.29, y - .17, consoleZ + .11, .08, .019, .003, '#acb39b');
+        for (let i = 0; i < 4; i++) body.box(.35, y - .198 + i * .012, consoleZ + .11, .046, .003, .004, '#131916');
+        body.add(tube, [.14, c.seatY + .05, c.seatZ - .15], [.080, .22, .080], '#677c69');
+        body.add(tube, [.14, c.seatY + .173, c.seatZ - .15], [.078, .035, .078], '#c2bca4');
+    }
     const arrow = new Batch();
     arrow.rod([0, -.013, 0], [0, .054, 0], .0031, '#ea9660', true);
     arrow.add(tube, [0, 0, .003], [.013, .006, .013], '#aab1a4', [Math.PI / 2, 0, 0]);

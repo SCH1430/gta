@@ -105,6 +105,14 @@ function buildWheel(radius, side, kind) {
             engraving.quad(surface(x - .0034, a), surface(x + .0034, a), surface(x + .0034, next), surface(x - .0034, next), '#1c2222');
         }
     }
+    if (kind === 'wagon' || kind === 'taxi') {
+        rim.add(require('./model-geometry.js').tube,[side*(sidewall+.029),0,0],[radius*.89,.033,radius*.89],
+            '#a8aaa4',[0,0,Math.PI/2]);
+        for(let i=0;i<8;i++){
+            const a=i*Math.PI/4;
+            rim.box(side*(sidewall+.047),radius*.32*Math.sin(a),radius*.32*Math.cos(a),.007,radius*.07,radius*.13,'#585e5b',[-a,0,0]);
+        }
+    }
     sidewallStamp(engraving, point, side, sidewall, radius);
     const roller = new T.Group();
     roller.name = 'wheel-roller';

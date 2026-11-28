@@ -6,9 +6,9 @@ function counterLight(parent) {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 64;
     const c = canvas.getContext('2d'), g = c.createRadialGradient(32, 32, 1, 32, 32, 32);
-    g.addColorStop(0, 'rgba(139,228,184,.73)');
-    g.addColorStop(.46, 'rgba(90,194,159,.47)');
-    g.addColorStop(1, 'rgba(66,153,132,0)');
+    g.addColorStop(0, 'rgba(245,212,160,.56)');
+    g.addColorStop(.46, 'rgba(194,158,116,.33)');
+    g.addColorStop(1, 'rgba(167,133,97,0)');
     c.fillStyle = g;
     c.fillRect(0, 0, 64, 64);
     const map = new T.CanvasTexture(canvas);
@@ -57,9 +57,13 @@ exports.addSpektrFrontage = function (b, light, sign, powered) {
     b.piece('box', roof.x, 2.916, roof.z, roof.w - .08, .052, roof.d - .12, '#b2c1b7', 0, 0, .12);
     b.box(roof.x, 2.64, lip, roof.w, .36, .16, '#325957');
     b.box(roof.x, 2.80, lip + .085, roof.w, .052, .045, '#a0afa2');
+    for (let lx = -roof.w * .5 + .24; lx < roof.w * .5; lx += .55) {
+        b.piece('box', roof.x + lx, 2.946, roof.z, .24, .025, roof.d - .16, '#8b5c4f', 0, 0, .12);
+        b.box(roof.x + lx, 2.64, lip + .084, .24, .34, .014, '#a36a56');
+    }
     for (const [i, s] of stalls.entries()) {
         b.box(s.x, 2.53, lip - .29, s.w * .80, .09, .23, steel);
-        light.lamp(s.x, 2.477, lip - .29, s.w * .76, .043, .14, '#b5eed3');
+        light.lamp(s.x, 2.477, lip - .29, s.w * .76, .043, .14, '#ffe0af');
         sign('0' + (i + 1), '', '#e5d3a0', '#325957', s.x - s.w * .39, 2.625, lip + .086, .49, .235);
         for (const side of [-1, 1])
             b.beam(s.x + side * s.w * .41, 2.16, front + .12, s.x + side * s.w * .41, 2.62, lip - .22, .072, steel, true);
@@ -79,7 +83,7 @@ exports.addSpektrFrontage = function (b, light, sign, powered) {
     b.beam(blade.x, 3.80, front - .14, blade.x, 4.59, front + .89, .09, steel, true);
     for (const side of [-1, 1])
         sign('СПЕКТР', '', '#e1eed9', '#26514d', blade.x + side * (blade.w * .5 + .005), signY, blade.z, blade.d - .13, signH - .19, side * Math.PI / 2);
-    light.lamp(blade.x, signY, blade.z + blade.d * .5 + .012, blade.w + .012, signH - .12, .04, '#a1e9bd');
+    b.box(blade.x, signY, blade.z + blade.d * .5 + .012, blade.w + .012, signH - .12, .04, '#8b8777');
     // One open component bin and two cable reels on the western counter.
     const x = stalls[0].x - stalls[0].w * .255, z = front + .66;
     b.box(x, 1.44, z, 1.56, .17, .60, '#626e62');

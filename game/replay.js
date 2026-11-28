@@ -123,7 +123,7 @@ class ReplayRecorder {
         const fences = source.props?.filter(p => p.kind === 'picket' && (p.fence || p.broken)).map(p => ({
             id: p.id, x: round(p.x), z: round(p.z), broken: p.broken, fence: fenceDamage(p)
         }));
-        this.frames.push({ time: sampleTime, clock, tram: round(tram), wanted, power: power === 'normal' ? undefined : power, freight, hero: pose(hero), driven, transfer, cars, people, fences });
+        this.frames.push({ time: sampleTime, clock: clock % 1440, calendar: clock, tram: round(tram), wanted, power: power === 'normal' ? undefined : power, freight, hero: pose(hero), driven, transfer, cars, people, fences });
         let first = 0;
         while (this.frames[first].time < time - span)
             first++;
@@ -184,6 +184,8 @@ function validReplay(value) {
     let last = -1;
     for (const f of clip.frames) {
         if (!f || !finite(f.time, 0, 365 * 86400) || f.time <= last || !finite(f.clock, 0, 1439) || !finite(f.tram, -1, 365 * 86400) || !finite(f.wanted, 0, 3) || !validPose(f.hero) || !(f.driven === null || name(f.driven)))
+            return false;
+        if (f.calendar !== undefined && (!Number.isSafeInteger(f.calendar) || f.calendar < 0 || f.calendar % 1440 !== f.clock))
             return false;
         if (f.power !== undefined && !['normal', 'search', 'bell', 'restore'].includes(f.power))
             return false;

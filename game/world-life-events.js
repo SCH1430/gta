@@ -265,7 +265,7 @@ function filmTexture(index) {
         c.fillRect((i * 443 + index * 29) % 254, (i * i * 11 + i * 31) % 144, i % 8 ? .56 : 2, .65);
     c.fillStyle = '#2c2924'; c.fillRect(0, 123, 256, 21);
     c.fillStyle = '#e0c89c'; c.font = 'bold 10px monospace';
-    c.fillText(['КАНАЛЬНАЯ ДО ЭСТАКАДЫ', 'КРАН К–14 · 2051', 'СЕВЕРНАЯ ТЭЦ · 2060'][index], 8, 137);
+    c.fillText(['КАНАЛЬНАЯ ДО ЭСТАКАДЫ', 'КРАН К–14 · 1986', 'СЕВЕРНАЯ ТЭЦ · 1995'][index], 8, 137);
     return texture(canvas);
 }
 

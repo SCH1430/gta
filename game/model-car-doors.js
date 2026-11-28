@@ -60,6 +60,9 @@ function buildDoor(kind, side, series = 0) {
     }
     trim.box(side * (innerX - .045), h - .17, (z0 + z1) / 2, .018, .17, (z1 - z0) * .81, van ? '#526061' : '#596165');
     trim.box(side * (innerX - .071), h - .267, (z0 + z1) / 2 + .04, .091, .077, .49, '#242d35');
+    if (['hatch','wagon','taxi','van'].includes(kind)) {
+        trim.rod(point(w+.009,h-.23,z0+.031),point(w+.009,h-.23,z1-.025),.023,'#343736',true);
+    }
     const pull = (0, vehicle_cabin_js_1.doorPullLocal)(kind, side);
     for (const dz of [-.092, .092]) {
         trim.rod([side * innerX, pull.y - .016, pull.z + dz], [pull.x, pull.y, pull.z + dz], .018, '#697877');

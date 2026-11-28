@@ -124,7 +124,9 @@ function addTram(scene, b) {
         for (const z of [-3.5, -2.8, 2.8, 3.5])
             car.piece('round', side * 1.02, .46, z, .72, .24, .72, '#303844', 0, Math.PI / 2);
         car.box(side * 1.2, .76, 0, .08, .15, 9.8, '#89a5a4');
-        panels.place('line', () => (0, world_textures_js_1.signTexture)('ЛИНИЯ 07', 'ДЕПО · РЫНОК', '#ffce76', '#363d41', 5.1), side * 1.274, 2.13, 0, 1.35, .31, side * Math.PI / 2);
+        panels.place('line', () => (0, world_textures_js_1.signTexture)('ЛИНИЯ 07', 'ДЕПО · РЫНОК', '#292e29', '#dad4bf', 5.1), side * 1.274, 2.13, 0, 1.35, .31, side * Math.PI / 2);
+        panels.place('fleet-number', () => (0, world_textures_js_1.signTexture)('№ 407', 'КАНАЛЬСКОЕ ДЕПО', '#363e39', '#d1c6aa', 3.4),side*1.235,1.28,2.01,.76,.24,side*Math.PI/2);
+        panels.place('depot-sticker', () => (0, world_textures_js_1.signTexture)('ДЕПО 1', 'ОСМОТР ПРОЙДЕН', '#4d594b', '#bcbca2', 2),side*1.28,2.23,4.43,.29,.15,side*Math.PI/2);
     }
     for (const f of [-1, 1]) {
         car.box(0, 2.14, f * 5.10, 2.23, .94, .11, '#1f3443');

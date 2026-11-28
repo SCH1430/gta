@@ -8,7 +8,7 @@ exports.jobs = {
     vendor: { cut: 'quilted', kit: 'repair', main: '#356763', shade: '#243f44', accent: '#a9b8a1', shirt: '#758779', pants: '#494852', scale: .939, build: -.42 },
     dispatcher: { cut: 'wool', kit: 'dispatch', main: '#465865', shade: '#313e4b', accent: '#d6b679', shirt: '#77726b', pants: '#414b4c', scale: 1.051, build: .68 },
     mechanic: { cut: 'workwear', kit: 'garage', main: '#884c43', shade: '#59363a', accent: '#d1a477', shirt: '#3e4f59', pants: '#304651', scale: .995, build: .36 },
-    courier: { cut: 'windbreaker', kit: 'messenger', main: '#57756e', shade: '#34434a', accent: '#e0b874', shirt: '#836e57', pants: '#343e49', scale: 1.025, build: -.56 }
+    courier: { cut: 'quilted', kit: 'messenger', scarf: '#8a7566', main: '#667564', shade: '#3e4941', accent: '#c1a37b', shirt: '#836e57', pants: '#393d3e', scale: 1.025, build: -.56 }
 };
 const heroJacket = exports.jobs.hero;
 exports.heroCoats = [

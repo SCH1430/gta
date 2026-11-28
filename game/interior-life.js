@@ -131,7 +131,8 @@ class InteriorLife {
         d.total = .8 + Math.abs(stops[d.car].height - stops[stop].height) * .16;
         d.phase = d.open > 0 ? 'closing' : 'moving';
     }
-    options(outside, elapsed, minutes = (0, city_clock_js_1.districtMinutes)(elapsed)) {
+    options(outside, elapsed, calendar = (0, city_clock_js_1.districtCalendarMinutes)(elapsed)) {
+        const minutes = calendar % 1440;
         const p = this.avatar ?? outside, zone = this.zone;
         const a = [];
         const add = (id, label) => a.push({ id: 'home:' + id, label });
@@ -169,7 +170,7 @@ class InteriorLife {
             for (const f of exploration_layout_js_1.bankFinds)
                 if (near(p, f, 1.9))
                     add('find-' + f.id, f.name);
-            if (near(p, { x: 69, z: 21.85 }, 2.5) && (0, exploration_layout_js_1.marketLayouts)(elapsed).length === 0)
+            if (near(p, { x: 69, z: 21.85 }, 2.5) && (0, exploration_layout_js_1.marketLayouts)(elapsed, calendar).length === 0)
                 add('night', 'Обратиться в дежурный киоск');
             return a;
         }
@@ -199,7 +200,7 @@ class InteriorLife {
                 add('board66', 'Объявление · отопление');
             }
             if (near(p, { x: -2.20, z: 4.81 }, 1.6))
-                add('map', 'Прочитать схему 2060 года');
+                add('map', 'Прочитать схему 1995 года');
             if (near(p, { x: -.43, z: -5.98 }, 1.42))
                 add('stairs', 'По лестнице на крышу');
             if (near(p, { x: -1.10, z: 5.67 }, 1.13))
@@ -352,7 +353,7 @@ class InteriorLife {
             return { text: 'Дежурная смена. Ищем старые записи для утреннего эфира.', bulletin: 'job-accept-65' };
         if (key === 'map') {
             this.archiveMap = true;
-            return result('Схема 2060 года: Канальная тогда называлась Фабричной. За прачечной у дома 23 сквозной проход на улицу Мастеров.');
+            return result('Схема 1995 года: Канальная тогда называлась Фабричной. За прачечной у дома 23 сквозной проход на улицу Мастеров.');
         }
         if (key.startsWith('board')) {
             const id = key.slice(5);

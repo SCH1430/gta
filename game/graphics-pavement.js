@@ -5,7 +5,7 @@ exports.paintDrain = paintDrain;
 exports.paintPlough = paintPlough;
 exports.paintDrift = paintDrift;
 exports.paintWindCrust = paintWindCrust;
-const ripples = { amber: ['#e7b480', '#cf8d67'], ice: ['#a0bdc8', '#819fb4'], jade: ['#83c7b0', '#79aeae'] };
+const ripples = { amber: ['#e7b480', '#cf8d67'], ice: ['#a0bdc8', '#819fb4'], jade: ['#b1b5ae', '#999e9c'] };
 function paintMeltwater(c, x, z, rx, rz, angle, tint, seed) {
     let state = seed >>> 0;
     const rnd = () => { state = (Math.imul(1664525, state) + 1013904223) >>> 0; return state / 4294967296; };
@@ -33,7 +33,7 @@ function paintMeltwater(c, x, z, rx, rz, angle, tint, seed) {
     c.stroke();
     c.clip();
     const water = c.createLinearGradient(-.28, -.96, .36, .99);
-    const horizon = tint === 'amber' ? '#9b8a83' : tint === 'jade' ? '#779697' : '#7a91a3';
+    const horizon = tint === 'amber' ? '#9b8a83' : tint === 'jade' ? '#838b88' : '#7a91a3';
     water.addColorStop(0, '#596e83');
     water.addColorStop(.35, '#485b70');
     water.addColorStop(.72, horizon);

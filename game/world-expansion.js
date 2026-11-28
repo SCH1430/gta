@@ -116,11 +116,20 @@ function regularBuilding(f, n, b, walls, sign) {
     }
     if (f.name) {
         const width = Math.min(front.width - 1.2, Math.max(5.2, f.name.length * .60)), sy = industrial ? h * .78 : residential ? h * .55 : h * .77;
-        const ink = kind === 'brick' || industrial ? '#ffd49a' : kind === 'dock' ? '#c8e7e0' : '#9fe1da';
+        const ink = f.name === 'ФОРМОВОЧНЫЙ ЦЕХ' ? '#b6b19b' : industrial ? '#d7c4a1' : '#e2debe';
         local(0, sy, .19, width + .27, 1.53, .20, '#3c535b');
         const badge = front.point(0, .31);
-        sign(f.name, industrial ? 'СЕВПРОМ · ПРОМЫШЛЕННАЯ ЛИНИЯ' : kind === 'dock' ? 'УПРАВЛЕНИЕ РЕЧНОГО ФЛОТА' : 'КАНАЛЬСК · ГОРОДСКАЯ СЕТЬ', ink, '#354952', badge.x, sy, badge.z, width, 1.31, front.angle);
-        local(0, sy - .78, .18, width * .77, .045, .11, industrial ? '#d7a96f' : '#7cc7c3');
+        sign(f.name, f.name === 'ФОРМОВОЧНЫЙ ЦЕХ' ? 'КОРПУС № 4 · 1976' : industrial ? 'СЕВПРОМ · ПРОМЫШЛЕННАЯ ЛИНИЯ' : kind === 'dock' ? 'УПРАВЛЕНИЕ РЕЧНОГО ФЛОТА' : 'КАНАЛЬСК · ГОРОДСКАЯ СЕТЬ', ink, '#354952', badge.x, sy, badge.z, width, 1.31, front.angle);
+        local(0, sy - .78, .18, width * .77, .045, .11, '#918b78');
+        if (f.name === 'ФОРМОВОЧНЫЙ ЦЕХ') {
+            const offset=front.width*.27, p=front.point(offset,.33);
+            sign('ШИНОМОНТАЖ', 'РЕМОНТ КАМЕР · 08—20', '#593d2c','#d4bd80',p.x,3.89,p.z,4.12,.71,front.angle);
+            const pile=front.point(offset+2.1,.61);
+            for(let i=0;i<4;i++) {
+                b.cyl(pile.x,.14+i*.24,pile.z,.68,.24,'#484a46');
+                b.cyl(pile.x,.266+i*.24,pile.z,.29,.012,'#383b38');
+            }
+        }
     }
     b.cyl(x + w / 2 + .08, h / 2, z + d * .40, .12, h - .2, '#667781');
 }

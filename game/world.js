@@ -32,6 +32,9 @@ function createWorld(scene) {
     const sign = (title, sub, ink, back, x, y, z, w, h, ry = 0, num = '') => {
         labels.place([title, sub, ink, back, num].join('|'), () => (0, world_textures_js_1.signTexture)(title, sub, ink, back, w / h, num), x, y, z, w, h, ry);
     };
+    const { marketOpen } = require('./market-hours.js');
+    const { districtCalendarMinutes } = require('./city-clock.js');
+    const dawnTint = { value: 0 };
     const metal = '#54616d', snow = '#d9dfe1', dark = '#343f4a';
     const paving = new THREE.MeshBasicMaterial({ map: (0, world_textures_js_1.districtFloor)(), color: '#c9d2de' });
     const aggregate = (0, world_textures_js_1.grainTexture)();
@@ -85,7 +88,7 @@ function createWorld(scene) {
             for (let row = 0; row < rows - 1; row++) {
                 if (!stair && (row < from || row >= from + count))
                     continue;
-                const kind = stair ? 'stair' : (row + col + seed) % 3 === 0 ? 'cream' : 'amber';
+                const kind = stair ? 'stair' : ['kitchen', 'amber', 'reading', 'cream'][(row + col + seed) % 4];
                 const cx = x + direction * ((col + (stair ? .5 : 31.5 / 64)) * bay - width * .5);
                 const cy = top - (row + (stair ? 33 : 32.5) / 68) * storey;
                 windows.place(kind, () => (0, world_textures_js_1.occupiedPane)(kind),
@@ -124,7 +127,7 @@ function createWorld(scene) {
         b.cyl(x - w * .23, h + 1.9, z + 1, .09, 3.8, '#788893');
         b.beam(x - w * .23 - 1, h + 3.3, z + 1, x - w * .23 + 1, h + 3.3, z + 1, .045, metal);
         for (const k of [-1, 1])
-            b.cyl(x + k * (w / 2 - .22), h / 2, z + d / 2 + .12, .15, h, metal);
+            b.cyl(x + k * (w / 2 - .22), h / 2, z + d / 2 + .12, .15, h, id%4===0 && k>0 ? '#acb5b2' : metal);
         const floors = Math.round(h / 2.95);
         for (let n = 1; n < floors; n++) {
             const y = (n + .1) * (h - .5) / floors;
@@ -137,6 +140,15 @@ function createWorld(scene) {
                 for (const k of [-1, 1])
                     b.box(bx + k * 1.12, y + .52, bz, .11, .73, .75, '#7d8991');
                 b.box(bx, y + .95, bz + .38, 2.46, .07, .14, snow);
+                if ((n + id) % 3 === 1) {
+                    b.box(bx, y + 1.67, bz + .37, 2.26, 1.36, .055, '#91a2a1');
+                    for (const v of [-1.12, -.35, .36, 1.12])
+                        b.box(bx + v, y + 1.64, bz + .415, .051, 1.40, .075, '#ded8bd');
+                    b.box(bx, y + 2.37, bz + .06, 2.45, .085, .79, '#b8b9ab');
+                } else if ((n+id)%4===0) {
+                    for (const side of [-1,1])
+                        b.box(bx+side*.89,y+1.16,bz+.06,.32,.36,.29,'#a18468');
+                }
             }
         }
         if (id !== 24) {
@@ -170,7 +182,7 @@ function createWorld(scene) {
         }
         else {
             b.box(ex, doorBase + 1.22, front + .085, 1.72, 2.44, .18, '#384856');
-            b.box(ex, doorBase + 1.24, front + .20, 1.19, 2.19, .13, '#425761');
+            b.box(ex, doorBase + 1.24, front + .20, 1.19, 2.19, .13, ['#585e50', '#6b594b', '#465956'][id % 3]);
             b.box(ex + .41, doorBase + 1.02, front + .30, .06, .26, .085, '#b4b7b6');
             for (const side of [-1, 1])
                 b.box(ex + side * .80, doorBase + 1.24, front + .22, .17, 2.49, .32, finish.jamb);
@@ -214,8 +226,8 @@ function createWorld(scene) {
         const intercom = (0, world_street_js_1.intercomMount)(a);
         b.box(intercom.x, 1.42, intercom.z - .116, .42, .68, .205, '#344550');
         b.box(intercom.x, 1.55, intercom.z - .006, .34, .31, .065, '#293c49');
-        b.lamp(intercom.x - .151, 1.42, intercom.z + .032, .027, .44, .028, '#71cec9');
-        sign('СКАН ЛИЦА', 'ДОМОФОН', '#a4dacf', '#354954', intercom.x, 1.205, intercom.z + .002, .34, .14);
+        b.lamp(intercom.x - .151, 1.42, intercom.z + .032, .027, .44, .028, '#a9ae80');
+        sign('ВЫЗОВ', 'ДОМОФОН', '#a4dacf', '#354954', intercom.x, 1.205, intercom.z + .002, .34, .14);
         if (id === 23) {
             b.box(ex, awningY + .26, front + awningD * .92, 1.10, .54, .085, '#435b69');
             sign('23', 'КАНАЛЬНАЯ', '#f1e9ce', '#325467', ex, awningY + .26, front + awningD * .92 + .046, 1.05, .50);
@@ -223,6 +235,7 @@ function createWorld(scene) {
         else
             sign(String(id), 'КАНАЛЬНАЯ', '#d9e1de', '#435963', x + w * .34, 2.43, front + .282, 1.18, .70);
     }
+    require('./district-winter-details.js').addDistrictDetails(b, sign, world_layout_js_1);
     windows.flush();
     windowLayer.visible = false;
     for (const pane of windowLayer.children) {
@@ -325,17 +338,17 @@ function createWorld(scene) {
             b.box(xx, 1.8, front - .038, .08, 3.6, .09, '#647676');
         if (j === 0) {
             b.box(fx + .21, 4.03, z, .33, 1.10, 8.15, '#384853');
-            sign('КАНАЛЬНЫЕ ГАРАЖИ', 'РЕМОНТ · ПОКРАСКА', '#b6f3e1', '#244952', fx + .39, 4.02, z, 7.95, .97, Math.PI / 2);
-            b.lamp(fx + .396, 3.53, z - .29, .082, .045, 7.20, '#71e2da');
+            sign('КАНАЛЬНЫЕ ГАРАЖИ', 'РЕМОНТ · ПОКРАСКА', '#e8ddbc', '#4b574a', fx + .39, 4.02, z, 7.95, .97, Math.PI / 2);
+            b.box(fx + .396, 3.53, z - .29, .082, .045, 7.20, '#827b6b');
             const bladeX = fx + .90, bladeZ = front + .83;
             b.beam(fx, 3.07, bladeZ, bladeX + .60, 3.07, bladeZ, .13, metal, true);
             b.box(bladeX, 2.53, bladeZ, 1.22, 1.23, .22, '#37505a');
             for (const side of [-1, 1])
-                sign('СТО', '24 ЧАСА', '#adf0df', '#285664', bladeX, 2.54, bladeZ + side * .116, 1.16, 1.10, side < 0 ? Math.PI : 0);
-            b.lamp(bladeX + .64, 2.54, bladeZ, .06, 1.19, .22, '#93e5d9');
+                sign('СТО', '24 ЧАСА', '#e1d5b3', '#525a50', bladeX, 2.54, bladeZ + side * .116, 1.16, 1.10, side < 0 ? Math.PI : 0);
+            b.box(bladeX + .64, 2.54, bladeZ, .06, 1.19, .22, '#8b8977');
             for (const az of [-3.12, 3.12])
-                b.lamp(fx + .20, 1.92, z + d * .24 + az, .13, 2.63, .062, '#ee7c72');
-            b.lamp(fx + .25, 3.17, z + d * .24, .1, .060, 6.10, '#ff9c83');
+                b.box(fx + .20, 1.92, z + d * .24 + az, .13, 2.63, .062, '#8f8170');
+            b.lamp(fx + .25, 3.17, z + d * .24, .1, .085, .73, '#ffe0b6');
             sign('ГАРАЖИ', 'КАНАЛЬНАЯ УЛИЦА', '#deb98c', '#3f5458', x, 2.55, front - .105, 7.4, 1.35, Math.PI);
             b.cyl(fx - .45, 2.14, z + d / 2 + .2, .17, 4.23, '#66777b');
         }
@@ -429,8 +442,8 @@ function createWorld(scene) {
     const marketLight = new world_batch_js_1.Batches(poweredMarket);
     const spektrLight = require("./spektr-frontage.js").addSpektrFrontage(b, marketLight, sign, poweredMarket);
     const stalls = [
-        { g: world_layout_js_1.buildings.kiosk, tag: 'СПЕКТР', sub: 'РАДИОДЕТАЛИ · МОДУЛИ', light: '#83f1e2', awning: '#366d70' },
-        { g: world_layout_js_1.buildings.booth, tag: 'ИМПЛАНТЫ', sub: 'ДИАГНОСТИКА И РЕМОНТ', light: '#ffab97', awning: '#9c5854' },
+        { g: world_layout_js_1.buildings.kiosk, tag: 'СПЕКТР', sub: 'РАДИОДЕТАЛИ · МОДУЛИ', light: '#f1ddae', awning: '#366d70' },
+        { g: world_layout_js_1.buildings.booth, tag: 'РЕМОНТ ТЕЛЕФОНОВ', sub: 'ИННА · МАГНИТОЛЫ И ПРИЁМНИКИ', light: '#eedfc0', awning: '#9c5854' },
         { g: world_layout_js_1.buildings.booth2, tag: 'ПАЯЛЬНАЯ', sub: 'МАСТЕРСКАЯ № 4', light: '#ffeeae', awning: '#888455' },
         { g: world_layout_js_1.buildings.booth3, tag: 'СВЯЗЬ', sub: 'БЫТОВАЯ ЭЛЕКТРОНИКА', light: '#a5cfdf', awning: '#517b8e' }
     ];
@@ -442,7 +455,7 @@ function createWorld(scene) {
         for (let i = 0; i < 6; i++) {
             const dx = x - w * .37 + i * w * .145;
             b.box(dx, 1.75, front + .22, .64, .55, .12, ['#374e5b', '#6d7778', '#7c776b'][i % 3]);
-            marketLight.lamp(dx, 1.77, front + .295, .40, .29, .025, i % 2 ? '#85aaa9' : '#bdad86');
+            b.box(dx, 1.77, front + .295, .40, .29, .025, i % 2 ? '#85aaa9' : '#bdad86');
         }
         b.box(x, .64, front + .47, w - .45, 1.23, 1.16, '#657577');
         b.box(x, 1.30, front + .47, w - .32, .12, 1.22, '#b1b0a3');
@@ -452,7 +465,18 @@ function createWorld(scene) {
             const dx = x - w * .34 + j * w * .164;
             b.box(dx, 1.48, front + .64, .57, .24, .39, ['#475b63', '#a6a391', '#8f7366'][j % 3]);
             if (j % 2 === 0)
-                marketLight.lamp(dx, 1.51, front + .84, .23, .09, .025, m.light);
+                b.box(dx, 1.51, front + .84, .23, .09, .025, m.light);
+        }
+        const goods = [['Провод, м', '30'],['Телефон б/у','900'],['Лампа','45'],['Приёмник','350']][n];
+        const tx=x+w*.25;
+        b.box(tx,1.39,front+.97,.51,.27,.032,'#b5a789');
+        labels.place('ticket-'+n,()=>world_textures_js_1.handTicket(...goods),tx,1.39,front+.99,.49,.25,0);
+        if (n===1) {
+            b.box(x,1.44,front+.74,.47,.17,.23,'#8b7d5d');
+            b.box(x-.08,1.45,front+.862,.19,.08,.019,'#62635a');
+            for(let i=0;i<3;i++) b.box(x+.08+i*.034,1.46,front+.863,.014,.091,.016,'#504e46');
+            b.beam(x+.16,1.52,front+.75,x+.41,1.82,front+.77,.018,'#a6aaa0');
+            b.piece('box',x-.37,1.385,front+.81,.12,.028,.22,'#454c48',-.20);
         }
         if (n >= 2) {
             b.piece('box', x, 2.81, front + .78, w + .62, .16, 2.1, m.awning, 0, 0, .12);
@@ -464,42 +488,49 @@ function createWorld(scene) {
         }
         b.box(x, 3.32, z + .35, w + .34, 1.0, .35, '#354950');
         sign(m.tag, m.sub, m.light, n === 1 ? '#583a42' : '#2a4a51', x, 3.32, z + .55, w + .17, .9);
-        marketLight.lamp(x, 3.79, z + .56, w - .20, .056, .075, m.light);
+        b.box(x, 3.79, z + .56, w - .20, .056, .075, '#888575');
         if (n < 2) {
             const edge = x + w / 2 - .19;
             b.box(edge + .23, 2.0, front + 1.14, .65, .88, .16, '#34444d');
-            sign(n === 0 ? 'Ω' : 'ИМ', 'СЕРВИС', m.light, n === 1 ? '#583a42' : '#295156', edge + .23, 2.01, front + 1.237, .59, .79);
-            marketLight.lamp(edge + .57, 2.0, front + 1.16, .045, .84, .19, m.light);
+            sign(n === 0 ? 'Ω' : 'Р', 'СЕРВИС', m.light, n === 1 ? '#583a42' : '#295156', edge + .23, 2.01, front + 1.237, .59, .79);
+            b.box(edge + .57, 2.0, front + 1.16, .045, .84, .19, m.light);
         }
     }
     marketLight.flush();
     const blackoutProps = (0, blackout_view_js_1.createBlackoutProps)(district);
     for (const post of world_layout_js_1.marketMasts)
         b.cyl(post.x, 1.31, post.z, .09, 2.62, '#6c8887');
-    sign('РЫНОК СПЕКТР', 'РАДИОРЯДЫ · ВОСТОЧНЫЙ ВХОД', '#9de6d9', '#365653', 31, 6.21, 17.04, 11.4, 1.26);
+    sign('РЫНОК СПЕКТР', 'РАДИОРЯДЫ · ВОСТОЧНЫЙ ВХОД', '#e4d9b4', '#365653', 31, 6.21, 17.04, 11.4, 1.26);
     const ox = -8.15, front = 15.68;
+    const { spectacleFrame } = require('./neighborhood-shops.js');
     b.box(ox, 9.30, front, 6.15, 7.26, .31, '#334b54');
-    labels.place('optic-eye', world_textures_js_1.opticMural, ox, 9.30, front + .18, 5.89, 6.96, 0);
+    labels.place('canal-tram-mosaic', world_textures_js_1.tramMosaic, ox, 9.30, front + .18, 5.89, 6.96, 0);
     for (const side of [-1, 1]) {
         b.box(ox + side * 3.09, 9.28, front + .08, .13, 7.34, .36, '#687b7c');
-        b.lamp(ox + side * 3.10, 9.34, front + .28, .066, 6.85, .075, '#99deca');
+        b.box(ox + side * 3.10, 9.34, front + .28, .066, 6.85, .075, '#827d70');
     }
     b.box(ox, 2.05, 15.97, 8.45, 3.90, .85, '#374e52');
     for (const dx of [-2.91, -1.13, .69]) {
         b.box(ox + dx, 1.95, 16.45, 1.63, 2.15, .10, '#476a70');
         b.box(ox + dx, 1.97, 16.52, 1.38, 1.77, .06, dx < 0 ? '#82a6a2' : '#989b84');
         b.box(ox + dx, 2.36, 16.56, 1.42, .065, .06, '#536c70');
+        for (let row=0;row<2;row++){
+            const y = 1.35 + row*.43;
+            b.box(ox+dx,y,16.61,1.30,.035,.15,'#a99b87');
+            for (let n=-1;n<=1;n++)
+                spectacleFrame(b,ox+dx+n*.39,y+.105,16.72,1.13,n===0?'#715349':'#4d514a');
+        }
         b.box(ox + dx, .68, 16.51, 1.61, .27, .10, '#647675');
     }
     b.box(ox + 2.72, 1.39, 16.47, 1.56, 2.74, .16, '#3c5058');
     b.box(ox + 2.72, 1.70, 16.57, 1.16, 1.58, .045, '#6b8b8b');
     b.box(ox + 3.18, 1.16, 16.63, .066, .48, .095, '#c7c7b1');
     b.box(ox, 3.75, 16.47, 8.79, .65, 1.33, '#374c50');
-    b.lamp(ox, 3.37, 16.99, 8.38, .075, .16, '#a0e1ce');
+    b.box(ox, 3.37, 16.99, 8.38, .075, .16, '#8e8e80');
     b.box(ox, 4.58, 16.09, 8.85, 1.37, .55, '#344951');
-    sign('НЕЙРОСВЯЗЬ', 'ОПТИЧЕСКИЕ ИМПЛАНТЫ', '#b3efcf', '#325953', ox, 4.58, 16.39, 8.60, 1.23, 0, '24');
-    b.lamp(ox - 4.40, 4.57, 16.35, .09, 1.34, .11, '#ffc487');
-    sign('ПРИЁМ', '09—23', '#e8c38a', '#49625d', ox + .68, 1.78, 16.60, 1.02, .47);
+    sign('ГОРОДСКАЯ ОПТИКА', 'ПОДБОР ОЧКОВ · РЕМОНТ ОПРАВ', '#f0e4c3', '#525d51', ox, 4.58, 16.39, 8.60, 1.23, 0, '24');
+    b.box(ox - 4.40, 4.57, 16.35, .09, 1.34, .11, '#aaa189');
+    sign('ПРИЁМ', '09—19 · ПН—СБ', '#e8c38a', '#49625d', ox + .68, 1.78, 16.60, 1.02, .47);
     const sx = world_street_js_1.stop.x, sz = world_street_js_1.stop.z;
     b.box(sx, 1.25, sz - 1.1, 4.75, 2.31, .13, '#647984');
     for (const dx of [-2.46, 2.46])
@@ -559,15 +590,25 @@ function createWorld(scene) {
     const devices = (0, world_street_js_1.createStreetDevices)(district, b), tram = (0, world_tram_js_1.addTram)(district, b);
     b.flush();
     far.flush();
+    const firstWallSheet = district.children.length;
     walls.flush();
+    for (const sheet of district.children.slice(firstWallSheet)) {
+        sheet.material.onBeforeCompile = shader => {
+            shader.uniforms.dawnTint = dawnTint;
+            shader.vertexShader = 'varying float facadeHeight;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n facadeHeight=position.y;');
+            shader.fragmentShader = 'varying float facadeHeight; uniform float dawnTint;\n' + shader.fragmentShader.replace('#include <map_fragment>',
+                '#include <map_fragment>\n diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(1.17,1.05,.95)+vec3(.018,.008,.0),dawnTint*smoothstep(9.,22.,facadeHeight));');
+        };
+    }
     labels.flush();
     return { setTramCabin: tram.setCabin, setHouseDoor(open) { accessibleDoor.update(open); spill(open); }, cull(camera) { visibility.update(camera); cullRegion(camera); cullStreetDetail(camera); }, isBlocked: world_layout_js_1.isBlocked, groundHeight: world_layout_js_1.groundHeight, surfaceAt: world_layout_js_1.surfaceAt, signalGreen: world_layout_js_1.signalGreen, districtAt: world_layout_js_1.districtAt, obstacles: world_layout_js_1.obstacles, bounds: world_layout_js_1.bounds, getTramPosition: tram.getPosition, getStreetState: devices.state, getFixtureState: fixtureView.state,
-        update(t, tramTime, subject, broken = fixtures_js_1.intact, power = 'normal', daylight = 0) {
+        update(t, tramTime, subject, broken = fixtures_js_1.intact, power = 'normal', daylight = 0, calendar = districtCalendarMinutes(t), wet = .65) {
+            dawnTint.value = Math.max(0,1-Math.abs(calendar%1440/60-7.35)/1.3);
             const rail = tram.update(tramTime);
-            poweredMarket.visible = power === 'normal';
+            poweredMarket.visible = power === 'normal' && marketOpen(calendar);
             spektrLight(daylight);
             blackoutProps(power, t);
-            fixtureView.update(t, broken, subject, power, daylight);
+            fixtureView.update(t, broken, subject, power, daylight, wet);
             entryLights(daylight, power);
             const dusk = THREE.MathUtils.smoothstep(1 - daylight, .18, .82);
             windowLayer.visible = dusk > .012;

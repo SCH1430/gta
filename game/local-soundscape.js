@@ -5,6 +5,8 @@ exports.landmarkTransient = landmarkTransient;
 exports.playTramBell = playTramBell;
 exports.createLocalSoundscape = createLocalSoundscape;
 const world_expansion_layout_js_1 = require("./world-expansion-layout.js");
+const { shopSounds, streetSample } = require('./winter-street-sounds.js');
+const { districtMinutes } = require('./city-clock.js');
 const sources = [
     { key: 'substation-depot', kind: 'substation', x: 26.4, z: -34.2, range: 49, gain: .87, period: 1, offset: 0, length: 1 },
     { key: 'shutter-market-west', kind: 'shutter', x: 35.5, z: 20.5, range: 28, gain: .76, period: 6.3, offset: 1.05, length: .92 },
@@ -14,10 +16,16 @@ const sources = [
     { key: 'ice-port', kind: 'ice', x: 72, z: world_expansion_layout_js_1.canal.south - 5, range: 32, gain: .63, period: 9.4, offset: 5.1, length: 1.00 },
 ];
 const clamp = (value) => Math.max(0, Math.min(1, value));
-function landmarkSoundField(listener, elapsed, weather, blackout = 0) {
+function landmarkSoundField(listener, elapsed, weather, blackout = 0, minutes = districtMinutes(elapsed), tram) {
     const audible = [];
     const co = Math.cos(listener.yaw), si = Math.sin(listener.yaw);
-    for (const source of sources) {
+    const dynamic = shopSounds.filter(s => !s.hours || minutes >= s.hours[0] && minutes < s.hours[1]);
+    if (tram?.visible && Math.abs(tram.speed)>.5) {
+        const corner = tram.z>13 && tram.z<24;
+        dynamic.push({key:corner?'tram-flanges':'tram-joints',kind:corner?'flanges':'joints',x:tram.x,z:tram.z,range:36,gain:.85,
+            period:corner?1.65:Math.max(.33,3.35/Math.abs(tram.speed)),offset:0,length:.17});
+    }
+    for (const source of [...sources,...dynamic]) {
         const dx = source.x - listener.x, dz = source.z - listener.z, distance = Math.hypot(dx, dz);
         if (distance >= source.range)
             continue;
@@ -25,7 +33,7 @@ function landmarkSoundField(listener, elapsed, weather, blackout = 0) {
         const bearing = distance < .05 ? 0 : Math.atan2(side, ahead);
         const rear = Math.cos(bearing) < -.35;
         const wind = weather?.wind ?? .28, snow = weather?.snow ?? 0;
-        const material = source.kind === 'substation' ? 1 - .92 * clamp(blackout) :
+        const material = source.kind === 'substation' ? 1 - .92 * clamp(blackout) : source.kind !== 'shutter' && source.kind !== 'ice' ? 1 :
             source.kind === 'shutter' ? .52 + .80 * wind : .54 + .46 * clamp((3 - (weather?.temperature ?? -2)) / 8);
         const strength = clamp(source.gain * ((1 - distance / source.range) ** 1.36) * material * (1 - .24 * snow) * (rear ? .84 : 1));
         if (strength < .012)
@@ -39,6 +47,7 @@ function landmarkSoundField(listener, elapsed, weather, blackout = 0) {
 const sampleRate = 22050;
 const shutterStrikes = [0, .10, .147, .280, .411, .460], iceStrikes = [0, .066, .191, .310];
 function landmarkTransient(kind) {
+    if (kind !== 'shutter' && kind !== 'ice') return streetSample(kind, sampleRate);
     const data = new Float32Array(Math.round(sampleRate * (kind === 'shutter' ? .70 : .79)));
     let seed = kind === 'shutter' ? 2805 : 1409, low = 0, mid = 0;
     for (let i = 0; i < data.length; i++) {
@@ -111,7 +120,7 @@ function createLocalSoundscape(ctx, bus) {
     const buffers = new Map(), played = new Map();
     return (marks, at, duck) => {
         const loudness = duck ? .42 : 1;
-        const power = marks.find(mark => mark.kind === 'substation');
+        const power = marks.reduce((best, m) => m.kind === 'substation' && (!best || best.strength < m.strength) ? m : best, null);
         hum.gain.setTargetAtTime((power?.strength ?? 0) * (.16 + .020 * Math.sin(at * 3.1)) * loudness, at, .18);
         pan?.pan.setTargetAtTime((power?.pan ?? 0) * .89, at, .18);
         for (const mark of marks) {

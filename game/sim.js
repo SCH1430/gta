@@ -232,6 +232,7 @@ class Simulation {
     cargoRail = new cargo_rail_js_1.CargoRail();
     cityTraffic = new city_timetables_js_1.CityTraffic();
     clockOffset = 0;
+    get cityCalendarMinutes() { return Math.floor((0, city_clock_js_1.districtCalendarMinutes)(this.elapsed) + this.clockOffset); }
     get cityMinutes() { return Math.floor(((0, city_clock_js_1.districtMinutes)(this.elapsed) + this.clockOffset) % 1440); }
     lastSpeaker;
     patrolFoot = new foot_patrol_js_1.FootPatrols();
@@ -415,7 +416,7 @@ class Simulation {
         (0, collision_js_3.setBrokenFixtures)(this.cars, this.brokenFixtures);
         (0, collision_js_3.bindCityGates)(this.cars, this.home.openedGates);
         (0, collision_js_3.setTramBody)(this.cars, (0, world_railway_js_1.linePose)(this.tramTime));
-        (0, collision_js_1.bindMarketTables)(this.cars, (0, exploration_layout_js_1.marketLayouts)(this.elapsed));
+        (0, collision_js_1.bindMarketTables)(this.cars, (0, exploration_layout_js_1.marketLayouts)(this.elapsed, this.cityCalendarMinutes));
         (0, collision_js_1.bindCargoRail)(this.cars, this.cargoRail.poses, this.cargoRail.barriers);
         if (this.validSave(saved)) {
             this.restore(saved);
@@ -439,7 +440,7 @@ class Simulation {
     core() {
         const { hero, cars, people, driven, mission, stage, money, wanted, search, lastSeen, elapsed, unseen, searchTime, tramTime, savedCar, jumpVelocity, transition, exchange, railRate } = this;
         const { districtPursuit, pursuitContact, lastSeenMotion } = this;
-        return copy({ v: 1, respondingPatrols: this.responders, pursuitState: this.patrolFoot.save(), streetState: this.street.save(), districtPursuit, pursuitContact, lastSeenMotion, cityLife: this.cityLife.save(), tramRider: this.tramRider.save(), motorPool: this.motorPool.save(), residence: this.home.save(), brokenFixtures: this.brokenFixtures, streetIncidents: this.streetIncidents.crashes, populationTraffic: this.populationTraffic.save(), managedWalkers: this.managedWalkers ? true : undefined, hero, cars, people, driven, mission, stage, money, wanted, search, lastSeen, elapsed, unseen, searchTime, tramTime, savedCar, jumpVelocity, transition, exchange, railRate, depotHold: this.depotHold, freight: this.cargoRail.save() });
+        return copy({ v: 1, winterOrders: 1, respondingPatrols: this.responders, pursuitState: this.patrolFoot.save(), streetState: this.street.save(), districtPursuit, pursuitContact, lastSeenMotion, cityLife: this.cityLife.save(), tramRider: this.tramRider.save(), motorPool: this.motorPool.save(), residence: this.home.save(), brokenFixtures: this.brokenFixtures, streetIncidents: this.streetIncidents.crashes, populationTraffic: this.populationTraffic.save(), managedWalkers: this.managedWalkers ? true : undefined, hero, cars, people, driven, mission, stage, money, wanted, search, lastSeen, elapsed, unseen, searchTime, tramTime, savedCar, jumpVelocity, transition, exchange, railRate, depotHold: this.depotHold, freight: this.cargoRail.save() });
     }
     snapshot() { return { ...this.core(), checkpoint: copy(this.checkpoint) }; }
     restore(s) {
@@ -495,7 +496,9 @@ class Simulation {
         this.streetPeople = this.people.filter(p => !p.onboard);
         this.driven = this.cars.some(c => c.id === d.driven && !c.police) ? d.driven : null;
         this.mission = (0, sim_navigation_js_1.clamp)(Math.floor(finite(d.mission, 0)), 0, 3);
-        this.stage = (0, sim_navigation_js_1.clamp)(Math.floor(finite(d.stage, 0)), 0, 2);
+        this.stage = (0, sim_navigation_js_1.clamp)(Math.floor(finite(d.stage, 0)), 0, this.mission === 1 ? 3 : 2);
+        if (!d.winterOrders && this.mission === 1 && this.stage >= 1)
+            this.stage = 3; // The accepted van in earlier saves was already running.
         this.money = Math.max(0, Math.round(finite(d.money, 0)));
         this.wanted = (0, sim_navigation_js_1.clamp)(Math.floor(finite(d.wanted, 0)), 0, 3);
         const patrols = this.cars.filter(c => c.police).map(c => c.id);
@@ -517,7 +520,7 @@ class Simulation {
         this.elapsed = Math.max(0, finite(d.elapsed, 0));
         for (const car of this.cars)
             (0, traffic_bypass_js_1.restoreTrafficManeuver)(car, sim_navigation_js_1.lanes[car.lane], this.elapsed);
-        (0, collision_js_1.bindMarketTables)(this.cars, (0, exploration_layout_js_1.marketLayouts)(this.elapsed));
+        (0, collision_js_1.bindMarketTables)(this.cars, (0, exploration_layout_js_1.marketLayouts)(this.elapsed, this.cityCalendarMinutes));
         this.brokenFixtures = (0, fixtures_js_1.restoreFixtures)(d.brokenFixtures, this.elapsed);
         this.streetIncidents.restore(d.streetIncidents, this.elapsed);
         (0, collision_js_3.bindRepairRig)(this.cars, this.cityLife.repair ? (0, city_life_js_1.repairPose)(this.cityLife.repair, this.elapsed) : null);
@@ -634,9 +637,9 @@ class Simulation {
     district() { return this.home.avatar ? (0, house_layout_js_1.houseRoom)(this.home.avatar.x, this.home.avatar.z, this.home.avatar.y) : (0, world_layout_js_1.districtAt)(this.hero.x, this.hero.z); }
     objective() {
         const goals = [
-            ['Заберите блок стрелок на рынке', 'Установите блок у диспетчерской', 'Дождитесь прохода трамвая'],
-            ['Найдите повреждённый фургон у депо', 'Доставьте фургон к гаражу'],
-            ['Заберите кассету у Инны на рынке', 'Скройтесь от патруля', 'Отнесите кассету Лёше во дворах']
+            ['Заберите запасное реле у Инны на рынке', 'Передайте реле путейцу у стрелки депо', 'Дождитесь контрольного прохода трамвая'],
+            ['Проверьте заглохший фургон у депо', 'Заберите заряженный аккумулятор у Канальных гаражей', 'Установите аккумулятор в фургон', 'Доставьте фургон к гаражу'],
+            ['Заберите запись смены у Инны', 'Прослушайте переговоры смены у диспетчерской', 'Сверьте распоряжение с вагоном в тупике Восточной']
         ];
         return this.mission < 3 ? { ...exports.campaign[this.mission], goal: goals[this.mission][this.stage] ?? goals[this.mission][0] } : { title: 'Свободный город', goal: 'Исследуйте район', reward: 0 };
     }
@@ -645,35 +648,32 @@ class Simulation {
             return null;
         let p;
         if (this.mission === 0)
-            p = this.stage === 0 ? world_layout_js_1.places.market : world_layout_js_1.places.depot;
+            p = this.stage === 0 ? world_layout_js_1.places.market : this.stage === 1
+                ? this.people.find(person => person.role === 'dispatcher') : world_layout_js_1.places.depot;
         if (this.mission === 1)
-            p = this.stage === 0 ? this.cars.find(c => c.id === 'service-van') : world_layout_js_1.places.garage;
+            p = this.stage === 0 || this.stage === 2 ? this.cars.find(c => c.id === 'service-van') : world_layout_js_1.places.garage;
         if (this.mission === 2)
-            p = this.stage === 0 ? world_layout_js_1.places.market : world_layout_js_1.places.hideout;
+            p = [world_layout_js_1.places.market, world_layout_js_1.places.depot, { x: 115, z: 12.2 }][this.stage];
         if (!p)
             return null;
-        return { x: p.x, z: p.z, label: this.mission === 2 && this.stage === 1 ? 'Панельные дворы' : this.objective().goal };
+        return { x: p.x, z: p.z, label: this.objective().goal };
     }
     missionAction() {
         const target = this.target();
-        if (!target || !near(this.hero, target, this.mission === 1 && this.stage === 1 ? 7.1 : 4.4) || !(0, sim_navigation_js_1.visible)(this.hero, target))
+        if (!target || !near(this.hero, target, this.mission === 1 && this.stage === 3 ? 7.1 : 4.4) || !(0, sim_navigation_js_1.visible)(this.hero, target))
             return '';
         const car = this.activeCar();
         if (car && Math.abs(car.speed) > 2.8)
             return '';
-        if (this.mission === 0 && this.stage === 0)
-            return car ? 'Выйти' : 'Забрать блок';
-        if (this.mission === 0 && this.stage === 1)
-            return this.driven ? 'Выйти' : 'Установить блок';
-        if (this.mission === 1 && this.stage === 0)
-            return car && car.id !== 'service-van' ? 'Выйти' : 'Принять фургон';
-        if (this.mission === 1 && this.stage === 1 && car?.id === 'service-van')
-            return 'Сдать фургон';
-        if (this.mission === 2 && this.stage === 0)
-            return 'Забрать кассету';
-        if (this.mission === 2 && this.stage === 2 && !this.wanted)
-            return 'Передать кассету';
-        return '';
+        if (this.mission === 1 && this.stage === 3)
+            return car?.id === 'service-van' ? 'Сдать фургон' : '';
+        const actions = [
+            ['Забрать реле у Инны', 'Передать реле путейцу', ''],
+            ['Проверить стартер', 'Забрать аккумулятор', 'Установить аккумулятор'],
+            ['Забрать запись смены', 'Прослушать переговоры', 'Сверить номер вагона']
+        ];
+        const label = actions[this.mission]?.[this.stage] ?? '';
+        return label && car ? 'Выйти' : label;
     }
     tramHint() {
         if (this.driven || this.home.inside || this.home.door || this.transition || this.exchange)
@@ -732,9 +732,9 @@ class Simulation {
         if (this.mission === 1)
             this.emit('speech', 'Стрелка встала! Тоня ищет водителя для фургона у депо. Адрес в телефоне.', 'Семён', 'reward1');
         if (this.mission === 2)
-            this.emit('speech', 'Фургон вернулся. Инна на рынке просит забрать старую кассету.', 'Тоня', 'garage');
+            this.emit('speech', 'Фургон вернулся. Инна просит проверить запись дежурной смены.', 'Тоня');
         if (this.mission === 3)
-            this.emit('speech', 'Запись у меня. Пусть весь район услышит, кому продали нашу линию.', 'Лёша', 'finale');
+            this.emit('speech', 'Совпало. Вагон 07 отвели в тупик по распоряжению дежурной из-за обледенения стрелки. В журнал внесли время и номер пути.', 'Лидия');
         this.saveCheckpoint();
     }
     interactionOptions() {
@@ -782,30 +782,37 @@ class Simulation {
             return;
         }
         switch (action) {
-            case 'Забрать блок':
+            case 'Забрать реле у Инны':
                 this.beginExchange('vendor');
                 break;
-            case 'Установить блок':
+            case 'Передать реле путейцу':
                 this.beginExchange('dispatcher');
                 break;
-            case 'Принять фургон': {
+            case 'Проверить стартер':
+                this.emit('sound', 'switch');
+                this.advance('Стартер щёлкает, лампы гаснут. На зарядной стойке Канальных гаражей есть батарея для этого фургона.', 'Тоня');
+                break;
+            case 'Забрать аккумулятор':
+                this.advance('На бирке номер сменного фургона. Батарея заряжена. Возвращайся к машине у депо.', 'Мастер');
+                break;
+            case 'Установить аккумулятор': {
                 const van = this.cars.find(c => c.id === 'service-van');
-                if (this.driven === van.id)
-                    this.acceptVan();
-                else
-                    this.enter(van);
+                if (van) van.health = Math.max(72, van.health);
+                this.emit('sound', 'switch');
+                this.advance('Лампа зарядки погасла. Отгони фургон в гараж на проверку.', 'Тоня');
                 break;
             }
             case 'Сдать фургон':
                 this.pay();
                 break;
-            case 'Забрать кассету':
-                this.stage = 1;
-                this.report(true);
-                this.emit('speech', 'Здесь запись о закрытии депо. Патруль уже у рынка. Передай кассету Лёше во дворах.', 'Инна', 'chase');
-                this.saveCheckpoint();
+            case 'Забрать запись смены':
+                this.advance('Семён оставил кассету вечерней смены. В диспетчерской депо есть рабочий магнитофон.', 'Инна');
                 break;
-            case 'Передать кассету':
+            case 'Прослушать переговоры':
+                this.emit('sound', 'switch');
+                this.advance('«Дежурная — седьмому. Стрелка обледенела. По распоряжению 18-Б уходите в тупик Восточной». Сверьте бортовой номер на месте.', 'Запись смены', 'shift-siding');
+                break;
+            case 'Сверить номер вагона':
                 this.pay();
                 break;
             case 'Сесть': {
@@ -854,9 +861,6 @@ class Simulation {
         if (near(mechanic, this.hero, 9))
             mechanic.lookUntil = this.elapsed + 4;
     }
-    acceptVan() {
-        this.advance('Батарея держит, но кузов помят. Довези до гаража у канала.', 'Тоня', 'delivery');
-    }
     beginExchange(role) {
         const person = this.people.find(p => p.role === role), h = this.hero;
         const angle = Math.atan2(h.z - person.z, h.x - person.x);
@@ -886,7 +890,7 @@ class Simulation {
         this.exchange = null;
         h.speed = 0;
         if (e.role === 'vendor')
-            this.advance('Держи блок. Семён ждёт у стрелки, севернее дворов.', 'Инна', 'market');
+            this.advance('Вот запасное реле. Передай Семёну у стрелки в депо до последнего вагона.', 'Инна');
         else {
             this.tramTime = 0;
             this.emit('sound', 'switch');
@@ -996,7 +1000,13 @@ class Simulation {
         }
         this.emit('toast', entry ? 'У дверей нет свободного места' : 'Подъедьте к свободному месту');
     }
-    enter(c) { this.setTransition(c, 'enter'); }
+    enter(c) {
+        if (this.mission === 1 && this.stage < 3 && c.id === 'service-van') {
+            this.emit('toast', 'Аккумулятор разряжен. Проверьте фургон и найдите заряженную батарею.');
+            return;
+        }
+        this.setTransition(c, 'enter');
+    }
     leaveCar() {
         if (this.transition || this.exchange)
             return;
@@ -1162,8 +1172,6 @@ class Simulation {
         this.driven = c.id;
         Object.assign(h, { x: c.x, y: c.y, z: c.z, yaw: c.yaw });
         this.emit('toast', names[c.kind]);
-        if (this.mission === 1 && this.stage === 0 && c.id === 'service-van')
-            this.acceptVan();
     }
     garageCar() {
         if (!this.atGarage())
@@ -1293,7 +1301,7 @@ class Simulation {
         this.distantStep = this.distantClock >= (0, population_performance_js_1.distantPopulationTick)(this.populationPressure) ? this.distantClock : 0;
         if (this.distantStep)
             this.distantClock = 0;
-        (0, collision_js_1.bindMarketTables)(this.cars, (0, exploration_layout_js_1.marketLayouts)(this.elapsed));
+        (0, collision_js_1.bindMarketTables)(this.cars, (0, exploration_layout_js_1.marketLayouts)(this.elapsed, this.cityCalendarMinutes));
         this.motorPool.tick(this, dt);
         this.moveTram(dt);
         if (this.cargoRail.poses.length) {
@@ -1908,7 +1916,7 @@ class Simulation {
                 continue;
             }
             const home = homes.get(p.id) ?? p;
-            const itinerary = this.cityExtraGoals?.[p.id] ?? (ambient ? this.populationWalkers.goal(p) : commute ?? this.cityLife.goal(p, this.people, this.elapsed, dt, currentRail, minutes));
+            const itinerary = this.cityExtraGoals?.[p.id] ?? (ambient ? this.populationWalkers.goal(p) : commute ?? this.cityLife.goal(p, this.people, this.elapsed, dt, currentRail, minutes, this.cityCalendarMinutes));
             if (p.onboard)
                 continue;
             const walking = p.role === 'walker';
@@ -2296,14 +2304,10 @@ class Simulation {
             return;
         }
         if (this.search && this.searchTime > (0, patrol_plan_js_1.scanDuration)(this.wanted)) {
-            const districtPursuit = this.districtPursuit;
             this.finishPursuit(active);
             this.cityLife.note(this.elapsed, 'Розыск снят · ' + (0, world_layout_js_1.districtAt)(this.lastSeen.x, this.lastSeen.z));
-            if (this.mission !== 2 || this.stage !== 1)
-                this.emit('speech', 'Поиск окончен. Возвращаемся на маршрут.', 'Дежурный', 'patrol-clear');
+            this.emit('speech', 'Поиск окончен. Возвращаемся на маршрут.', 'Дежурный', 'patrol-clear');
             this.emit('toast', 'Розыск снят');
-            if (!districtPursuit && this.mission === 2 && this.stage === 1)
-                this.advance('Патруль ушёл. Жду во дворах за аркой.', 'Лёша', 'clear');
         }
     }
     resumePatrol(c, dt) {

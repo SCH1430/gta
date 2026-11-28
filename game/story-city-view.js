@@ -129,7 +129,8 @@ function createCityStoryVisuals(scene) {
         }
         if (terminal)
             terminal.visible = showTerminal;
-        const showTram = active?.id === 78 && active.stage >= 3 && near(f, story_city_catalog_js_1.cityPlaces.railDepot.x, story_city_catalog_js_1.cityPlaces.railDepot.z, 90);
+        const visitSiding = f.campaignMission === 2 || active?.id === 78 && active.stage >= 3;
+        const showTram = visitSiding && near(f, story_city_catalog_js_1.cityPlaces.railDepot.x, story_city_catalog_js_1.cityPlaces.railDepot.z, 90);
         if (showTram && !tram) {
             tram = spareTram();
             group.add(tram);

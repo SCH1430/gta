@@ -7,6 +7,7 @@ exports.bindCargoRail = bindCargoRail;
 exports.bindCityGates = bindCityGates;
 exports.closedCityGates = closedCityGates;
 exports.bindMarketTables = bindMarketTables;
+exports.bindThawBarrier = bindThawBarrier;
 exports.bindStreetProps = bindStreetProps;
 exports.settledFeet = settledFeet;
 exports.headRoom = headRoom;
@@ -61,6 +62,12 @@ const quarterBoxes = [...market_quarter_layout_js_1.quarterVolumes.floors.map(s 
 }));
 const localQuarter = (0, static_box_index_js_1.indexStaticBoxes)(quarterBoxes, world_layout_js_1.bounds, s => s, 7, 4);
 const states = new WeakMap();
+const thawClosures = new WeakSet();
+const thawRail = {...rect({x:-30.5,z:16.6,w:2.79,d:.14}), top:world_layout_js_1.groundHeight(-30.5,16.6)+.93};
+function bindThawBarrier(cars, closed, occupied) {
+    if (!closed) thawClosures.delete(cars);
+    else if (!occupied) thawClosures.add(cars);
+}
 function setBrokenFixtures(cars, broken) { states.set(cars, broken); }
 function fixtureBrokenFor(cars, id) { return !!states.get(cars)?.[id]; }
 const repairBodies = new WeakMap();
@@ -235,6 +242,8 @@ function candidates(a, b, r, y, cars, ignore, vehicle = false, alsoIgnore) {
     for (const s of tables.get(cars) ?? [])
         if (overlaps(s) && (vehicle || y < s.top))
             list.push(s);
+    if (thawClosures.has(cars) && overlaps(thawRail) && (vehicle || y < thawRail.top))
+        list.push(thawRail);
     for (const p of contents.get(cars) ?? []) {
         if (p.broken && p.kind !== 'picket' || p.x + p.w / 2 < minX || p.x - p.w / 2 > maxX || p.z + p.d / 2 + p.h < minZ || p.z - p.d / 2 - p.h > maxZ)
             continue;
