@@ -12,17 +12,28 @@ const human_wardrobe_js_1 = require("./human-wardrobe.js");
 const human_cloth_js_1 = require("./human-cloth.js");
 const carry_crate_js_1 = require("./carry-crate.js");
 const model_geometry_js_1 = require("./model-geometry.js");
+const { handGrip } = require('./human-extremities.js');
 function makeWardrobe(role, variant) {
     const t = (0, human_wardrobe_js_1.garments)(role, variant);
     const head = (0, human_head_js_1.humanHead)(role, variant, t.look.skin, t.look.hair);
     head.position.set(0, -.034, -.008);
     let commuterPack;
-    if (t.style.kit === 'transit') {
+    if (t.style.kit === 'transit' || t.style.backpack) {
         const pack = new model_geometry_js_1.Batch();
-        (0, model_geometry_js_1.shell)(pack, [[.103, .084, .114, .312, .354], [.137, .118, .097, .345, .390], [.207, .115, .103, .320, .365], [.237, .081, .134, .275, .315]], t.look.shade);
-        pack.box(0, .206, .214, .192, .137, .039, t.look.main);
-        pack.box(0, .260, .235, .179, .011, .008, t.look.accent);
-        pack.rod([-.04, .376, .163], [.04, .376, .163], .009, t.look.shade, true);
+        const load = t.style.openKnit ? t.variant % 2 : 2;
+        const thickness = [.048, .104, .142][load], front = .117 + thickness;
+        const rows = load === 0 ? [[.109, .084, .119, .293, .355], [.137, .109, .106, .320, .377], [front, .098, .118, .286, .332]]
+            : [[.103, .084, .114, .312, .354], [.138, .119, .097, .345, .390], [front - .025, .116, .103, .328, .374], [front, .093, .130, .280, .338]];
+        (0, model_geometry_js_1.shell)(pack, rows, t.look.shade);
+        if (load === 0) {
+            pack.rod([-.084, .269, front], [.004, .233, front + .006], .004, t.look.main);
+            pack.rod([.004, .233, front + .006], [.089, .256, front], .004, t.look.main);
+        }
+        else {
+            pack.box(0, .207, front - .005, .181, .133, load === 2 ? .049 : .027, t.look.main);
+            pack.box(0, .260, front + .017, .168, .011, .008, t.look.accent);
+        }
+        pack.rod([-.04, .376, .153], [.04, .376, .153], .009, t.look.shade, true);
         for (const side of [-1, 1]) {
             pack.rod([side * .084, .362, .159], [side * .105, .416, .037], .013, t.look.shade, true);
             pack.rod([side * .105, .416, .037], [side * .108, .409, -.119], .013, t.look.shade, true);
@@ -30,6 +41,8 @@ function makeWardrobe(role, variant) {
             pack.rod([side * .104, .282, -.143], [side * .112, .127, -.101], .014, t.look.shade, true);
         }
         commuterPack = pack.mesh();
+        if (t.style.backpack)
+            commuterPack.position.z = .046;
         commuterPack.name = 'commuter-backpack';
     }
     return { ...t, skin: t.look.skin, head, commuterPack,
@@ -37,6 +50,11 @@ function makeWardrobe(role, variant) {
 }
 const wardrobe = new Map();
 const workTools = new Map();
+const clothProfiles = {
+    wool: { shine: 7, reflection: .012, relief: .75 }, waxed: { shine: 38, reflection: .066, relief: .42 },
+    quilted: { shine: 22, reflection: .033, relief: .59 }, windbreaker: { shine: 27, reflection: .039, relief: .47 }
+};
+const workCotton = { shine: 12, reflection: .019, relief: .65 };
 function roleTool(role) {
     if (role !== 'dispatcher' && role !== 'mechanic' && role !== 'vendor')
         return undefined;
@@ -119,6 +137,8 @@ function createPerson(role = 'resident', variant = 0) {
     const commuterPack = t.commuterPack?.clone();
     if (commuterPack)
         torso.add(commuterPack);
+    if (t.reflectors)
+        torso.add(t.reflectors.clone());
     const bag = torso.getObjectByName('courier-canvas-bag') ?? commuterPack;
     root.name = role;
     pelvis.name = 'pelvis';
@@ -157,8 +177,10 @@ function createPerson(role = 'resident', variant = 0) {
         spine.add(cloth);
     const clothes = [torso, hem], bases = [t.torso.geometry, t.tail.geometry];
     const clothMaterial = torso.material.clone();
+    const profile = clothProfiles[t.cut] ?? workCotton;
+    clothMaterial.normalScale.setScalar(profile.relief);
     let coatIndex = 0, wet = -1;
-    const shoulders = [], elbows = [], hips = [], knees = [], ankles = [];
+    const shoulders = [], elbows = [], hips = [], knees = [], ankles = [], hands = [], frost = [];
     const flap = t.flap?.clone() ?? null, parcel = role === 'hero' || role === 'vendor' || role === 'dispatcher' ? t.parcel.clone() : null;
     if (flap) {
         flap.name = 'satchel-flap';
@@ -184,6 +206,7 @@ function createPerson(role = 'resident', variant = 0) {
         shoulder.add(upper, elbow);
         elbow.position.y = -.251;
         elbow.add(forearm);
+        hands.push(forearm.getObjectByName('winter-glove'));
         pelvis.add(hip);
         hip.position.set(side * t.hipWidth, .006, 0);
         hip.rotation.order = 'ZXY';
@@ -195,6 +218,7 @@ function createPerson(role = 'resident', variant = 0) {
         boot.name = prefix + '-boot';
         boot.position.y = -.09;
         ankle.add(boot);
+        frost.push(boot.getObjectByName('snow-packed-sole'));
         const sleeve = (0, human_cloth_js_1.attachBend)(t.armBends[i], shoulder, elbow), denim = (0, human_cloth_js_1.attachBend)(t.legBends[i], hip, knee);
         bends.push((0, human_cloth_js_1.fitShoulder)(upper, spine, shoulder, side * t.shoulderWidth), sleeve.update, denim.update);
         clothes.push(upper, forearm, sleeve.mesh);
@@ -205,7 +229,8 @@ function createPerson(role = 'resident', variant = 0) {
         knees.push(knee);
         ankles.push(ankle);
     }
-    bends.push((0, human_cloth_js_1.fitWaist)(torso, spine), (0, human_cloth_js_1.drapeCoat)(hem, hips, spine, t.lUpper));
+    const waist = (0, human_cloth_js_1.fitWaist)(torso, spine, t.cut);
+    bends.push((0, human_cloth_js_1.drapeCoat)(hem, hips, spine, t.lUpper));
     root.scale.setScalar(t.scale);
     for (const m of clothes)
         m.material = clothMaterial;
@@ -217,11 +242,15 @@ function createPerson(role = 'resident', variant = 0) {
         if (Math.abs(moisture - wet) > .01) {
             wet = moisture;
             clothMaterial.color.setRGB(1 - wet * .29, 1 - wet * .24, 1 - wet * .18);
-            clothMaterial.shininess = 13 + wet * 12;
-            clothMaterial.specular.setScalar(.017 + wet * .014);
+            clothMaterial.shininess = profile.shine + wet * 13;
+            clothMaterial.specular.setScalar(profile.reflection + wet * .019);
         }
     }
-    return (0, model_motion_js_1.animatePerson)(role, variant, { root, lod, near, far, face, hem, strap, bag, tool, cloth, props, fabric, farPose: t.far.rigAnimator({ pelvis, spine, neck, shoulders, elbows, hips, knees, ankles }), pelvis, spine, neck, shoulders, elbows, hips, knees, ankles, flap, parcel, deform() {
+    return (0, model_motion_js_1.animatePerson)(role, variant, { root, lod, near, far, face, hem, strap, bag, tool, cloth, props, fabric, style: t.style, farPose: t.far.rigAnimator({ pelvis, spine, neck, shoulders, elbows, hips, knees, ankles }), pelvis, spine, neck, shoulders, elbows, hips, knees, ankles, flap, parcel,
+        grip(i, mode) { handGrip(hands[i], mode); },
+        snowBoots(visible) { for (const mesh of frost) mesh.visible = visible; },
+        deform(seat) {
+            waist(seat);
             for (const update of bends)
                 update();
         } });

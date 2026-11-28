@@ -3,13 +3,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.clothV = clothV;
 exports.wovenMaterial = wovenMaterial;
 const T = require("../engine/three.module.min.js");
-const width = 256, height = 512, band = 68;
-const bands = { outerwear: 0, sleeves: 1, trousers: 2, wool: 3, quilted: 4, leather: 5, boot: 6 };
+const width = 256, height = 512, band = 56;
+const bands = { outerwear: 0, sleeves: 1, trousers: 2, wool: 3, quilted: 4, leather: 5, boot: 6, waxed: 7, knit: 8 };
 function clothV(pattern, y) {
     if (!pattern)
-        return .966;
+        return .995;
     const v = pattern === 'sleeves' ? (y + .46) / .53 : pattern === 'trousers' ? (y + .81) / .87 :
-        pattern === 'leather' ? (y + .34) / .75 : pattern === 'boot' ? y / .20 : (y + .25) / .82;
+        pattern === 'leather' ? (y + .34) / .75 : pattern === 'boot' ? y / .20 : pattern === 'knit' ? y * 14 : (y + .25) / .82;
     return (bands[pattern] * band + 2 + Math.min(1, Math.max(0, v)) * (band - 4)) / height;
 }
 function texture(bytes, colorSpace = T.NoColorSpace) {
@@ -27,8 +27,10 @@ function materialGrain(page, x, y, angle) {
     const twill = Math.sin((x - 2 * y) * Math.PI / 4);
     switch (page) {
         case bands.trousers: return 3.4 * twill + 1.3 * cross;
-        case bands.wool: return 4.7 * Math.sin(x * Math.PI / 2 + .7 * Math.sin(y * Math.PI / 4)) * (.65 + .35 * Math.cos(y * Math.PI / 2));
+        case bands.wool: return 3.9 * Math.sin(x * 1.82 + .7 * Math.sin(y * .92)) * (.65 + .35 * Math.cos(y * 1.71)) + 2 * twill;
         case bands.quilted: return 1.2 * cross + 2.2 * Math.cos(y * .83 + .55 * Math.cos(angle * 2));
+        case bands.waxed: return 1.4 * twill + 2.2 * Math.cos(angle * 21 - y * .42) * Math.sin(y * 1.1);
+        case bands.knit: return 8.0 * Math.sin(x * Math.PI / 4) + 2.6 * Math.sin(y * Math.PI / 2) * Math.sin(x * Math.PI / 4);
         case bands.leather:
         case bands.boot: return 1.7 * Math.sin(x * .91 + Math.sin(y * .78)) * Math.sin(y * .91 + Math.cos(x * .56));
         default: return 1.6 * cross + 1.1 * twill;
@@ -69,6 +71,7 @@ function wovenMaterial() {
         const [u0, v0, u1, v1, bow, radius, depth] = spec;
         fold('wool', u0, v0, u1, v1, bow, radius * 1.24, depth * .70);
         fold('quilted', u0, v0, u1, v1, bow, radius * .91, depth * .52);
+        fold('waxed', u0, v0, u1, v1, bow * .76, radius * .74, depth * .91);
     }
     for (let i = 0; i < 8; i++) {
         const u = i / 8, t = (i % 3) * .026;
@@ -95,13 +98,13 @@ function wovenMaterial() {
             const weave = materialGrain(page, x, row, a);
             const faded = 4.2 * Math.sin(a * 3 + .3) * Math.sin(v * 19) + 3 * Math.sin(a * 11 + 8 * v);
             const pleat = page === bands.quilted ? 8 * Math.sin(v * 49 + .9 * Math.sin(a * 2)) ** 7 : 0;
-            const n = page > bands.boot ? 250 : T.MathUtils.clamp(Math.round(241 + light[i] + faded + weave + pleat + ((grain >>> 6) % 7 - 3)), 150, 255);
+            const n = page > bands.knit ? 250 : T.MathUtils.clamp(Math.round(241 + light[i] + faded + weave + pleat + ((grain >>> 6) % 7 - 3)), 150, 255);
             const offset = i * 4;
             albedo[offset] = n;
             albedo[offset + 1] = n;
             albedo[offset + 2] = n;
             albedo[offset + 3] = 255;
-            if (page <= bands.boot)
+            if (page <= bands.knit)
                 relief[i] = light[i] * .60 + weave * .85 + pleat * .55;
         }
     for (let y = 0; y < height; y++)

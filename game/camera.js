@@ -96,7 +96,7 @@ class FollowCamera {
                 heading += slip * .28 - car.steer * .15 * this.speedView;
             }
             this.yaw += deltaAngle(this.yaw, heading) * ease((3.1 + 2.2 * this.speedView)*this.carFollow, dt);
-            const pitch = cockpit ? .18 : .035 + .075 * this.speedView;
+            const pitch = .035 + .075 * this.speedView;
             this.pitch += (pitch - this.pitch) * ease(cockpit ? .9 : 2.8, dt);
         }
         if (!car && !this.freeOrbit && !this.rear && this.lookIdle <= 0 && this.footIntentGrace <= 0 && this.footMoved > 0 && doorWeight < .05) {

@@ -33,6 +33,7 @@ const vehicle_cabin_js_1 = require("./vehicle-cabin.js");
 const sim_navigation_js_1 = require("./sim-navigation.js");
 const market_quarter_layout_js_1 = require("./market-quarter-layout.js");
 const vehicle_snow_js_1 = require("./vehicle-snow.js");
+const { fenceDamage, fenceFootprint } = require("./market-fence.js");
 const skin = .001;
 function shape(points) {
     const normals = points.map((p, i) => {
@@ -141,14 +142,15 @@ function settledFeet(cars, broken, now) {
 }
 const propShapes = new WeakMap();
 function propShape(p) {
-    const cached = propShapes.get(p);
-    if (cached && cached.x === p.x && cached.z === p.z)
+    const cached = propShapes.get(p), damaged = p.kind === 'picket' && fenceDamage(p);
+    if (cached && cached.x === p.x && cached.z === p.z && cached.damaged === damaged)
         return cached.s;
-    const s = rect(p);
+    const bounds = damaged ? fenceFootprint(p, damaged) : p;
+    const s = rect(bounds);
     s.prop = p;
     s.surface = p.kind === 'cart' || p.kind === 'container' ? 'metal' : 'wood';
-    s.top = (0, world_layout_js_1.groundHeight)(p.x, p.z) + p.h;
-    propShapes.set(p, { x: p.x, z: p.z, s });
+    s.top = (0, world_layout_js_1.groundHeight)(p.x, p.z) + bounds.h;
+    propShapes.set(p, { x: p.x, z: p.z, damaged, s });
     return s;
 }
 function headRoom(x, z, y = 0) {
@@ -234,10 +236,10 @@ function candidates(a, b, r, y, cars, ignore, vehicle = false, alsoIgnore) {
         if (overlaps(s) && (vehicle || y < s.top))
             list.push(s);
     for (const p of contents.get(cars) ?? []) {
-        if (p.broken || p.x + p.w / 2 < minX || p.x - p.w / 2 > maxX || p.z + p.d / 2 < minZ || p.z - p.d / 2 > maxZ)
+        if (p.broken && p.kind !== 'picket' || p.x + p.w / 2 < minX || p.x - p.w / 2 > maxX || p.z + p.d / 2 + p.h < minZ || p.z - p.d / 2 - p.h > maxZ)
             continue;
         const s = propShape(p);
-        if (vehicle || y < s.top - .01)
+        if (overlaps(s) && (vehicle || y < s.top - .01))
             list.push(s);
     }
     if (vehicle)

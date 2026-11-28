@@ -6,7 +6,8 @@ exports.createStreetDevices = createStreetDevices;
 const THREE = require("../engine/three.module.min.js");
 const world_layout_js_1 = require("./world-layout.js");
 const world_textures_js_1 = require("./world-textures.js");
-exports.stop = { x: 13.8, z: 22 };
+const { marketShelter, tramStops } = require("./world-railway.js");
+exports.stop = marketShelter;
 function intercomMount(a) {
     return a.id === 24 ? { x: -4.46, y: 1.54, z: 16.70 }
         : { x: a.x - a.w * .22 + .95, y: 1.54, z: a.z + a.d / 2 + .31 };
@@ -91,7 +92,8 @@ function createStreetDevices(parent, b) {
     const faces = new Map();
     faces.set('delayed', boardFace('delayed'));
     const display = new THREE.Mesh(new THREE.PlaneGeometry(3.10, .77), new THREE.MeshBasicMaterial({ map: faces.get('delayed') }));
-    display.position.set(x + .59, 2.28, z - .926);
+    const { board } = tramStops.market;
+    display.position.set(board.x, board.y, board.z);
     display.name = 'Табло маршрута 07';
     group.add(display);
     const heaters = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: '#663d32' }), 4);

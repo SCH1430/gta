@@ -127,11 +127,112 @@ function hairForm(id, variant, a, t, hat) {
     const height = y + crown + wave + lift + .0027 * swept * crest * (cut === 'buzz' ? .10 : 1);
     if (!hat || hat === 'earband')
         return { x, y: height, z };
-    const brim = hat === 'flat' ? .187 : hat === 'earflap' ? .149 : .177;
-    const covered = T.MathUtils.smoothstep(height, brim + .005, brim + .057);
+    const brim = hat === 'flat' ? .193 : hat === 'earflap' ? .151 : hat === 'rail' ? .178 : .172;
+    const covered = T.MathUtils.smoothstep(height, brim + .002, brim + .052);
+    const fit = hat === 'shell' || hat === 'rail' ? 1 : .69;
     return {
-        x: x * (1 - .28 * covered), y: height - covered * Math.max(0, height - .233), z: .010 + (z - .010) * (1 - .25 * covered)
+        x: x * (1 - .31 * fit * covered), y: height - covered * Math.max(0, height - .230) * (fit + .10),
+        z: .010 + (z - .010) * (1 - .29 * fit * covered)
     };
+}
+const lockMaterial = new T.MeshPhongMaterial({ vertexColors: true, specular: '#282220', shininess: 26 });
+function looseLocks(id, variant, cut, hat, color) {
+    if (cut === 'buzz' || cut === 'fade' || hat === 'earflap')
+        return;
+    const b = new human_head_shapes_js_1.Surface(), ink = new T.Color(), base = new T.Color(color);
+    const old = (0, human_head_shapes_js_1.facialAge)(id, variant), longer = cut === 'curl' || cut === 'bob';
+    const across = cut === 'wave' || cut === 'crop' || cut === 'part' ? -.22 : .13;
+    const starts = hat && hat !== 'earband' ? [1.10, 1.32, 1.89] : [.32, .66, 1.06, 1.39, 2.00];
+    const sides = variant ? 4 : 6, rows = variant ? 4 : 5;
+    for (const side of [-1, 1]) {
+        for (let n = 0; n < starts.length; n++) {
+            const theta = side * starts[n] + across * (n < 2 ? 1 : .28);
+            const y0 = hairline(id, variant, theta) + .023 + (n % 2) * .006;
+            const reach = (longer ? .032 : .020) + (n % 3) * .0035, bend = side * (.21 - .044 * n);
+            const curl = cut === 'curl' ? .055 : .014;
+            for (let row = 0; row <= rows; row++) {
+                const t = row / rows, a = theta + bend * t + curl * Math.sin(1.3 * Math.PI * t), y = y0 - reach * t;
+                const p = (0, human_head_shapes_js_1.skull)(id, a, y, variant), s = Math.sin(a), c = Math.cos(a);
+                const flare = (.0011 + .0054 * Math.sin(Math.PI * t) + (longer ? .0022 * t : 0));
+                const width = (.0026 + n % 3 * .00042) * (.20 + .80 * Math.sin(Math.PI * (.10 + .90 * t)));
+                for (let i = 0; i <= sides; i++) {
+                    const u = i / sides * Math.PI * 2, rise = flare + width * .52 * Math.cos(u), lateral = width * Math.sin(u);
+                    const skin = .70 + .32 * (.5 + .5 * Math.cos(u)) + .050 * Math.cos(t * 9.8 + n);
+                    ink.copy(base).lerp(old > .63 && (n === 1 || n === 3) ? silverHair : base, old > .75 ? .32 : .16).multiplyScalar(skin);
+                    const k = b.vertex(p.x + s * rise + c * lateral, y, p.z - c * rise + s * lateral, i / sides, t, ink);
+                    if (i && row)
+                        b.quad(k - sides - 2, k - 1, k, k - sides - 1);
+                }
+            }
+        }
+    }
+    const locks = new T.Mesh(b.build(), lockMaterial);
+    locks.name = 'groomed-temple-and-nape-locks';
+    return locks;
+}
+const silverHair = new T.Color('#c0b6a9');
+let beardMaterial;
+function beardFiber() {
+    if (beardMaterial)
+        return beardMaterial;
+    const w = 96, h = 48, data = new Uint8Array(w * h * 4);
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const offset = (y * w + x) * 4, row = y / (h - 1);
+            const hash = Math.imul(x + 11, 1597334677) ^ Math.imul(y + 63, 1640531513);
+            const hair = .51 + .34 * Math.cos(x * 2.76 + y * .66) + .15 * ((hash >>> 18) & 3) / 3;
+            const edge = (1 - T.MathUtils.smoothstep(row, .73, .98)) * (.83 + .17 * Math.sin(x * 1.9));
+            data[offset] = data[offset + 1] = data[offset + 2] = 150 + 91 * hair;
+            data[offset + 3] = 255 * edge * (.53 + .47 * hair);
+        }
+    }
+    const map = (0, human_albedo_js_1.rgbaTexture)(data, w, h);
+    map.wrapS = T.RepeatWrapping;
+    beardMaterial = new T.MeshPhongMaterial({ map, vertexColors: true, alphaTest: .34, side: T.DoubleSide, specular: '#211e1a', shininess: 16 });
+    return beardMaterial;
+}
+function facialHair(id, variant, color) {
+    const strength = (0, human_head_shapes_js_1.beardFor)(id, variant);
+    if (strength < .20)
+        return;
+    const b = new human_head_shapes_js_1.Surface(), base = new T.Color(color), ink = new T.Color();
+    const full = T.MathUtils.smoothstep(strength, .38, .87), old = (0, human_head_shapes_js_1.facialAge)(id, variant);
+    const columns = variant ? 24 : 36, rows = variant ? 6 : 8;
+    for (let j = 0; j <= rows; j++) {
+        const t = j / rows;
+        for (let i = 0; i <= columns; i++) {
+            const theta = (i / columns * 2 - 1) * (1.56 + full * .31), a = Math.abs(theta), s = Math.sin(theta), c = Math.cos(theta);
+            const upper = .077 + .066 * T.MathUtils.smoothstep(a, .20, 1.46) + .011 * full * T.MathUtils.smoothstep(a, .43, .90);
+            const lower = .043 + .026 * T.MathUtils.smoothstep(a, .55, 1.73);
+            const y = T.MathUtils.lerp(lower, upper, t), p = (0, human_head_shapes_js_1.skull)(id, theta, y, variant);
+            const mane = gauss((a - .34) / .53) * (.31 + .68 * Math.sin(Math.PI * t));
+            const grain = .75 + .23 * Math.cos(i * .92 + t * 3) ** 2;
+            const coat = .0006 + full * (.0027 + .0069 * mane) * grain;
+            const point = p.y - full * .0045 * (1 - t) ** 3 * gauss(a / .67);
+            ink.copy(base).lerp(silverHair, .28 * T.MathUtils.smoothstep(old, .48, .85) * grain).multiplyScalar(.80 + .23 * grain);
+            const k = b.vertex(p.x + s * coat, point, p.z - c * coat, i / columns * 2, t, ink);
+            if (i && j)
+                b.quad(k - columns - 2, k - 1, k, k - columns - 1);
+        }
+    }
+    if (full > .55) {
+        const n = 16;
+        for (let j = 0; j <= 4; j++) {
+            for (let i = 0; i <= n; i++) {
+                const theta = (i / n * 2 - 1) * .48, t = j / 4, arch = 1 - Math.abs(theta) / .51;
+                const y = .105 + .006 * arch + .002 * Math.sin(theta * 14) + t * (.0057 + .0015 * arch);
+                const p = (0, human_head_shapes_js_1.skull)(id, theta, y, variant);
+                const thick = .0007 + full * .0022 * arch * Math.sin(t * Math.PI);
+                ink.copy(base).lerp(silverHair, .19 * old).multiplyScalar(.86 + .15 * arch);
+                const k = b.vertex(p.x, y, p.z - thick, i / n, t, ink);
+                if (i && j)
+                    b.quad(k - n - 2, k - 1, k, k - n - 1);
+            }
+        }
+    }
+    const result = new T.Mesh(b.build(), beardFiber());
+    result.name = full > .50 ? 'sculpted-beard-and-moustache' : 'textured-stubble';
+    return result;
 }
 function hairSurface(role, id, variant, color) {
     const b = new human_head_shapes_js_1.Surface(), cut = haircut(id, variant), hat = (0, human_headwear_js_1.wearableHeadwear)(role, variant)?.cut;
@@ -145,6 +246,9 @@ function hairSurface(role, id, variant, color) {
         }
     const mat = makeHairMaterial(color, id, cut, variant), hair = new T.Mesh(b.build(), mat);
     hair.name = 'scalp-hair';
+    const locks = looseLocks(id, variant, cut, hat, color);
+    if (locks)
+        hair.add(locks);
     if (cut === 'knot' || cut === 'tail') {
         const pinned = cut === 'knot', knot = new human_head_shapes_js_1.Surface(), cols = 20, rows = 14;
         for (let j = 0; j <= rows; j++)
@@ -185,18 +289,19 @@ function earSurface(id, variant) {
         earMaterials.set(key, mat);
     }
     const ear = new human_head_shapes_js_1.Surface();
-    const form = (0, human_head_shapes_js_1.earsFor)(id, variant), ink = new T.Color();
+    const ink = new T.Color();
     const radii = [.012, .16, .31, .44, .55, .66, .77, .86, .94, 1, .95, .79];
     const shell = [.0011, .0021, .0034, .0048, .0060, .0062, .0071, .0087, .0074, .0048, .0018, -.0039];
     for (const side of [-1, 1]) {
+        const form = (0, human_head_shapes_js_1.earsFor)(id, variant, side);
         const n = 24;
         for (let j = 0; j < radii.length; j++)
             for (let i = 0; i <= n; i++) {
                 const a = i / n * 2 * pi, r = radii[j], back = Math.sin(a), height = Math.cos(a);
                 const u = r * back, v = r * height;
-                const y = form.height + form.size * (.027 * v + .0022 * u + .0012 * u * v);
+                const y = form.height + form.size * (.027 * v + .0022 * u + .0012 * u * v) - form.drop * Math.max(0, -v) ** 2;
                 const z = form.depth + form.size * ((.0148 + .0028 * v) * u + form.slope * v - .0029 * v * v);
-                const root = Math.abs((0, human_head_shapes_js_1.skull)(id, pi / 2 + (z - .006) * 10.2, y, variant).x);
+                const root = Math.abs((0, human_head_shapes_js_1.skull)(id, side * (pi / 2 + (z - .006) * 10.2), y, variant).x);
                 const bowl = gauss((u + .14) / .27) * gauss((v + .13) / .35);
                 const antihelix = gauss((u - .35 + .28 * v * v) / .15) * gauss((v - .16) / .59);
                 const helix = gauss((r - .86) / .107) * T.MathUtils.smoothstep(v, -.98, .18);
@@ -206,7 +311,8 @@ function earSurface(id, variant) {
                 const fold = j < radii.length - 2 ? relief : 0;
                 const x = side * (root + form.size * (shell[j] + fold) + .48 * form.flare * u - .0017 * v * v);
                 const occlusion = .21 * bowl + .075 * gauss((r - .71) / .105) * T.MathUtils.smoothstep(u, .23, .85);
-                ink.setRGB(1 - occlusion * .70, 1 - occlusion, 1 - occlusion * .96);
+                const flush = .12 * (helix + .67 * lobule) * (1 - .22 * Math.max(0, -u));
+                ink.setRGB(1 - occlusion * .70 + .03 * flush, 1 - occlusion - flush, 1 - occlusion * .96 - .63 * flush);
                 const k = ear.vertex(x, y, z, .51 - .43 * u, .50 - .445 * v, ink);
                 if (j && i)
                     ear.quad(k - n - 2, k - 1, k, k - n - 1, side > 0);
@@ -218,19 +324,26 @@ function earSurface(id, variant) {
 }
 function neckSurface(id, variant) {
     const b = new human_head_shapes_js_1.Surface(), n = 24;
+    const fit = (0, human_head_shapes_js_1.neckFit)(id, variant), ink = new T.Color();
     const rings = [[-.073, .082, .060, .016], [-.054, .073, .055, .017], [-.034, .064, .051, .018], [-.015, .056, .047, .018],
         [.005, .051, .044, .018], [.026, .047, .043, .018], [.049, .044, .041, .019], [.075, .048, .049, .021], [.105, .052, .057, .020]];
     for (let j = 0; j < rings.length; j++)
         for (let i = 0; i <= n; i++) {
             const a = (i / n - .5) * 2 * pi, [y, w, d, c] = rings[j], s = Math.sin(a), f = Math.cos(a);
-            const tendon = .0036 * gauss((Math.abs(s) - (.22 + .65 * j / (rings.length - 1))) / .17) * Math.max(0, f) * gauss((y - .026) / .076);
+            const tendon = (.0036 + .0015 * fit.old - .0013 * fit.young) * gauss((Math.abs(s) - (.22 + .65 * j / (rings.length - 1))) / .17) * Math.max(0, f) * gauss((y - .026) / .076);
             const larynx = (id % 2 === 0 ? .0028 : .0011) * gauss(s / .24) * gauss((y - .034) / .013);
-            const x = s * (w + tendon) * (id % 2 === 0 ? 1 : .92), z = c - f * (d + tendon + larynx);
-            const k = b.vertex(x, y + .0034 * Math.max(0, -f) * gauss((y - .054) / .036), z, i / n, (.11 - y) / .15);
+            const fold = fit.old * Math.max(0, f) * (.003 * gauss((y - .010) / .012) + .0015 * gauss((y - .039) / .009));
+            const shape = 1 - T.MathUtils.smoothstep(Math.abs(y - .016), .063, .091);
+            const x = s * (w + tendon) * T.MathUtils.lerp(1, fit.width, shape), z = c - f * (d * T.MathUtils.lerp(1, fit.depth, shape) + tendon + larynx + fold);
+            const shade = 1 - fit.old * Math.max(0, f) * .14 * gauss((y - .024) / .008);
+            ink.setRGB(shade, shade * (1 - .02 * fit.old), shade);
+            const k = b.vertex(x, y + .0034 * Math.max(0, -f) * gauss((y - .054) / .036), z, i / n, (.11 - y) / .15, ink);
             if (i && j)
                 b.quad(k - n - 2, k - 1, k, k - n - 1);
         }
-    const neck = new T.Mesh(b.build(), (0, human_complexion_js_1.complexion)(id, true, variant));
+    const material = (0, human_complexion_js_1.complexion)(id, true, variant).clone();
+    material.vertexColors = true;
+    const neck = new T.Mesh(b.build(), material);
     neck.name = 'cervical-muscles';
     return neck;
 }
@@ -248,6 +361,9 @@ function humanHead(role, variant = 0, skin = '#be8f76', hair) {
         const size = (0, human_head_shapes_js_1.headScale)(role, v);
         head.scale.set(size.x, size.y, size.z);
         head.add(neckSurface(id, v), earSurface(id, v), hairSurface(role, id, v, tone));
+        const beard = facialHair(id, v, tone);
+        if (beard)
+            head.add(beard);
         const accessories = (0, human_headwear_js_1.workAccessories)(role, id, v);
         if (accessories)
             head.add(accessories);

@@ -4,6 +4,8 @@ exports.serviceBody = void 0;
 exports.addServiceBody = addServiceBody;
 exports.rearCluster = rearCluster;
 exports.buildServiceGear = buildServiceGear;
+exports.buildPloughHydraulics = buildPloughHydraulics;
+const T = require("../engine/three.module.min.js");
 const model_geometry_js_1 = require("./model-geometry.js");
 const vehicle_cabin_js_1 = require("./vehicle-cabin.js");
 const serviceBody = (kind) => kind === 'taxi' || kind === 'wagon' || kind === 'towtruck' || kind === 'utility';
@@ -21,8 +23,16 @@ function rearCluster(kind, s, side, hardware, lit) {
         const band = (batch, y0, y1, offset, tint) => batch.quad(at(a, y0, offset), at(b, y0, offset), at(b, y1, offset), at(a, y1, offset), tint, normal);
         band(hardware, -.065, 1.065, 0, '#3d4142');
         band(hardware, .02, .97, .003, '#873b36');
-        band(lit, .36, .88, .006, '#ff5646');
-        band(hardware, .075, .28, .006, j === 3 || van ? '#c98a50' : '#b9594b');
+        if (hatch) {
+            band(lit, .69, .88, .008, '#ff5947');
+            band(lit, .42, .56, .008, '#e64139');
+            band(hardware, .57, .67, .009, '#3c292b');
+            band(hardware, .08, .27, .008, j === 1 ? '#bbc3ad' : '#c98a50');
+        }
+        else {
+            band(lit, .36, .88, .006, '#ff5646');
+            band(hardware, .075, .28, .006, j === 3 || van ? '#c98a50' : '#b9594b');
+        }
     }
 }
 function addServiceBody(kind, paint, trim, lamps, tail, far) {
@@ -141,11 +151,34 @@ function buildServiceGear(kind) {
         }
         batch.box(0, .092, .11, .902, .18, .24, slate);
         batch.add(model_geometry_js_1.tube, [0, .18, .22], [.145, .38, .145], alloy, [0, 0, Math.PI / 2]);
+        for (const side of [-1, 1]) {
+            batch.add(model_geometry_js_1.tube, [side * .195, .18, .22], [.262, .034, .262], slate, [0, 0, Math.PI / 2]);
+            for (const z of [1.18, 2.62, 4.10]) {
+                const x = side * w * .84;
+                batch.box(x, .049, z, .101, .035, .102, slate);
+                batch.rod([x - .037, .062, z], [x - .022, .139, z], .012, alloy);
+                batch.rod([x - .022, .139, z], [x + .031, .139, z], .012, alloy);
+                batch.rod([x + .031, .139, z], [x + .041, .062, z], .012, alloy);
+            }
+        }
+        for (let i = 0; i < 13; i++)
+            batch.add(model_geometry_js_1.tube, [-.153 + i * .0255, .18, .22], [.182, .017, .182], i % 2 ? '#8c8576' : '#b0a691', [0, 0, Math.PI / 2]);
         batch.rod([0, .105, .40], [0, .085, 4.36], .018, '#aba28d', true);
     }
     else {
         batch.quad([-.96, .11, -.08], [.98, .11, -.08], [1.13, .60, .13], [-1.11, .60, .13], '#c59960', [0, 0, -1]);
-        batch.quad([-.96, .11, -.08], [.98, .11, -.08], [.92, .032, .007], [-.94, .032, .007], '#a3a59a', [0, 0, -1]);
+        const lip = (x, height, inset = 0) => [x, .032 + height * .078, .005 - .087 * height - inset];
+        batch.quad(lip(-.94, 0), lip(.92, 0), lip(.98, 1), lip(-.96, 1), '#6c7472', [0, 0, -1]);
+        batch.quad(lip(-.94, 0, .001), lip(.92, 0, .001), lip(.928, .18, .001), lip(-.944, .18, .001), '#c2c6b9', [0, 0, -1]);
+        for (let i = 0; i < 11; i++) {
+            const x = -.87 + .165 * i;
+            const a = lip(x, .08), b = lip(x + .100 + .012 * (i % 3), .105), c = lip(x + .028, .32 + .10 * (i % 4));
+            a[2] -= .002;
+            b[2] -= .002;
+            c[2] -= .002;
+            batch.tri(a, b, c, i % 3 === 0 ? '#9c8470' : '#b2b7ac', [0, 0, -1]);
+            batch.box(x + .051, .085, -.057, .032, .023, .020, '#464e4e');
+        }
         for (const side of [-1, 1]) {
             batch.rod([side * .93, .13, -.057], [side * 1.11, .60, .10], .024, steel, true);
             batch.rod([side * .74, .14, -.036], [side * .78, .53, .088], .018, slate, true);
@@ -155,4 +188,36 @@ function buildServiceGear(kind) {
         }
     }
     return batch.mesh();
+}
+const hydraulicBody = new T.MeshLambertMaterial({ color: '#475552' });
+const hydraulicRod = new T.MeshStandardMaterial({ color: '#bac8c4', roughness: .31, metalness: .56 });
+const up = new T.Vector3(0, 1, 0);
+function buildPloughHydraulics(chassis, blade, front) {
+    const delta = new T.Vector3(), tip = new T.Vector3(), end = new T.Vector3();
+    const cylinders = [-1, 1].map(side => {
+        const body = new T.Mesh(model_geometry_js_1.tube, hydraulicBody);
+        const rod = new T.Mesh(model_geometry_js_1.tube, hydraulicRod);
+        body.name = 'plough-hydraulic-cylinder';
+        rod.name = 'plough-hydraulic-rod';
+        chassis.add(body, rod);
+        return { body, rod, anchor: new T.Vector3(side * .81, .94, front - .023),
+            bladeAnchor: new T.Vector3(side * .76, .37, .105) };
+    });
+    return () => {
+        blade.updateMatrix();
+        for (const { body, rod, anchor, bladeAnchor } of cylinders) {
+            tip.copy(bladeAnchor).applyMatrix4(blade.matrix);
+            delta.subVectors(tip, anchor);
+            const stroke = delta.length();
+            delta.divideScalar(stroke);
+            const bodyLength = .245;
+            body.position.copy(anchor).addScaledVector(delta, bodyLength * .5);
+            body.quaternion.setFromUnitVectors(up, delta);
+            body.scale.set(.099, bodyLength, .099);
+            end.copy(anchor).addScaledVector(delta, bodyLength - .024);
+            rod.position.copy(end).lerp(tip, .5);
+            rod.quaternion.copy(body.quaternion);
+            rod.scale.set(.043, Math.max(.025, stroke - bodyLength + .024), .043);
+        }
+    };
 }

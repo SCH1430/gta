@@ -16,6 +16,8 @@ const exploration_layout_js_1 = require("./exploration-layout.js");
 const static_box_index_js_1 = require("./static-box-index.js");
 const market_quarter_layout_js_1 = require("./market-quarter-layout.js");
 const world_expansion_layout_js_1 = require("./world-expansion-layout.js");
+const { placeWalls, warmSurfaceAt } = require("./world-life-place-layout.js");
+const { neighborhoodKiosk } = require("./world-life-neighbor-layout.js");
 exports.places = {
     spawn: { x: -34, z: 42 }, garage: { x: -43, z: 43 },
     market: { x: 30, z: 26 }, depot: { x: 12, z: -39 },
@@ -111,6 +113,8 @@ exports.tramSupports = [
 ];
 exports.freightWagons = [-18, -6, 6].map(z => ({ x: 120.85, z, w: 2.59, d: 9.64, h: 2.99 }));
 exports.obstacles = [
+    neighborhoodKiosk,
+    ...placeWalls,
     ...cargo_rail_js_1.cargoShedSides,
     ...Object.values(blackout_js_1.blackoutProps),
     ...exploration_layout_js_1.explorationObstacles, ...city_life_layout_js_1.serviceFence, ...city_life_layout_js_1.roadStopProps, ...market_quarter_layout_js_1.quarterWorkrooms, ...market_quarter_layout_js_1.quarterProps,
@@ -248,6 +252,8 @@ exports.snowPatches = [
     return { x, z, rx, rz, contour };
 });
 function surfaceAt(x, z) {
+    if (warmSurfaceAt(x, z))
+        return 'concrete';
     if ((0, world_expansion_layout_js_1.expansionDistrict)(x, z))
         return (0, world_expansion_layout_js_1.expansionSurface)(x, z);
     for (const strip of exports.pavedStrips) {

@@ -101,6 +101,8 @@ function buildSteering(kind) {
             spine.position.copy(hips);
             spine.rotation.x = c.drivingPose.backAngle;
             const jacket = t.torso.clone();
+            jacket.geometry = (0, human_cloth_js_1.seatedJacketGeometry)(jacket.geometry, t.cut === 'quilted' ? 1.18 : t.cut === 'wool' ? .67 : .94);
+            privateGeometry.add(jacket.geometry);
             spine.add(jacket);
             clothing.push({ mesh: jacket, original: jacket.geometry });
             const tail = t.tail.clone();
@@ -119,7 +121,7 @@ function buildSteering(kind) {
             spine.add(head);
             face = (0, model_expression_js_1.expression)(character, t.skin, head, identity);
             head.traverse(part => {
-                if (part instanceof T.Mesh && ['animated-oral-skin', 'articulated-eyes', 'anatomical-eyelids'].includes(part.name))
+                if (part instanceof T.Mesh && ['animated-oral-skin', 'articulated-eyes', 'anatomical-eyelids', 'rounded-corneal-film'].includes(part.name))
                     privateGeometry.add(part.geometry);
             });
             if (t.flap) {

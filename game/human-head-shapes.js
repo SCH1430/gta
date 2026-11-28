@@ -2,6 +2,10 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Surface = exports.earsFor = exports.faceVariant = exports.headU = void 0;
 exports.identity = identity;
+exports.ageFor = ageFor;
+exports.facialAge = facialAge;
+exports.beardFor = beardFor;
+exports.neckFit = neckFit;
 exports.headScale = headScale;
 exports.faceInk = faceInk;
 exports.skull = skull;
@@ -54,8 +58,10 @@ const leads = {
 };
 function headScale(role, v) {
     const [x, y, z] = role === 'resident' ? cranialFits[(v + cranialFits.length - 1) % cranialFits.length] : leads[role];
-    if (role === 'resident')
-        return { x: 1.030 + (x - 1) * 1.48, y: 1.015 + (y - 1) * 1.22, z: 1.012 + (z - 1) * 1.32 };
+    if (role === 'resident') {
+        const young = 1 - T.MathUtils.smoothstep(facialAge(0, v), .04, .25);
+        return { x: 1.030 + (x - 1) * 1.48 + .027 * young, y: 1.015 + (y - 1) * 1.22 - .012 * young, z: 1.012 + (z - 1) * 1.32 + .023 * young };
+    }
     return { x, y, z };
 }
 const sculpt = (id, variant) => variant ? residents[(variant - 1) % residents.length] : principals[id];
@@ -85,9 +91,11 @@ const residentBones = residents.map((person, v) => ({
     tipWidth: .0116 + person.nostrils * .61, hook: person.nose * .31, earSize: .94 + (v % 5) * .035, earSlope: .0055 + (v % 4) * .0011
 }));
 const bones = (id, variant) => variant === courierFace ? principalBones[4] : variant ? residentBones[variant - 1] : principalBones[id];
-const earsFor = (id, variant) => {
+const earsFor = (id, variant, side = 0) => {
     const b = bones(id, variant);
-    return { size: b.earSize, slope: b.earSlope, height: .148, depth: .0124, flare: .0104 + (b.mandible > 0 ? .0012 : 0) };
+    const offset = side * asymmetry(id, variant), old = T.MathUtils.smoothstep(facialAge(id, variant), .48, 1);
+    return { size: b.earSize * (1 + .078 * offset + .059 * old), slope: b.earSlope + offset * .0028,
+        height: .148 + .0046 * offset, depth: .0124 + .0051 * offset, flare: .0104 + (b.mandible > 0 ? .0012 : 0) + .0069 * offset, drop: .004 * old };
 };
 exports.earsFor = earsFor;
 const profileTangents = profile.map((row, i) => row.slice(1).map((value, k) => {
@@ -107,6 +115,17 @@ const age = [.31, .55, .05, .06, .65, .12, 1, .38, .53, .21, .28, .15, .84, .49,
 const beard = [.34, 0, 0, 0, .26, 0, .73, 0, .9, 0, .28, 0, .82, 0, 0, .02];
 const cheekFault = [.8, -.6, -.25, .81, -.60, .31, 1, -.58, .66, .44, -.75, -.22, -.9, .24, .64, .91];
 const leadAsymmetry = [-.62, .54, -.82, .75];
+const leadAge = [.30, .46, .94, .40];
+const leadBeard = [.42, 0, .25, 0];
+const asymmetry = (id, variant) => variant ? cheekFault[variant - 1] : leadAsymmetry[id];
+function facialAge(id, variant) { return variant ? age[variant - 1] : leadAge[id]; }
+function ageFor(role, variant = 0) { return facialAge(identity(role, variant), faceVariant(role, variant)); }
+function beardFor(id, variant) { return variant ? beard[variant - 1] : leadBeard[id]; }
+function neckFit(id, variant) {
+    const years = facialAge(id, variant);
+    const old = T.MathUtils.smoothstep(years, .45, 1), young = 1 - T.MathUtils.smoothstep(years, .05, .25);
+    return { width: (id % 2 === 0 ? 1 : .92) * (1 - .12 * young + .027 * old), depth: 1 - .10 * young - .045 * old, old, young };
+}
 const profileColumns = [1, 2, 3, 4];
 const warmth = [.75, .55, .48, .78, .60, .72, .61, .52, .57, .65, .41, .85, .73, .70, .38, .87];
 const vertexTint = new T.Color();
@@ -114,17 +133,19 @@ function faceInk(id, variant, theta, x, y, result) {
     const profile = variant - 1, side = Math.abs(x), forward = Math.max(0, Math.cos(theta));
     const exposed = .72 * gauss((side - .049) / .026) * gauss((y - .141) / .015) + .54 * gauss(x / .022) * gauss((y - .134) / .010);
     const red = exposed * (variant ? warmth[profile] : [.39, .32, .23, .62][id]) * forward;
-    const stubble = variant ? beard[profile] : [.29, 0, .22, 0][id];
+    const stubble = beardFor(id, variant);
     const jaw = 1 - T.MathUtils.smoothstep(y, .097 + side * .52, .112 + side * .52);
     const mouth = gauss(x / .033) * gauss((y - .090) / .021);
     const temple = Math.sin(theta) ** 2 * .6 * gauss((y - .139) / .039);
     const fuzz = (.93 + .065 * Math.sin(x * 1470 + y * 83) + .042 * Math.cos(y * 1290 + x * 86));
     const dark = stubble * (jaw * (1 - mouth) * (.86 + .11 * gauss(x / .032)) + .42 * temple) * fuzz * (.52 + .48 * forward);
-    const bruising = (variant ? age[profile] : id === 2 ? .94 : .22) * gauss((side - .039) / .019) * gauss((y - .149) / .006) * forward;
-    const lines = !variant && id === 2 ? .058 * gauss((side - .043) / .035) * gauss((y - .201) / .020) * Math.pow(.5 + .5 * Math.cos(y * 713 + x * 3.7), 5) * forward : 0;
+    const years = facialAge(id, variant), old = T.MathUtils.smoothstep(years, .46, .97);
+    const bruising = years * gauss((side - .039) / .019) * gauss((y - .149) / .006) * forward;
+    const lines = .066 * old * gauss((side - .043) / .035) * gauss((y - .201) / .020) * Math.pow(.5 + .5 * Math.cos(y * 713 + x * 3.7), 5) * forward;
     const mole = !variant && id === 1 ? .24 * gauss((x + .056) / .0028) * gauss((y - .119) / .0033) * forward : 0;
     const wind = !variant && id === 3 ? .092 * exposed * forward : 0;
-    return result.setRGB(1 - .46 * dark - .053 * bruising + red * .040 - lines - mole - wind * .32, 1 - .54 * dark - .071 * bruising - red * .12 - lines - mole - wind, 1 - .53 * dark - .031 * bruising - red * .058 - lines * .9 - mole * .9 - wind * .76);
+    const flush = .07 * gauss((side - .048 - .007 * asymmetry(id, variant)) / .027) * gauss((y - .132) / .021) * forward;
+    return result.setRGB(1 - .46 * dark - .053 * bruising + red * .045 - lines - mole - wind * .32 + flush * .12, 1 - .54 * dark - .071 * bruising - red * .15 - lines - mole - wind - flush, 1 - .53 * dark - .031 * bruising - red * .067 - lines * .9 - mole * .9 - wind * .76 - flush * .63);
 }
 function skullRow(y) {
     let i = 1;
@@ -146,14 +167,15 @@ function sideBreadth(width, theta, y, shape, asymmetry) {
     const side = Math.abs(theta);
     const masseter = gauss((y - shape.cornerY) / .024) * gauss((side - 1.16) / .61);
     const templeHollow = gauss((y - .188) / .026) * gauss((side - 1.31) / .34);
-    return Math.sin(theta) * (width + 1.35 * shape.mandible * masseter - .0028 * templeHollow) +
+    const cheek = .0031 * asymmetry * Math.sin(theta) * gauss((y - shape.cheekY) / .024) * gauss((side - .86) / .46);
+    return Math.sin(theta) * (width + 1.35 * shape.mandible * masseter - .0028 * templeHollow + cheek) +
         .0021 * asymmetry * Math.max(0, Math.cos(theta)) * gauss((y - .091) / .043);
 }
 function skull(id, theta, y, variant) {
     const [w, f, b, center] = skullRow(y), male = id === 0 || id === 2, form = sculpt(id, variant), shape = bones(id, variant);
     const width = skullWidth(id, y, w, form, shape);
-    const c = Math.cos(theta), older = variant ? age[variant - 1] : id === 2 ? 1.2 : .19;
-    const individual = variant ? cheekFault[variant - 1] : leadAsymmetry[id];
+    const c = Math.cos(theta), older = facialAge(id, variant);
+    const young = 1 - T.MathUtils.smoothstep(older, .05, .25), individual = asymmetry(id, variant);
     const x = sideBreadth(width, theta, y, shape, individual);
     const browWidth = .0165 + .0009 * (male ? 1 : 0);
     const depth = Math.abs(c);
@@ -164,23 +186,25 @@ function skull(id, theta, y, variant) {
         const ax = Math.abs(x);
         const eyeSocket = .0077 * gauss((ax - form.eye) / browWidth) * gauss((y - .165) / .0089);
         const brow = ((male ? .0050 : .0038) + shape.brow) * gauss((ax - form.eye - .002) / .021) * gauss((y - .178) / .0075);
-        const malar = (.008 + form.cheek * .040 + older * .0007) * gauss((ax - .048) / .020) * gauss((y - shape.cheekY) / .011);
+        const sideOffset = Math.sign(x) * individual;
+        const malar = (.008 + form.cheek * .040 + older * .0007 + .00145 * sideOffset + .0022 * young) * gauss((ax - .048) / .020) * gauss((y - shape.cheekY - .0049 * sideOffset) / .012);
         const muzzle = (.005 - .0014 * older) * gauss(x / .034) * gauss((y - .106) / .022);
         const sag = .0026 * older * gauss((ax - .054) / .017) * gauss((y - .084) / .017);
         const crease = older * .002 * gauss((ax - .020 - (.127 - y) * .40) / .0038) * gauss((y - .107) / .018);
         const lowerOrbit = .00115 * older * gauss((ax - form.eye) / .019) * gauss((y - .149) / .0048);
-        const crooked = x - .0016 * individual * gauss((y - .134) / .018);
+        const crooked = x - .0042 * individual * gauss((y - .149) / .028);
+        const tipAxis = crooked + .0022 * individual * gauss((y - .130) / .0065);
         const dorsum = .010 + .0024 * gauss((y - .139) / .010);
         const bridge = (.0132 + shape.bridge) * gauss(crooked / dorsum) * gauss((y - .150) / .024);
         const septum = .0032 * gauss(crooked / .0046) * gauss((y - .127) / .0054);
         const hook = shape.hook * gauss(crooked / .0094) * gauss((y - .146) / .010);
-        const nose = (.0168 + form.nose) * gauss(crooked / shape.tipWidth) * gauss((y - shape.tipY) / .0080);
+        const nose = (.0168 + form.nose - .0014 * young) * gauss(tipAxis / shape.tipWidth) * gauss((y - shape.tipY) / .0080);
         const wing = (.0081 + form.nostrils * .41) * gauss((ax - .0125 - form.nostrils) / .006) * gauss((y - .128) / .0048);
         const dip = .0051 * gauss((ax - .010 - form.nostrils) / .0038) * gauss((y - .124) / .0030);
         const philtrum = .0023 * gauss((ax - .004) / .0024) * gauss((y - .113) / .006);
         const lips = .0038 * gauss(x / .021) * (gauss((y - .100) / .0038) + .85 * gauss((y - .092) / .0039));
-        const chin = (.006 + form.chin) * gauss(x / shape.chinBreadth) * gauss((y - .065) / .011);
-        const infraMalar = (.0027 + older * .0011) * gauss((ax - .050) / .013) * gauss((y - .119) / .016);
+        const chin = (.006 + form.chin - .0021 * young) * gauss(x / shape.chinBreadth) * gauss((y - .065) / .011);
+        const infraMalar = (.0027 + older * .0023 - .0014 * young) * gauss((ax - .050) / .014) * gauss((y - .119) / .018);
         const mentolabial = .0036 * gauss(x / .022) * gauss((y - .082) / .006);
         const subnasal = .0028 * gauss(x / .008) * gauss((y - .122) / .0032);
         const frontalPlane = shape.forehead * gauss((y - .217) / .038) * gauss(x / .062);
@@ -191,7 +215,7 @@ function skull(id, theta, y, variant) {
     return { x, y, z, uv: (0, human_albedo_js_1.uvOf)(texX, y) };
 }
 function faceTheta(id, x, y, variant) {
-    const [w] = skullRow(y), shape = bones(id, variant), individual = variant ? cheekFault[variant - 1] : leadAsymmetry[id];
+    const [w] = skullRow(y), shape = bones(id, variant), individual = asymmetry(id, variant);
     const width = skullWidth(id, y, w, sculpt(id, variant), shape);
     let a = Math.asin(T.MathUtils.clamp(x / width, -1, 1));
     for (let j = 0; j < 2; j++) {
@@ -204,7 +228,7 @@ function faceTheta(id, x, y, variant) {
 }
 function eyesFor(id, variant) {
     const f = sculpt(id, variant);
-    return { x: f.eye, y: .1657, radius: id % 2 === 0 ? .0136 : .0139, slant: f.tilt };
+    return { x: f.eye, y: .1657, radius: id % 2 === 0 ? .0136 : .0139, slant: f.tilt, age: facialAge(id, variant), asymmetry: asymmetry(id, variant) };
 }
 class Surface {
     p = [];

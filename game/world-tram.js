@@ -54,9 +54,10 @@ function addTram(scene, b) {
     b.box(7.62, .027, -39.4, 2.05, .052, 10, '#879699');
     for (let z = -44; z < -34.5; z += .42)
         b.box(6.79, .058, z, .19, .012, .20, '#dcc18c');
-    b.box(8.92, 1.16, -34.72, .09, 2.32, .09, '#657b7a');
+    const { board } = world_railway_js_1.tramStops.depot;
+    b.box(board.x, 1.16, board.z, .09, 2.32, .09, '#657b7a');
     const boards = new world_batch_js_1.Panels(scene);
-    boards.place('depotstop', () => (0, world_textures_js_1.signTexture)('07  КАНАЛЬНЫЙ', 'ПОСАДКА · ДО РЫНКА', '#ffdb97', '#324952', 2.25), 8.92, 2.08, -34.72, 1.13, .49, Math.PI);
+    boards.place('depotstop', () => (0, world_textures_js_1.signTexture)('07  КАНАЛЬНЫЙ', 'ПОСАДКА · ДО РЫНКА', '#ffdb97', '#324952', 2.25), board.x, board.y, board.z, 1.13, .49, Math.PI);
     boards.flush();
     b.box(24.20, .32, 24.95, .23, .58, 2.15, '#687a81');
     b.lamp(24.07, .52, 24.95, .028, .115, 1.8, '#e1a06f');

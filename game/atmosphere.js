@@ -102,7 +102,10 @@ function streetHalos(scene, snowLamps) {
     sideLight.name = 'Боковой свет пешеходного перехода';
     scene.add(sideLight, sideLight.target);
     scene.userData.crossingLight = sideLight;
+    const eyeObserver = new THREE.Vector3();
+    scene.userData.eyeObserver = eyeObserver;
     return (cam, broken, radius, quality, power, daylight) => {
+        eyeObserver.copy(cam.position);
         const evening = THREE.MathUtils.smoothstep(1 - daylight, .12, .84);
         snowLamps.length = 0;
         m.opacity = .16 + .69 * evening;
@@ -194,6 +197,7 @@ function createAtmosphere(scene) {
     const updateWeather = (0, winter_effects_js_1.streetWeather)(scene);
     const updateIce = (0, frost_sheets_js_1.createFrostSheets)(scene);
     const snowLamps = [];
+    scene.userData.eyeLights = snowLamps;
     const updateHalos = streetHalos(scene, snowLamps);
     const updateSnow = require("./airborne-snow.js").createSnowfall(scene, (0, winter_light_js_1.winterBudget)(2).flakes);
     const updateRoadLights = (0, road_light_js_1.createRoadLights)(scene);

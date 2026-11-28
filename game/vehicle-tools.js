@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.vehiclePanel = vehiclePanel;
 exports.vehicleAction = vehicleAction;
+exports.canInspectHood = canInspectHood;
 const vehicle_cabin_js_1 = require("./vehicle-cabin.js");
 const collision_js_1 = require("./collision.js");
 const vehicle_road_js_1 = require("./vehicle-road.js");
@@ -12,6 +13,10 @@ const titles = vehicle_cabin_js_1.vehicleNames;
 const goods = { empty: 'Пусто', tools: 'Инструменты', crate: 'Высокий ящик', calibrator: 'Калибратор' };
 function button(id, label) { return '<button type="button" class="k-panel-row" data-action="motor-' + id + '"><span>' + label + '</span></button>'; }
 const moving = (car) => Math.abs(car.speed) > .4 || Math.hypot(car.vx, car.vz) > .6;
+function canInspectHood(sim, c) {
+    return !!c && !sim.transition && !sim.home?.inside && c.id !== sim.driven && !c.carriedBy && !moving(c) &&
+        distance(c, world_layout_js_1.places.garage) < 10 && distance(c, sim.hero) < 5.6;
+}
 const fittings = {
     'winter-tyres': { field: 'winterTyres', fee: 480, title: 'Зимняя резина' },
     'underbody': { field: 'underbody', fee: 370, title: 'Защита картера' },
@@ -54,6 +59,8 @@ function vehiclePanel(sim) {
     if (s.leftMirror || s.rightMirror)
         html += button('mirrors', 'Развернуть сложенные зеркала');
     if (garage) {
+        if (canInspectHood(sim, c))
+            html += button('hood', s.hood ? 'Закрыть капот' : 'Поднять капот');
         if (!s.leftLamp)
             html += button('left', 'Левая фара · 35 ₽');
         if (!s.rightLamp)
@@ -100,10 +107,17 @@ function vehiclePanel(sim) {
 function vehicleAction(sim, id) {
     if (!id.startsWith('motor-'))
         return { handled: false, message: '' };
-    const done = (message) => ({ handled: true, message }), pool = sim.motorPool, c = pool.linkedCar(sim);
+    const done = (message) => ({ handled: true, message }), pool = sim.motorPool, key = id.slice(6);
+    const c = key === 'garage-hood' ? sim.garageCar() : pool.linkedCar(sim);
     if (!c || sim.transition)
         return done('Подойдите к неподвижной машине');
-    const s = (0, vehicle_road_js_1.equipment)(c), active = sim.activeCar() === c, key = id.slice(6);
+    const s = (0, vehicle_road_js_1.equipment)(c), active = sim.activeCar() === c;
+    if (key === 'hood' || key === 'garage-hood') {
+        if (!canInspectHood(sim, c))
+            return done('Остановите машину у канального гаража и подойдите к ней пешком');
+        s.hood = !s.hood;
+        return { ...done(s.hood ? 'Капот поднят' : 'Капот закрыт'), inspectHood: true };
+    }
     if (key === 'manoeuvre' && active) {
         s.manoeuvre = !s.manoeuvre;
         return done(s.manoeuvre ? 'Точный ход включён' : 'Обычный привод');

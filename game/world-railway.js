@@ -76,10 +76,13 @@ exports.serviceStart = exports.departureTime + 5 + (platform - approachMetres - 
 const worksMetres = 92;
 const worksRail = railAt(worksMetres);
 exports.serviceCycle = 6 * (dwell + journey);
+exports.marketShelter = { x: 13.8, z: 22 };
 exports.tramStops = {
-    depot: { x: 7.58, z: -36.50, title: 'Трамвайное депо' },
-    works: { x: worksRail.x + 3.5, z: worksRail.z + 3.1, title: 'Мастерские' },
-    market: { x: 17.05, z: 22.59, title: 'Рынок «Спектр»' }
+    depot: { x: 7.58, z: -36.50, title: 'Трамвайное депо', board: { x: 8.92, y: 2.08, z: -34.72 } },
+    works: { x: worksRail.x + 3.5, z: worksRail.z + 3.1, title: 'Мастерские',
+        board: { x: worksRail.x + 4.64, y: 2.47, z: worksRail.z + 3.64 } },
+    market: { x: 17.05, z: 22.59, title: 'Рынок «Спектр»',
+        board: { x: exports.marketShelter.x + .59, y: 2.28, z: exports.marketShelter.z - .926 } }
 };
 const termini = exports.stopMetres = { depot: depotMetres, works: worksMetres, market: platform };
 const legs = [['depot','market','07'], ['market','depot','07'], ['depot','works','17Д'],

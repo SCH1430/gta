@@ -1548,7 +1548,11 @@ class Simulation {
         const tangent = pair?.tangent ?? Math.abs(va.x * n.z - va.z * n.x);
         const strength = pair?.strength ?? (0, sim_navigation_js_1.clamp)((normal + Math.min(2, tangent * .12)) / 14, 0, 1);
         const breaks = !!pole && normal >= (0, fixtures_js_1.breakSpeed)(c.kind, pole), snow = hit.surface === 'snow';
-        const movedProp = hit.prop ? this.motorPool.strike(hit.prop, c, normal) : false;
+        const prop = hit.prop, previousFence = prop?.fence;
+        const movedProp = prop ? this.motorPool.strike(prop, c, normal, tangent, this.elapsed, hit) : false;
+        const fenceStrike = prop?.fence && prop.fence !== previousFence, fenceFall = fenceStrike && prop.broken;
+        if (fenceStrike)
+            this.cityLife.witness(this.streetPeople, q, this.elapsed, city_life_js_1.fenceDamageWitness, sim_navigation_js_1.visible);
         if (pair && b) {
             this.setImpactVelocity(c, pair.a);
             if (normal > .24 && (b.id === this.driven || pair.bShock > .18 || this.impactSliding.has(b))) {
@@ -1572,10 +1576,10 @@ class Simulation {
             (0, collision_js_3.setBrokenFixtures)(this.cars, this.brokenFixtures);
             this.emit('toast', pole.kind === 'lamp' ? 'Фонарь погас' : 'Светофор повреждён · Перекрёсток без сигнала');
         }
-        if (!breaks && !movedProp && normal < .88 && (normal < .02 || tangent < 4.8))
+        if (!breaks && !fenceStrike && !movedProp && normal < .88 && (normal < .02 || tangent < 4.8))
             return;
         const surface = b ? 'vehicle' : hit.surface ?? 'concrete', key = b?.id ?? pole?.id ?? hit.prop?.id ?? surface;
-        if (this.rememberImpact(c, key) && !breaks)
+        if (this.rememberImpact(c, key) && !breaks && !fenceFall)
             return;
         if (b)
             this.rememberImpact(b, c.id);
@@ -1591,13 +1595,18 @@ class Simulation {
             if (b.auto && !b.police && normal > 8.4 && severity > .38)
                 b.trafficStalledUntil = this.elapsed + (0, sim_navigation_js_1.clamp)(5 + normal * 1.2, 9, 27);
         }
+        const travelX = va.x - (vb?.x ?? 0), travelZ = va.z - (vb?.z ?? 0), travel = Math.hypot(travelX, travelZ);
+        const material = surface === 'wood' ? 'wood' : 'plastic';
+        const fragments = { dx: travel > .001 ? travelX / travel : -n.x, dz: travel > .001 ? travelZ / travel : -n.z,
+            material, glass: aGlass || bGlass, snow: !!fenceFall && (0, world_layout_js_1.surfaceAt)(q.x, q.z) === 'snow' };
+        const crash = this.streetIncidents.impact(q, this.elapsed, potency, fenceFall ? 'fence' : breaks ? 'fixture' : 'collision', fragments);
         const player = this.driven, playerWasHit = b?.id === player, focus = playerWasHit && b ? b : c;
         const second = playerWasHit ? c : b, sign = playerWasHit ? -1 : 1;
-        this.events.push({ type: 'sound', text: breaks ? 'pole' : 'impact', impact: {
+        this.events.push({ type: 'sound', text: breaks ? 'pole' : fenceStrike ? 'fence' : 'impact', impact: {
                 time: this.elapsed, ...q, y: (0, world_layout_js_1.groundHeight)(q.x, q.z) + .55, strength: Math.max(breaks ? .32 : 0, strength),
-                normalSpeed: normal, tangentSpeed: tangent, nx: n.x * sign, nz: n.z * sign, carId: focus.id, otherId: second?.id, surface, glass: aGlass || bGlass || breaks
+                normalSpeed: normal, tangentSpeed: tangent, nx: n.x * sign, nz: n.z * sign, carId: focus.id, otherId: second?.id, surface, glass: aGlass || bGlass || breaks,
+                crash: crash && (0, street_incidents_js_1.leavesDebris)(crash) ? { kind: crash.kind, severity: crash.severity, debris: crash.debris } : undefined
             } });
-        this.streetIncidents.impact(q, this.elapsed, potency, breaks ? 'fixture' : 'collision');
         if (c.id === player) {
             if (breaks || normal > 6 || b?.police && normal > 2)
                 this.report(false, breaks ? (pole.kind === 'lamp' ? 'Повреждение фонаря' : 'Повреждение светофора') : 'Столкновение');
@@ -1670,8 +1679,13 @@ class Simulation {
         const system = (0, vehicle_systems_js_1.equipment)(c);
         system.shock *= Math.exp(-dt * 2.6);
         const spray = this.cars.some(v => v !== c && Math.abs(v.speed) > 4 && Math.abs(v.x - c.x) < 3.4 && Math.abs(v.z - c.z) < 5);
-        system.wet = (0, sim_navigation_js_1.clamp)(system.wet + dt * ((spray ? .44 : .004) + Math.abs(c.speed) * .0009 - (system.wipers ? .60 : 0)), 0, 1);
-        const grip = (0, vehicle_road_js_1.tyreGrip)(c, (x, z) => this.motorPool.snow.isCleared(x, z), (0, weather_js_1.weatherAt)(this.elapsed, this.cityMinutes));
+        const conditions = (0, weather_js_1.weatherAt)(this.elapsed, this.cityMinutes), speed = Math.abs(c.speed);
+        system.wet = (0, sim_navigation_js_1.clamp)(system.wet + dt * ((spray ? .44 : .004) + speed * .0009 - (system.wipers ? .60 : 0)), 0, 1);
+        const glassWet = system.glassWet ?? system.wet;
+        const precipitation = conditions.rain * .068 + conditions.snow * (.018 + conditions.wetSnow * .013);
+        const deposit = precipitation + (spray ? .38 : 0), drying = (.012 + speed * .0014) * glassWet;
+        system.glassWet = (0, sim_navigation_js_1.clamp)(glassWet + dt * (deposit - drying), 0, 1);
+        const grip = (0, vehicle_road_js_1.tyreGrip)(c, (x, z) => this.motorPool.snow.isCleared(x, z), conditions);
         grip.mean *= this.cityTraffic.snowGrip(c, this.elapsed, this.cityMinutes);
         const yaw = (0, sim_navigation_js_1.wrapAngle)((0, vehicle_handling_js_1.stepDrive)(c, input, system, grip, dt) + this.impactYaw(c, grip.mean, dt));
         const moved = (0, collision_js_3.moveHull)(c, c.vx * dt, c.vz * dt, yaw, this.cars, this.streetBodies());
@@ -1913,7 +1927,8 @@ class Simulation {
                 goal = { x: 7.9, z: -37.25 };
             let focus = this.elapsed < (p.lookUntil ?? 0) ? this.hero : null;
             const memory = this.cityLife.witnesses[p.id];
-            if (!focus && memory && this.elapsed - memory.t < 8)
+            const fenceImpactAge = memory?.reason === city_life_js_1.fenceDamageWitness ? this.elapsed - memory.t : Infinity;
+            if (!focus && memory && fenceImpactAge >= .18 && this.elapsed - memory.t < 8)
                 focus = memory;
             if (!focus && ambient)
                 focus = this.populationWalkers.watching(p) ?? null;
@@ -1973,6 +1988,20 @@ class Simulation {
                 hold = false;
                 speed = 2.4;
                 goal = freight;
+            }
+            let retreating = false;
+            if (!p.reaction && fenceImpactAge >= 0 && fenceImpactAge < 1.55 && near(p, memory, 11)) {
+                hold = true;
+                if (fenceImpactAge >= .19 && fenceImpactAge < .83) {
+                    const awayX = p.x - memory.x, awayZ = p.z - memory.z, length = Math.hypot(awayX, awayZ);
+                    if (length > .05) {
+                        goal = { x: p.x + awayX / length * .76, z: p.z + awayZ / length * .76 };
+                        p.reaction = 'step';
+                        retreating = true;
+                        hold = false;
+                        speed = 1.21;
+                    }
+                }
             }
             let distance = (0, sim_navigation_js_1.dist)(p, goal);
             if (walking && !itinerary && !p.reaction && !this.walkingDetours.has(p) && distance < .23) {
@@ -2040,7 +2069,7 @@ class Simulation {
                 }
                 const moved = (0, sim_navigation_js_1.dist)(p, pos);
                 p.speed = moved / dt;
-                if (moved > .001)
+                if (moved > .001 && !retreating)
                     p.yaw = (0, sim_navigation_js_1.wrapAngle)(p.yaw + (0, sim_navigation_js_1.wrapAngle)((0, sim_navigation_js_1.aim)(p, pos) - p.yaw) * Math.min(1, dt * 9));
                 p.x = pos.x;
                 p.z = pos.z;

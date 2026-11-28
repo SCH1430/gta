@@ -71,6 +71,7 @@ function animatePerson(role, variant, rig) {
     const restQ = new T.Quaternion(), pelvisInverse = new T.Quaternion(), footEuler = new T.Euler(0, 0, 0, 'YXZ');
     const shoulderRest = shoulders.map(joint => joint.position.clone());
     const ankleTargets = [new T.Vector3(), new T.Vector3()];
+    const snowSample = new T.Vector3();
     const fixedAnkle = new T.Vector3(), seatedBoot = new T.Quaternion();
     const pinned = [0, 0];
     const bootRotation = [new T.Quaternion(), new T.Quaternion()];
@@ -81,10 +82,13 @@ function animatePerson(role, variant, rig) {
     let clock = (variant % 29) * 0.32, jump = 0, flinch = 0, landingReach = 0;
     let supportShift = 0, pivotTwist = 0;
     let prevSeated = false;
+    let nextSnowCheck = 0, snowEnds = -Infinity;
     let gripHand = -1, conversationWeight = 0, nodTime = 1, wasAddressed = false;
     const gripPoint = new T.Vector3(), gripWorld = new T.Vector3(), reachLean = new T.Vector3();
-    let gaze = 0, headTurn = 0, chestTurn = 0, jaw = 0, wetness = 0, hemSpring = 0, beltSpring = 0, pocket = 0;
+    let gaze = 0, headTurn = 0, chestTurn = 0, jaw = 0, mouthShape = 0, wetness = 0, hemSpring = 0, beltSpring = 0, pocket = 0;
     let fabricYaw = 0, bagPitch = 0, bagRoll = 0, passing = 0, cover = 0, lookDown = 0;
+    let waitingFor = 0, warmHands = 0, readBoard = 0, holdHood = 0;
+    const residentPosture = rig.style.posture ?? 0, hasHood = rig.style.cut === 'quilted' && !rig.style.scarf;
     const gaitStyle = role === 'resident'
         ? human_kits_js_1.civilians[Math.abs(variant) % human_kits_js_1.civilians.length].gait
         : character_performance_js_1.principalGaits[role] ?? 'normal';
@@ -96,11 +100,14 @@ function animatePerson(role, variant, rig) {
         nodTime = 1;
         gripHand = -1;
         jump = flinch = landingReach = supportShift = pivotTwist = 0;
-        gaze = headTurn = chestTurn = hemSpring = beltSpring = 0;
+        gaze = headTurn = chestTurn = jaw = mouthShape = hemSpring = beltSpring = 0;
         fabricYaw = bagPitch = bagRoll = passing = cover = lookDown = 0;
+        waitingFor = warmHands = readBoard = holdHood = 0;
+        nextSnowCheck = 0;
+        snowEnds = -Infinity;
         performance.reset();
     }
-    function update(dt, _speed, airborne = false, pose = empty) {
+    function update(dt, speed, airborne = false, pose = empty) {
         dt = Math.min(Math.max(dt, 0), 0.14);
         clock += dt;
         const yaw = root.rotation.y, scale = root.scale.x || 1, exchange = pose.handoff ?? -1;
@@ -140,7 +147,10 @@ function animatePerson(role, variant, rig) {
         }
         jump = T.MathUtils.damp(jump, airborne ? 1 : 0, 15, dt);
         landingReach = T.MathUtils.damp(landingReach, airborne ? gait.approachingGround : 0, 11, dt);
-        const alert = pose.reaction === 'flee' ? 1 : pose.reaction === 'step' ? 0.49 : 0;
+        const impactAge = pose.impactAge ?? Infinity;
+        const startled = smooth(impactAge, .04, .16) * (1 - smooth(impactAge, .35, .88));
+        const watchingImpact = 1 - smooth(impactAge, 1.55, 2.9);
+        const alert = Math.max(startled * .77, pose.reaction === 'flee' ? 1 : pose.reaction === 'step' ? .49 : 0);
         flinch = T.MathUtils.damp(flinch, alert, alert > flinch ? 13 : 5, dt);
         const move = smooth(gait.speed, 0, 1.15) * (1 - seat);
         const run = gait.run;
@@ -161,22 +171,44 @@ function animatePerson(role, variant, rig) {
         nodTime += dt;
         conversationWeight = T.MathUtils.damp(conversationWeight, pose.conversation ? 1 : 0, 10, dt);
         const nod = smooth(nodTime, .04, .23) * (1 - smooth(nodTime, .23, .48));
-        const turnTo = clamp(pose.glance ?? 0, -1.4, 1.4);
+        const canWait = Number.isFinite(pose.boardAngle) && speed < .25 && !airborne && !boarding && !pose.reaction && !addressed && !watchingImpact;
+        waitingFor = canWait ? waitingFor + dt : 0;
+        const waitPhase = (waitingFor + (Math.abs(variant) % 5) * .31) % 9.4;
+        const waiting = canWait ? smooth(waitingFor, .05, .38) * (1 - move) : 0;
+        const glanceBoard = waiting * smooth(waitPhase, 3.5, 4.3) * (1 - smooth(waitPhase, 7, 7.8));
+        readBoard = T.MathUtils.damp(readBoard, glanceBoard, 6, dt);
+        const idleHands = waiting * smooth(waitPhase, .6, 1.4) * (1 - smooth(waitPhase, 3.4, 4.1));
+        warmHands = T.MathUtils.damp(warmHands, pose.cold && !pose.carry ? idleHands : 0, 8, dt);
+        const gust = hasHood && free > .95 && !pose.carry && !addressed && !pose.reaction ? pose.wind ?? 0 : 0;
+        const windUp = smooth(gust, .48, .80) * (1 - jump) * (1 - run) * (1 - watchingImpact);
+        holdHood = T.MathUtils.damp(holdHood, windUp, windUp > holdHood ? 6 : 4, dt);
+        const turnTo = clamp(mix(pose.glance ?? 0, pose.boardAngle ?? 0, readBoard) * (1 - watchingImpact) +
+            (pose.impactAngle ?? 0) * watchingImpact, -1.5, 1.5);
         gaze = T.MathUtils.damp(gaze, turnTo, 29, dt);
-        headTurn = T.MathUtils.damp(headTurn, gaze * .78, 6.8, dt);
-        chestTurn = T.MathUtils.damp(chestTurn, headTurn * .31, 3.3, dt);
+        headTurn = T.MathUtils.damp(headTurn, gaze * (.78 + .05 * watchingImpact), 6.8 + watchingImpact * 8, dt);
+        const torsoResponse = smooth(impactAge, .16, .49);
+        chestTurn = T.MathUtils.damp(chestTurn, headTurn * (.31 + .23 * watchingImpact + .17 * readBoard) * torsoResponse, 3.3 + watchingImpact * 2, dt);
         const blinkT = (clock + Math.sin(variant * .9) * 1.3) % (3.9 + Math.abs(variant % 4) * .38);
         const blink = 1 - smooth(Math.abs(blinkT - .132), .012, .10);
         jaw = T.MathUtils.damp(jaw, unit(pose.speech ?? 0), 24, dt);
+        mouthShape = T.MathUtils.damp(mouthShape, pose.speechShape ?? 0, 20, dt);
         passing = T.MathUtils.damp(passing, clamp(pose.passing ?? 0, -1, 1) * move * free, 11, dt);
         cover = T.MathUtils.damp(cover, pose.covered ? 1 : 0, 9, dt);
         const standingAlert = pose.reaction === 'look' && Math.abs(turnTo) > .35 ? -.19 : 0;
         lookDown = T.MathUtils.damp(lookDown, standingAlert + (pose.carry === 'crate' ? -.11 : 0), 8, dt);
         if (near.visible)
-            rig.face(gaze - headTurn, Math.sin(clock * .9) * .24 + lookDown, blink, jaw);
+            rig.face(gaze - headTurn, Math.sin(clock * .9) * .24 + lookDown + .5 * readBoard, Math.max(blink, .75 * startled), jaw, mouthShape, pose.closeFace ? jaw * .70 + .22 * nod : 0);
         wetness = T.MathUtils.damp(wetness, unit(pose.wetness ?? 0), .16, dt);
-        if (near.visible)
+        if (near.visible) {
             rig.fabric(pose.coat ?? 0, wetness);
+            if (clock >= nextSnowCheck) {
+                nextSnowCheck = clock + .24;
+                root.getWorldPosition(snowSample);
+                if ((pose.wetness ?? 0) > .08 && !seated && !airborne && (0, world_layout_js_1.surfaceAt)(snowSample.x, snowSample.z) === 'snow')
+                    snowEnds = clock + 3;
+                rig.snowBoots(clock < snowEnds);
+            }
+        }
         const co = Math.cos(yaw), si = Math.sin(yaw);
         const idleWeight = (1 - move) * (1 - jump) * free;
         const supportSide = Number(gait.feet[1].planted) - Number(gait.feet[0].planted);
@@ -185,7 +217,8 @@ function animatePerson(role, variant, rig) {
         const supportYaw = supportSide ? gait.feet[supportSide > 0 ? 1 : 0].yaw : yaw;
         const plantedTwist = clamp((0, model_gait_js_1.shortAngle)(supportYaw - yaw), -.65, .65);
         pivotTwist = T.MathUtils.damp(gait.onReset ? 0 : pivotTwist, plantedTwist * .32 * gait.pivotAmount * free, 16, dt);
-        pelvis.position.x = movement.weight * swingWeight * (1 - gait.pivotAmount) + supportShift + .030 * gait.pivotLoad * free + (Math.sin(clock * .38 + variant) * .007 - .003) * idleWeight + fallSide * .22 * fall + doorSide * (.042 * doorPivot + .145 * innerPull);
+        const waitingShift = Math.sin(waitPhase * 1.2 + variant * .8) * .032 * waiting;
+        pelvis.position.x = movement.weight * swingWeight * (1 - gait.pivotAmount) + supportShift + .030 * gait.pivotLoad * free + (Math.sin(clock * .38 + variant) * .007 - .003) * idleWeight + fallSide * .22 * fall + doorSide * (.042 * doorPivot + .145 * innerPull) + waitingShift;
         pelvis.position.z = clamp(gait.acceleration * .0042, -.042, .042) * free * (1 - jump) + .064 * fall;
         pelvis.rotation.set(.14 * fall, movement.pelvisYaw * swingWeight * forward + pivotTwist + fallSide * .35 * rise + doorSide * .18 * doorPivot, movement.pelvisRoll * swingWeight - fallSide * 1.22 * fall, 'YXZ');
         pelvisInverse.copy(pelvis.quaternion).invert();
@@ -256,6 +289,8 @@ function animatePerson(role, variant, rig) {
             spine.rotation.x -= hood.curb * .08 + (hood.action === 'shelf' ? Math.sin(Math.PI * hood.progress)*.14 : 0);
         }
         spine.rotation.x -= duck * .41;
+        spine.rotation.x += residentPosture * free * (1 - fall) - .08 * holdHood - .06 * warmHands;
+        spine.rotation.z += waitingShift * .70;
         spine.rotation.x -= slide * (.33 + .19 * roofDuck);
         spine.rotation.z -= .14 * slide;
         if (gaitStyle === 'limp') {
@@ -297,7 +332,8 @@ function animatePerson(role, variant, rig) {
         neck.rotation.x -= nod * .10;
         if(root.userData.inspectFind){neck.rotation.x-=.27;spine.rotation.x-=.18;}
         if (hood) neck.rotation.y += hood.look;
-        neck.rotation.x += lookDown * .40 - doorDuck * (.075 + .12 * roofDuck);
+        neck.rotation.x += lookDown * .40 - doorDuck * (.075 + .12 * roofDuck) + clamp(pose.boardPitch ?? 0, .08, .36) * readBoard - .045 * warmHands;
+        neck.rotation.z += (pose.windSide ?? 1) * .12 * holdHood;
         neck.rotation.y -= passing * .29;
         if (driving) {
             neck.rotation.x += .16 * seat;
@@ -334,7 +370,7 @@ function animatePerson(role, variant, rig) {
         }
         const idle = working * (1 - jump) * free * (1 - clamp(gait.landing, 0, 1));
         const cycle = (clock + variant * 1.41) % (role === 'hero' ? 13 : 10.5);
-        const gesture = idle * (1 - performed) * smooth(cycle, 2.05, 2.74) * (1 - smooth(cycle, 3.71, 4.52));
+        const gesture = idle * (1 - Math.max(performed, waiting, holdHood, watchingImpact)) * smooth(cycle, 2.05, 2.74) * (1 - smooth(cycle, 3.71, 4.52));
         const wrist = role === 'hero' || (role === 'resident' && variant % 2 === 0);
         if (gesture > .0001) {
             if (wrist) {
@@ -464,6 +500,15 @@ function animatePerson(role, variant, rig) {
                 target.set(.109, .319, -.183);
                 armTo(shoulders[i], elbows[i], target, side, shoulder);
             }
+            if (warmHands > .001) {
+                const rub = Math.sin(clock * 12 + i * 1.2) * .018;
+                target.set(side * .041, .299 + rub, -.279 + rub * .52);
+                armTo(shoulders[i], elbows[i], target, side, warmHands * (1 - holdHood), true);
+            }
+            if (holdHood > .001 && side === (pose.windSide ?? 1)) {
+                target.set(side * .144, .545, .023);
+                armTo(shoulders[i], elbows[i], target, side, holdHood, true);
+            }
             if (flinch > 0.01) {
                 const nearTraffic = side === Math.sign(pose.glance ?? 0);
                 target.set(side * (nearTraffic ? 0.24 : 0.34), nearTraffic ? 0.405 : 0.22, nearTraffic ? -0.29 : -0.12);
@@ -545,6 +590,10 @@ function animatePerson(role, variant, rig) {
                     target.lerp(stow.set(satchelContents.x + .045, satchelContents.y + .047, satchelContents.z + .025), smooth(hand, 0.58, 0.87));
                 armTo(shoulders[i], elbows[i], target, side, reach);
             }
+            if (near.visible) {
+                const gripping = (i === gripHand && handWeight > .51) || (seated && (pose.driverSeatWeight ?? 1) > .72) || carry === 'crate' || (transferring && handing && hand > .35 && hand < .77);
+                rig.grip(i, carry === 'cup' && i === 1 && !seated ? 'cup' : gripping ? 'handle' : 'rest');
+            }
         }
         farCoat = pose.coat ?? 0;
         farPoseDirty = true;
@@ -552,7 +601,7 @@ function animatePerson(role, variant, rig) {
             rig.lod.prepareFarPose();
         if (!near.visible && !transferring)
             return;
-        rig.deform?.();
+        rig.deform?.(seat);
         if (rig.tool) {
             rig.tool.visible = !transferring && !seated && !carry && fall < .25 && wipe < .07 && (role !== 'vendor' || working > .48 || show > .16);
             if (rig.tool.visible) {

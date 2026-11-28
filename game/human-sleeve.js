@@ -9,7 +9,7 @@ const clamp = (x, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, x));
 const signed = (x, p) => Math.sign(x) * Math.abs(x) ** p;
 const hill = (v, centre, radius) => Math.exp(-(((v - centre) / radius) ** 2));
 const smooth = (a, b, t) => a + (b - a) * t;
-function tailor(rings, cut) {
+function tailor(rings, cut, fit) {
     function sculpt(p, a) {
         const y = p[1], x = Math.abs(p[0]), rear = Math.sin(a), flank = Math.abs(Math.cos(a));
         const fold = cut === 'quilted' ? .38 : cut === 'wool' ? .42 : cut === 'workwear' ? .95 : 1;
@@ -25,6 +25,15 @@ function tailor(rings, cut) {
             const pectoral = hill(y, .326, .069) * hill(x, .077, .052);
             const abdomen = hill(y, .173, .063) * hill(x, 0, .092);
             p[2] += rear * (.016 * pectoral + .007 * abdomen - .006 * hill(x, 0, .042) * hill(y, .31, .12) + fold * .014 * tension - .006 * hollow);
+            if (fit?.pocketSide * p[0] > 0) {
+                const load = fit.pocketLoad * hill(y, .135, .043) * hill(x, .110, .042);
+                p[1] -= load * .44;
+                p[2] += rear * load;
+            }
+            if (fit?.packStraps) {
+                const strap = hill(x, .105, .019) * clamp((y - .15) * 11) * clamp((.50 - y) * 16);
+                p[2] -= rear * (cut === 'quilted' ? .014 : .007) * strap;
+            }
         }
     }
     function light(p, a) {

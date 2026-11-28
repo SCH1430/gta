@@ -21,6 +21,12 @@ const tyreTypes = {
     coupe: ['sedan', .241], taxi: ['sedan', .221], wagon: ['sedan', .222],
     towtruck: ['van', .289], utility: ['offroad', .294]
 };
+const sprayLimit = 144;
+const sprayStyles = {
+    water: { color: '#c4d8e0', size: .051, opacity: .65, spread: 1.3, lift: 1.15, gravity: 4.9, life: .46 },
+    snow: { color: '#e2eef3', size: .083, opacity: .60, spread: 1.04, lift: .88, gravity: 3.5, life: .59 },
+    slush: { color: '#a49e91', size: .078, opacity: .78, spread: 1.64, lift: 1.38, gravity: 4.9, life: .52 }
+};
 function treadTexture(side, pattern) {
     const w = 48, h = 96, data = new Uint8Array(w * h * 4);
     const tracksSnow = pattern !== 'water' && pattern !== 'skid';
@@ -161,21 +167,42 @@ function createTracks(scene) {
         sedan: new Marks(group, plane, 0, 88, 'sedan'), offroad: new Marks(group, plane, 0, 88, 'offroad'), skid: new Marks(group, plane, 0, 104, 'skid'), water: new Marks(group, plane, 0, 72, 'water')
     };
     const pools = [left, right, ...Object.values(tyres)];
-    const sprayGeometry = new THREE.BufferGeometry(), drops = new Float32Array(240);
-    const sprayPosition = new THREE.BufferAttribute(drops, 3).setUsage(THREE.DynamicDrawUsage);
-    sprayGeometry.setAttribute('position', sprayPosition);
-    const spray = new THREE.Points(sprayGeometry, new THREE.PointsMaterial({ color: '#c4d8e0', size: .058, transparent: true, opacity: .67, depthWrite: false }));
-    spray.frustumCulled = false;
-    spray.visible = false;
-    group.add(spray);
+    const sprays = Object.fromEntries(Object.entries(sprayStyles).map(([name, style]) => {
+        const geometry = new THREE.BufferGeometry();
+        const position = new THREE.BufferAttribute(new Float32Array(sprayLimit * 3), 3).setUsage(THREE.DynamicDrawUsage);
+        geometry.setAttribute('position', position);
+        geometry.setDrawRange(0, 0);
+        const { color, size, opacity } = style;
+        const mesh = new THREE.Points(geometry, new THREE.PointsMaterial({ color, size, opacity, transparent: true, depthWrite: false }));
+        mesh.name = 'wheel-spray-' + name;
+        mesh.frustumCulled = false;
+        mesh.visible = false;
+        group.add(mesh);
+        return [name, { mesh, position, style, written: 0 }];
+    }));
+    const sprayBatches = Object.values(sprays);
     const droplets = [];
     let dropIndex = 0, qualityRadius = range;
-    function splash(c, x, z, time, side) {
-        if (Math.abs(c.speed) < 1.7)
-            return;
-        const k = dropIndex + 1, across = side * (.69 + Math.abs(Math.sin(k * 2.41)) * .95), speed = Math.min(1.22, Math.abs(c.speed) * .11);
-        droplets[dropIndex] = { x, y: (0, world_layout_js_1.groundHeight)(x, z) + .08, z, vx: across * Math.cos(c.yaw) + .15 * c.vx, vy: (1 + Math.abs(Math.sin(k * 3.62)) * 1.44) * speed, vz: -across * Math.sin(c.yaw) + .15 * c.vz, born: time };
-        dropIndex = (dropIndex + 1) % 80;
+    function splash(c, x, z, time, side, kind, quality) {
+        const speed = Math.abs(c.speed), strength = Math.min(1.25, speed * .12);
+        const spray = sprays[kind], { style } = spray;
+        const count = quality >= 2 && speed > 7 ? 3 : quality > 0 ? 2 : 1;
+        const co = Math.cos(c.yaw), si = Math.sin(c.yaw), y = ground(x, z) + .08;
+        const behind = Math.sign(c.speed) * (.28 + strength * .52);
+        for (let i = 0; i < count; i++) {
+            const k = dropIndex + 1;
+            const across = side * style.spread * (.34 + Math.abs(Math.sin(k * 2.41)) * strength);
+            const p = droplets[dropIndex] ??= {};
+            p.x = x;
+            p.y = y;
+            p.z = z;
+            p.vx = across * co + behind * si + .13 * c.vx;
+            p.vy = (.85 + Math.abs(Math.sin(k * 3.62)) * 1.34) * style.lift * Math.max(.48, strength);
+            p.vz = -across * si + behind * co + .13 * c.vz;
+            p.born = time;
+            p.spray = spray;
+            dropIndex = (dropIndex + 1) % sprayLimit;
+        }
     }
     const matrix = new THREE.Matrix4(), previous = new Map();
     let previousTime = -1, refreshTime = -Infinity, dirty = false;
@@ -188,7 +215,8 @@ function createTracks(scene) {
         previous.clear();
         droplets.length = 0;
         dropIndex = 0;
-        spray.visible = false;
+        for (const spray of sprayBatches)
+            spray.mesh.visible = false;
         previousTime = -1;
         snowfall = 0;
         fillRate = 1;
@@ -257,7 +285,7 @@ function createTracks(scene) {
         tyres[mode].push(matrix, x, z, time, snowfall);
         dirty = true;
     }
-    function sample(car, time) {
+    function sample(car, time, quality, weather) {
         if (!tyreTypes[car.kind] || (Number.isFinite(car.y) && Math.abs(car.y - ground(car.x, car.z)) > .45)) {
             previous.delete(car.id);
             return;
@@ -276,6 +304,8 @@ function createTracks(scene) {
         if (distance < Math.max(2.8, Math.min(.3, gap) * 36) && Math.abs(angle) < .95 && gap < .55) {
             const spec = vehicle_cabin_js_1.specs[car.kind];
             const steps = Math.max(1, Math.ceil(distance / .70));
+            const speed = Math.abs(car.speed), wetSnow = (weather?.wetSnow ?? 0) > .30;
+            const wetRoad = (weather?.rain ?? 0) > .16 && (weather?.wet ?? 0) > .68;
             for (let k = 0; k < steps; k++) {
                 const t0 = k / steps, t1 = (k + 1) / steps, ya = last.yaw + angle * t0, yb = last.yaw + angle * t1;
                 const sa = Math.sin(ya), ca = Math.cos(ya), sb = Math.sin(yb), cb = Math.cos(yb);
@@ -287,14 +317,18 @@ function createTracks(scene) {
                     const bx = last.x + dx * t1 + u * cb + v * sb, bz = last.z + dz * t1 - u * sb + v * cb;
                     const steer = wheel < 2 ? (last.steer + (car.steer - last.steer) * (t0 + t1) * .5) * .48 : 0;
                     const water = (0, puddles_js_1.puddleAt)(bx, bz);
-                    if (water) {
+                    if (water)
                         last.wetUntil = time + .78;
-                        if (k === steps - 1 && wheel >= 2)
-                            splash(car, bx, bz, time, wheel % 2 === 0 ? -1 : 1);
-                    }
                     const skid = (car.braking && Math.abs(car.speed) > 5.0) || sideways > 2.9;
                     // A trailing wheel follows the same rut on a straight; both axles cut their own arc in a turn.
                     const leading = (wheel < 2) === forward;
+                    if (k === steps - 1 && !leading && speed > 1.7) {
+                        const side = wheel % 2 === 0 ? -1 : 1;
+                        if (speed > 2.25 && snowUnder(bx, bz))
+                            splash(car, bx, bz, time, side, wetSnow || water ? 'slush' : 'snow', quality);
+                        else if (water || wetRoad && speed > 5)
+                            splash(car, bx, bz, time, side, 'water', quality);
+                    }
                     trace(ax, az, bx, bz, (ya + yb) * .5 - steer, time, car, time < last.wetUntil, skid, leading && straight);
                 }
             }
@@ -319,24 +353,30 @@ function createTracks(scene) {
             }
             for (const car of cars) {
                 if ((car.x - focus.x) ** 2 + (car.z - focus.z) ** 2 < (radius + 3) ** 2)
-                    sample(car, time);
+                    sample(car, time, quality, weather);
                 else
                     previous.delete(car.id);
             }
-            let written = 0;
+            for (const spray of sprayBatches)
+                spray.written = 0;
             for (const p of droplets) {
-                const t = time - p.born;
-                if (t < 0 || t > .53)
+                const t = time - p.born, spray = p.spray;
+                if (t < 0 || t > spray.style.life)
                     continue;
-                const y = p.y + p.vy * t - 4.9 * t * t;
+                const y = p.y + p.vy * t - spray.style.gravity * t * t;
                 if (y < p.y - .045)
                     continue;
-                drops.set([p.x + p.vx * t, y, p.z + p.vz * t], written * 3);
-                written++;
+                spray.position.setXYZ(spray.written++, p.x + p.vx * t, y, p.z + p.vz * t);
             }
-            sprayGeometry.setDrawRange(0, written);
-            spray.visible = written > 0;
-            sprayPosition.needsUpdate = true;
+            for (const { mesh, position, written } of sprayBatches) {
+                mesh.geometry.setDrawRange(0, written);
+                mesh.visible = written > 0;
+                if (written) {
+                    position.clearUpdateRanges();
+                    position.addUpdateRange(0, written * 3);
+                    position.needsUpdate = true;
+                }
+            }
             for (const [id, p] of previous)
                 if (time - p.seen > .55)
                     previous.delete(id);

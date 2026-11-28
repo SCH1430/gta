@@ -18,11 +18,11 @@ exports.heroCoats = [
 ];
 const rail = { cut: 'waxed', kit: 'rail', gait: 'patrol' }, commuter = { cut: 'wool', kit: 'commuter', gait: 'commuter' };
 const polar = { cut: 'quilted', kit: 'polar', gait: 'careful' }, transit = { cut: 'windbreaker', kit: 'transit', gait: 'quick' };
-const site = { cut: 'workwear', kit: 'worksite', gait: 'worker' }, canal = { cut: 'waxed', kit: 'canal', gait: 'worker' };
+const site = { cut: 'workwear', kit: 'worksite', gait: 'worker', reflective: '#e1e0bf', posture: .035 }, canal = { cut: 'waxed', kit: 'canal', gait: 'worker' };
 exports.civilians = [
     { ...rail, main: '#876847', shade: '#504939', accent: '#e8b569', shirt: '#6f6051', pants: '#3f4248', scale: 1.035, build: .36 },
-    { ...commuter, main: '#526279', shade: '#353e52', accent: '#c08b70', shirt: '#af8971', pants: '#434652', scale: .898, build: -.36 },
-    { ...polar, main: '#4d747e', shade: '#354f57', accent: '#b2c4b5', shirt: '#776a61', pants: '#383f49', scale: 1.056, build: .64 },
+    { ...commuter, scarf: '#ce926e', main: '#526279', shade: '#353e52', accent: '#c08b70', shirt: '#af8971', pants: '#434652', scale: .898, build: -.36, hemOffset: -.045, posture: .025 },
+    { ...polar, backpack: true, main: '#4d747e', shade: '#354f57', accent: '#b2c4b5', shirt: '#776a61', pants: '#383f49', scale: 1.056, build: .64, hemOffset: .075, posture: -.07 },
     { ...polar, scarf: '#c4aa91', main: '#725765', shade: '#51404e', accent: '#c5a6a0', shirt: '#a98b8b', pants: '#44494e', scale: .954, build: -.19, hemOffset: -.096, gait: 'commuter' },
     { ...transit, openKnit: true, main: '#456d69', shade: '#344f50', accent: '#b69c76', shirt: '#c8bca5', pants: '#434c59', scale: .992, build: -.53, bootColor: '#a39f89' },
     { ...site, main: '#ac843f', shade: '#674b35', accent: '#dfca85', shirt: '#5a543e', pants: '#424557', scale: 1.071, build: .53 },
@@ -33,7 +33,7 @@ exports.civilians = [
     { ...site, workJacket: true, main: '#546979', shade: '#394b57', accent: '#bb9875', shirt: '#a76e54', pants: '#52574f', scale: 1.018, build: .77, legEase: .11, hemOffset: -.028 },
     { ...transit, openKnit: true, main: '#784c54', shade: '#573b44', accent: '#c7ad8c', shirt: '#c3b7a2', pants: '#404853', scale: 1.031, build: -.24 },
     { ...rail, main: '#65535a', shade: '#4d4148', accent: '#ceb17e', shirt: '#756b64', pants: '#504649', scale: .982, build: .55 },
-    { ...commuter, main: '#77616b', shade: '#4d454d', accent: '#cd9f8b', shirt: '#baa495', pants: '#484350', scale: .920, build: .24, bootColor: '#8c6552' },
+    { ...commuter, scarf: '#c8b18c', main: '#77616b', shade: '#4d454d', accent: '#cd9f8b', shirt: '#baa495', pants: '#484350', scale: .920, build: .24, hemOffset: -.035, posture: .043, bootColor: '#8c6552' },
     { ...polar, main: '#5c6850', shade: '#454c38', accent: '#b7b185', shirt: '#6f6545', pants: '#444c43', scale: 1.050, build: .70, legEase: .09, gait: 'worker' }
 ];
 const outerWardrobe = {
@@ -142,7 +142,7 @@ function addKit(surface, style, point, shoulder) {
             }
             break;
         case 'commuter': {
-            const rust = shirt;
+            const rust = style.scarf ?? shirt;
             surface.loft([[.477, .092, .090, .080, 0, .006], [.502, .085, .082, .075, 0, .003], [.526, .076, .071, .069, 0, .002], [.543, .071, .066, .067, 0, .001]], (0, human_cloth_js_1.tint)(rust, .90), 0, 18, .96, (p, a) => { p[1] += .016 * Math.sin(a - .4); p[2] += .006 * Math.cos(a * 3); }, false);
             patch([[.187, -.042, .026], [.284, -.052, .030], [.377, -.055, .052], [.453, -.063, .067], [.488, -.071, .063]], rust, false, .033);
             for (let n = 0; n < 4; n++) {

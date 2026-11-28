@@ -158,38 +158,86 @@ function headwearGeometry(role, id, variant, detail = true) {
     }
     return surface.build();
 }
+const lensMaterial = new T.MeshPhongMaterial({ color: '#9ebec0', transparent: true, opacity: .18,
+    depthWrite: false, side: T.DoubleSide, shininess: 98, specular: '#c0d3cb' });
+const glassesByVariant = { 2: 'wire', 5: 'oval', 9: 'heavy', 12: 'wire', 14: 'oval' };
+const glassesDesigns = {
+    heavy: { width: .022, height: .0115, radius: .00155, angle: .52, top: '#55483c', side: '#757b76' },
+    wire: { width: .020, height: .0105, radius: .00084, angle: .88, top: '#a19b84', side: '#777c72' },
+    oval: { width: .018, height: .0123, radius: .00112, angle: 1, top: '#566968', side: '#79695d' }
+};
+function spectacles(id, variant, design, name) {
+    const spec = glassesDesigns[design], structure = new model_geometry_js_1.Batch(), glass = new human_head_shapes_js_1.Surface();
+    const frameSurface = new human_head_shapes_js_1.Surface(), top = new T.Color(spec.top), sideColor = new T.Color(spec.side);
+    const eye = (0, human_head_shapes_js_1.eyesFor)(id, variant), centre = Math.max(.031, eye.x + .0005), resolution = 18;
+    const lensY = eye.y - .0021;
+    const faceAt = (x, y) => (0, human_head_shapes_js_1.skull)(id, (0, human_head_shapes_js_1.faceTheta)(id, x, y, variant), y, variant).z;
+    const rimAt = (side, a) => {
+        const cos = Math.cos(a), sin = Math.sin(a);
+        const x = side * (centre + spec.width * Math.sign(cos) * Math.abs(cos) ** spec.angle);
+        const y = lensY + spec.height * Math.sign(sin) * Math.abs(sin) ** spec.angle - .0014 * cos;
+        const z = Math.min(-.099 + (.0163 * .5) * (1 + cos), faceAt(x, y) - .0047);
+        return [x, y, z];
+    };
+    const bridge = [0, lensY + .0067, Math.min(-.100, faceAt(0, lensY + .0067) - .0034)];
+    for (const side of [-1, 1]) {
+        const rim = Array.from({ length: resolution }, (_, i) => rimAt(side, i / resolution * Math.PI * 2));
+        const x = side * centre, z = .5 * (rim[0][2] + rim[resolution / 2][2]) - .0022;
+        const mid = glass.vertex(x, lensY, z, .5, .5);
+        for (let i = 0; i < resolution; i++) {
+            const a = rim[i];
+            const k = glass.vertex(a[0], a[1], a[2] - .0004, .5 + .5 * Math.cos(i / resolution * Math.PI * 2), .5 + .5 * Math.sin(i / resolution * Math.PI * 2));
+            const next = i === resolution - 1 ? mid + 1 : k + 1;
+            if (side > 0)
+                glass.index.push(mid, next, k);
+            else
+                glass.index.push(mid, k, next);
+        }
+        const ring = 6, first = frameSurface.p.length / 3;
+        for (let i = 0; i < resolution; i++) {
+            const [x, y, z] = rim[i], angle = i / resolution * Math.PI * 2;
+            for (let j = 0; j < ring; j++) {
+                const turn = j / ring * Math.PI * 2, offset = spec.radius * Math.cos(turn);
+                const k = frameSurface.vertex(x + side * Math.cos(angle) * offset, y + Math.sin(angle) * offset,
+                    z + spec.radius * Math.sin(turn), i / resolution, j / ring, y > lensY ? top : sideColor);
+                const after = first + ((i + 1) % resolution) * ring + j, next = j === ring - 1 ? k - j : k + 1;
+                frameSurface.quad(k, next, after + (j === ring - 1 ? -j : 1), after, side < 0);
+            }
+        }
+        const corner = rim[1], ear = (0, human_head_shapes_js_1.earsFor)(id, variant, side);
+        const earX = (0, human_head_shapes_js_1.skull)(id, side * Math.PI / 2, ear.height + .014, variant).x;
+        const elbow = [earX + side * .005, ear.height + .016, ear.depth - .028];
+        const clamp = [earX + side * .002, ear.height - .003, ear.depth + .015];
+        structure.rod(corner, elbow, spec.radius * .89, spec.top);
+        structure.rod(elbow, clamp, spec.radius * 1.05, '#4d4944');
+        structure.rod(rim[resolution / 2 - 1], bridge, spec.radius * .94, spec.side);
+        const [nx, ny, nz] = rim[resolution / 2];
+        structure.box(nx + side * .0019, ny - .0006, nz + .0017, .0029, .0042, .0025, '#b4a293', [0, 0, side * .24]);
+    }
+    const frames = structure.mesh(), lenses = new T.Mesh(glass.build(), lensMaterial);
+    const rims = new T.Mesh(frameSurface.build(), model_geometry_js_1.solid);
+    frames.name = name;
+    lenses.name = 'curved-clear-spectacle-lenses';
+    lenses.renderOrder = 1;
+    frames.add(rims, lenses);
+    return frames;
+}
 function workAccessories(role, id, variant) {
     const hat = wearableHeadwear(role, variant);
+    const residentGlasses = role === 'resident' ? glassesByVariant[variant] : undefined;
     if (hat) {
         const geometry = headwearGeometry(role, id, variant);
         const material = hat.cut === 'shell' ? new T.MeshLambertMaterial({ vertexColors: true }) : threadTrim(undefined, hat.cut === 'earflap');
         const cap = new T.Mesh(geometry, material);
         cap.name = 'headwear-' + hat.cut;
-        if (role === 'dispatcher') {
-            const frames = new model_geometry_js_1.Batch(), finish = '#5b5146', outer = '#798387';
-            const onFace = (side, x, y, z) => {
-                const px = side * x, face = (0, human_head_shapes_js_1.skull)(id, (0, human_head_shapes_js_1.faceTheta)(id, px, y, variant), y, variant);
-                return [px, y, Math.min(z, face.z - .004)];
-            };
-            for (const side of [-1, 1]) {
-                const rim = [[.013, .169, -.093], [.020, .174, -.094], [.046, .173, -.085], [.055, .168, -.080], [.054, .158, -.082], [.048, .154, -.086], [.021, .154, -.095], [.014, .160, -.096]];
-                rim.forEach(([x, y, z], index) => {
-                    const [nx, ny, nz] = rim[(index + 1) % rim.length];
-                    frames.rod(onFace(side, x, y, z), onFace(side, nx, ny, nz), .00125, index < 4 ? finish : outer);
-                });
-                frames.rod([side * .055, .168, -.080], [side * .081, .163, -.026], .00165, finish);
-                frames.rod([side * .081, .163, -.026], [side * .084, .151, .020], .0014, finish);
-                frames.box(side * .016, .161, -.095, .003, .006, .004, '#d0b5a0');
-            }
-            const bridge = onFace(1, 0, .168, -.098);
-            frames.rod(onFace(-1, .014, .167, -.094), bridge, .0016, finish);
-            frames.rod(bridge, onFace(1, .014, .167, -.094), .0016, finish);
-            const spectacles = frames.mesh();
-            spectacles.name = 'dispatch-reading-glasses';
-            cap.add(spectacles);
-        }
+        if (role === 'dispatcher')
+            cap.add(spectacles(id, variant, 'heavy', 'dispatch-reading-glasses'));
+        if (residentGlasses)
+            cap.add(spectacles(id, variant, residentGlasses, 'resident-' + residentGlasses + '-glasses'));
         return cap;
     }
+    if (residentGlasses)
+        return spectacles(id, variant, residentGlasses, 'resident-' + residentGlasses + '-glasses');
     if (role === 'vendor') {
         const mount = new model_geometry_js_1.Batch(), pivot = new T.Group();
         mount.rod([.076, .166, .019], [.075, .173, -.033], .0026, '#596865');
@@ -224,8 +272,9 @@ function workAccessories(role, id, variant) {
         tie.scale.set(.022, .0055, .010);
         tie.rotation.z = .21;
         trim.add(tie);
-        const ear = (0, human_head_shapes_js_1.earsFor)(id, variant), piercingY = ear.height - .023 * ear.size, piercingZ = ear.depth - .0065;
         for (const side of [-1, 1]) {
+            const ear = (0, human_head_shapes_js_1.earsFor)(id, variant, side);
+            const piercingY = ear.height - .023 * ear.size - ear.drop, piercingZ = ear.depth - .0065;
             const earring = new T.Mesh(new T.TorusGeometry(.0062, .0012, 5, 18), new T.MeshLambertMaterial({ color: '#ceb280' }));
             const root = (0, human_head_shapes_js_1.skull)(id, side * Math.PI / 2, piercingY, variant).x;
             earring.position.set(root + side * .007, piercingY - .0054, piercingZ);

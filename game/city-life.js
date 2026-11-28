@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CityLife = exports.districtCallout = exports.railShiftRate = exports.addedResidents = void 0;
 exports.repairPose = repairPose;
 exports.pullAside = pullAside;
+exports.fenceDamageWitness = 'Повреждение ограды';
 const city_clock_js_1 = require("./city-clock.js");
 const fixtures_js_1 = require("./fixtures.js");
 const region_layout_js_1 = require("./region-layout.js");

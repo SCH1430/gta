@@ -5,6 +5,7 @@ exports.glazedMesh = glazedMesh;
 const T = require("../engine/three.module.min.js");
 const model_geometry_js_1 = require("./model-geometry.js");
 const vehicle_cabin_js_1 = require("./vehicle-cabin.js");
+const { glassEdge } = require("./model-car-exterior.js");
 const glazing = model_geometry_js_1.glass.clone();
 glazing.vertexColors = true;
 glazing.color.setHex(0xffffff);
@@ -20,7 +21,7 @@ function glazedMesh(batch, low, high) {
     }
     return mesh;
 }
-function buildDoor(kind, side) {
+function buildDoor(kind, side, series = 0) {
     const s = vehicle_cabin_js_1.specs[kind], c = (0, vehicle_cabin_js_1.carCabin)(kind), van = kind === 'van';
     const paint = new model_geometry_js_1.Batch(), trim = new model_geometry_js_1.Batch(), panes = new model_geometry_js_1.Batch();
     const w = s.w, h = s.belt, H = s.roof, topW = (0, vehicle_cabin_js_1.roofWidth)(kind), sideW = w * .94;
@@ -69,6 +70,33 @@ function buildDoor(kind, side) {
     for (let i = 0; i < 5; i++)
         trim.box(side * (innerX - .047), foot(z0 + .19) + .056 + i * .018, z0 + .19, .016, .010, .15, '#232d35');
     trim.add(model_geometry_js_1.tube, point(innerX, lower + .16, z1), [.068, .03, .068], '#b6b5a9', [Math.PI / 2, 0, 0]);
+    const latchY = h - .255, pocketBack = z1 - .124, pocketFront = Math.max(z0 + .24, z1 - .61);
+    const pocketX = side * (innerX - .079), pocketY = Math.max(lower + .124, h - .352);
+    const pocketD = pocketBack - pocketFront;
+    trim.rod(point(innerX - .017, h + .006, z0 + .023), point(innerX - .017, h + .006, z1 - .023), .014, '#252e32', true);
+    if (van) {
+        for (const at of [z0 + .21, (z0 + z1) * .5, z1 - .18]) {
+            const base = foot(at) + .035;
+            trim.rod([side * (innerX - .024), base + .083, at], [side * (innerX - .024), h - .185, at], .018, '#737f75', true);
+            trim.box(side * (innerX - .037), h - .22, at, .016, .038, .034, '#394947');
+        }
+    }
+    else {
+        trim.box(pocketX, pocketY - .063, (pocketBack + pocketFront) * .5, .135, .024, pocketD, '#263137');
+        trim.box(pocketX - side * .056, pocketY, (pocketBack + pocketFront) * .5, .026, .119, pocketD, kind === 'taxi' ? '#786f60' : '#414e51');
+        for (const at of [pocketBack, pocketFront])
+            trim.box(pocketX, pocketY, at, .116, .116, .024, '#344246');
+        trim.rod([pocketX - side * .062, pocketY + .058, pocketFront], [pocketX - side * .062, pocketY + .058, pocketBack], .008, '#727e77');
+    }
+    trim.box(side * (w * .933), latchY, z1 + .011, .106, .089, .036, '#41494b');
+    trim.box(side * (w * .933), latchY, z1 + .032, .069, .039, .012, '#acb2a6');
+    trim.box(side * (w * .935), latchY, z1 + .039, .026, .024, .010, '#343d41');
+    for (const y of [lower + .15, h - .113]) {
+        if (y > foot(z0) + .051) {
+            trim.box(side * (innerX + .022), y, z0 - .011, .111, .065, .067, '#7f8983');
+            trim.rod([side * innerX, y - .043, z0 - .036], [side * innerX, y + .043, z0 - .036], .016, '#4a5d5c');
+        }
+    }
     const lb = point(sideW, h + .028, z0), rb = point(sideW, h + .028, z1);
     const end = (0, vehicle_cabin_js_1.doorRoofEdge)(kind, z1 - .047);
     const lt = point(topW, H - .027, s.b + .061), rt = point(end.x, end.y - .027, z1 - .047);
@@ -96,17 +124,27 @@ function buildDoor(kind, side) {
             trim.box(side * (w + .037), h - .246, (z0 + z1) / 2 - .12 + i * .113, .012, .099, .026, '#44545a', [.4, 0, 0]);
     }
     const mirrorSkin = new model_geometry_js_1.Batch(), mirrorTrim = new model_geometry_js_1.Batch(), mx = side * sideW, my = h + .03, mz = z0 + .11;
-    const mirrorX = side * (w + (van ? .23 : .131) - sideW);
-    const mirrorY = van ? .23 : .11, mirrorH = van ? .32 : .127;
+    const late = kind === 'hatch' && series, early = kind === 'hatch' && !series;
+    const mirrorX = side * (w + (van ? .23 : early ? .106 : .131) - sideW);
+    const mirrorY = van ? .23 : late ? .145 : .11, mirrorH = van ? .32 : late ? .121 : .127;
     mirrorTrim.rod([0, 0, 0], [mirrorX, mirrorY - .02, .05], van ? .032 : .027, '#26333b');
     if (van)
         mirrorTrim.rod([0, .39, .03], [mirrorX, mirrorY + .087, .05], .023, '#26333b');
-    mirrorSkin.box(mirrorX, mirrorY, .056, .199, mirrorH, .19, '#ffffff');
-    mirrorTrim.box(mirrorX, mirrorY, .155, .166, mirrorH - .037, .014, '#a2bac1');
+    if (late) {
+        mirrorSkin.ball(mirrorX, mirrorY, .059, .111, .064, .111, '#ffffff');
+        mirrorTrim.box(mirrorX, mirrorY, .139, .184, mirrorH - .029, .017, '#354349');
+        mirrorTrim.ball(mirrorX, mirrorY, .152, .088, .047, .012, '#acc4c7');
+    }
+    else {
+        const width = early ? .149 : .199, z = early ? .130 : .155;
+        (early ? mirrorTrim : mirrorSkin).box(mirrorX, mirrorY, .056, width, mirrorH, early ? .13 : .19, early ? '#31454c' : '#ffffff');
+        mirrorTrim.box(mirrorX, mirrorY, z, width - .031, mirrorH - .037, .014, '#a2bac1');
+    }
     const mirrorBody = mirrorSkin.mesh(), mirrorFrame = mirrorTrim.mesh();
     const hingeX = side * (w - vehicle_cabin_js_1.doorHingeInset), hingeZ = c.hingeZ;
     const external = paint.mesh(), surrounding = trim.mesh(), window = glazedMesh(panes, h, H);
     window.name = 'side-window';
+    window.add(glassEdge([lb, rb, rt, lt], side));
     for (const m of [external, surrounding, window])
         m.position.set(-hingeX, 0, -hingeZ);
     return {
@@ -121,7 +159,9 @@ function buildDoor(kind, side) {
             mirror.position.set(mx - hingeX, my, mz - hingeZ);
             const cover = mirrorBody.clone();
             cover.material = coat;
-            mirror.add(cover, mirrorFrame.clone());
+            if (!early)
+                mirror.add(cover);
+            mirror.add(mirrorFrame.clone());
             pivot.add(skin, surrounding.clone(), window.clone(), mirror);
             return pivot;
         }

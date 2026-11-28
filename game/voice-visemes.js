@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.speechAperture = speechAperture;
+exports.speechShape = speechShape;
 const curves = {
     'resident': '0000021f50eff307fb9f785006bba0015764200000000000000bf920300000fa223635b0267840000000000000',
     'courier': '000000afff1005001500010000000000000000da10ff2293fd337648a56000a7104001210000000000',
@@ -46,4 +47,14 @@ function speechAperture(clip, seconds) {
         return 0;
     const t = seconds * 20, i = Math.floor(t), a = parseInt(v[i], 16), b = parseInt(v[i + 1] ?? '0', 16);
     return (a + (b - a) * (t - i)) / 15;
+}
+function speechShape(clip, seconds) {
+    const aperture = speechAperture(clip, seconds);
+    if (aperture < .18)
+        return 0;
+    // Keep the recorded jaw timing and vary the opening around rising and held sounds.
+    const change = speechAperture(clip, seconds + .04) - speechAperture(clip, seconds - .04);
+    if (aperture > .64 || change > .28)
+        return 1;
+    return aperture < .53 && change < .12 ? -1 : 0;
 }

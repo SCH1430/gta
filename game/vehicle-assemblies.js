@@ -4,6 +4,7 @@ exports.rearEquipment = rearEquipment;
 const T = require("../engine/three.module.min.js");
 const model_geometry_js_1 = require("./model-geometry.js");
 const vehicle_cabin_js_1 = require("./vehicle-cabin.js");
+const { heatingGrid } = require("./model-car-exterior.js");
 function rearEquipment(kind) {
     if (kind === 'towtruck' || kind === 'utility')
         return (_paint) => ({ root: new T.Group(), update(_dt, _time, _e) { } });
@@ -16,6 +17,20 @@ function rearEquipment(kind) {
         bin.box(side * s.w * .845, (h + .62) * .5, (r + deck) * .5, .035, h - .60, depth, '#475356');
     if (van) {
         for (const side of [-1, 1]) {
+            const panel = side * s.w * .881;
+            const back = r - .154, start = deck + .19, center = (start + back) * .5;
+            bin.box(panel, 1.583, center, .032, .937, back - start, '#947a58');
+            for (let i = 0; i < 8; i++) {
+                const y = 1.15 + i * .116, off = side * (Math.abs(panel) - .025);
+                bin.rod([off, y, start], [off, y + .013, back], .0028, i % 2 ? '#9e8561' : '#7b674f', true);
+            }
+            for (const z of [start + .158, center, back - .152]) {
+                const x = panel - side * .075, y = 1.118;
+                bin.box(x, y, z, .095, .018, .123, '#5c5e56');
+                bin.rod([x, y + .008, z - .043], [x, y + .067, z - .029], .009, '#9fa095');
+                bin.rod([x, y + .067, z - .029], [x, y + .067, z + .029], .009, '#9fa095');
+                bin.rod([x, y + .067, z + .029], [x, y + .008, z + .043], .009, '#9fa095');
+            }
             const b = side < 0 ? liner : otherDoor, dx = -side * x * .50;
             b.box(dx, .24, 0, x * .985, 1.09, .057, '#43575a');
             b.box(dx, .25, .034, x * .92, .995, .018, '#b6c0ae');
@@ -41,6 +56,11 @@ function rearEquipment(kind) {
         band(window, -.89, .89, .096, .865, '#ffffff');
         hatchGlass = require("./model-car-doors.js").glazedMesh(window, slopeY, 0);
         hatchGlass.name = 'liftgate-glass';
+        const demister = new model_geometry_js_1.Batch();
+        heatingGrid(demister, (u, t) => { const p = point(u, t); p[2] -= .006; return p; }, .166, .81, .84);
+        const lines = demister.mesh();
+        lines.name = 'liftgate-demister';
+        hatchGlass.add(lines);
         lid.quad(point(-1, 1), point(1, 1), [s.w * .78, slopeY - .048, r - s.c], [-s.w * .78, slopeY - .048, r - s.c], '#ffffff', [0, 1, .1]);
         liner.box(0, -.008, .043, top * 1.78, .032, .105, '#43494a');
         liner.rod(point(-.53, .78), point(.18, .76), .012, '#354144', true);

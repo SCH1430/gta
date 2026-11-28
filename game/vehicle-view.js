@@ -8,13 +8,14 @@ const world_layout_js_1 = require("./world-layout.js");
 const world_expansion_layout_js_1 = require("./world-expansion-layout.js");
 const region_layout_js_1 = require("./region-layout.js");
 const static_box_index_js_1 = require("./static-box-index.js");
-function applyCockpitCamera(camera, c, yaw, rear = false) {
+function applyCockpitCamera(camera, c, yaw, rear = false, lookPitch = 0) {
     const cabin = (0, vehicle_cabin_js_1.carCabin)(c.kind), s = vehicle_cabin_js_1.specs[c.kind], co = Math.cos(c.yaw), si = Math.sin(c.yaw);
     const x = (require('./culture-paths.js').passengerListen.has(c) ? 1 : -1) * cabin.seatX;
     const z = cabin.seatZ + .027, offset = Math.atan2(Math.sin(yaw - c.yaw), Math.cos(yaw - c.yaw));
     camera.position.set(c.x + x * co + z * si, c.y + Math.min(s.roof - .12, cabin.seatY + .78), c.z - x * si + z * co);
     camera.rotation.order = 'YXZ';
-    camera.rotation.set(-.075, c.yaw + offset + (rear ? Math.PI : 0), 0);
+    const pitch = Math.max(-.17, Math.min(.72, lookPitch));
+    camera.rotation.set(-.10 - pitch * .86, c.yaw + offset + (rear ? Math.PI : 0), 0);
     camera.updateMatrixWorld();
 }
 const walls = [...world_layout_js_1.apartments, ...Object.values(world_layout_js_1.buildings).map(v => ({ ...v, h: 5.4 })), ...world_expansion_layout_js_1.expansionBuildings, ...region_layout_js_1.regionBuildings];
@@ -117,13 +118,36 @@ function paintMirror(g, c, sim, side) {
         }
     }
 }
+const glassWidth = 480, glassHeight = 240;
+const wiperPivots = [85, 316], wiperRate = 5.6, wiperPeriod = Math.PI * 2 / wiperRate;
+const wiperRest = -.25, wiperTravel = 1.52, armLength = 80, bladeTilt = .24;
+const bladeTop = -68, bladeBottom = 21;
+function wiperPhase(x, y, pivot) {
+    const dx = x - pivot, dy = y - glassHeight;
+    const perpendicular = armLength * Math.sin(bladeTilt);
+    const offset = dx * dx + dy * dy - perpendicular * perpendicular;
+    if (offset < 0)
+        return null;
+    // The blade is tilted at the end of the arm, so the swept band is wider toward its tip.
+    const along = armLength * Math.cos(bladeTilt) - Math.sqrt(offset);
+    if (along < bladeTop || along > bladeBottom)
+        return null;
+    const angle = Math.atan2(dx, -dy) - Math.atan2(-Math.sin(bladeTilt) * along, armLength - Math.cos(bladeTilt) * along);
+    const progress = (angle - wiperRest) / wiperTravel;
+    return progress >= 0 && progress <= 1 ? Math.acos(1 - progress * 2) / wiperRate : null;
+}
+function lastWiperPass(time, phase) {
+    const returnPhase = wiperPeriod - phase;
+    return Math.max(phase + Math.floor((time - phase) / wiperPeriod) * wiperPeriod,
+        returnPhase + Math.floor((time - returnPhase) / wiperPeriod) * wiperPeriod);
+}
 function createCabinGlass(canvas) {
     const layer = document.createElement('div');
     layer.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:2;overflow:hidden;display:none';
     canvas.parentElement?.appendChild(layer);
     const glass = document.createElement('canvas');
-    glass.width = 480;
-    glass.height = 240;
+    glass.width = glassWidth;
+    glass.height = glassHeight;
     glass.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
     layer.appendChild(glass);
     const g = glass.getContext('2d');
@@ -135,19 +159,43 @@ function createCabinGlass(canvas) {
         layer.appendChild(m);
         return m;
     });
-    let timer = 0;
-    const drops = Array.from({ length: 200 }, (_, i) => ({ x: (i * 113.79) % 480, y: (i * 91.753) % 227, r: .58 + ((i * 37) % 11) * .13 }));
-    return { hide() { layer.style.display = 'none'; }, update(sim, dt) {
+    let mirrorTimer = 0, glassTimer = 0, visibleCar = null;
+    const wiped = new WeakMap();
+    const drops = Array.from({ length: 200 }, (_, i) => {
+        const x = (i * 113.79) % glassWidth, y = (i * 91.753) % (glassHeight - 13);
+        return { x, y, r: .58 + ((i * 37) % 11) * .13, phases: wiperPivots.map(pivot => wiperPhase(x, y, pivot)).filter(phase => phase !== null) };
+    });
+    return { hide() { layer.style.display = 'none'; visibleCar = null; }, update(sim, dt, weather, windshieldHidden) {
             const c = sim.activeCar(), visible = !!c && sim.motorPool.cockpit && !sim.transition;
             layer.style.display = visible ? 'block' : 'none';
-            if (!visible || !c)
+            if (!visible) {
+                visibleCar = null;
                 return;
-            timer -= dt;
-            if (timer > 0)
-                return;
-            timer = .12;
+            }
+            glass.style.display = windshieldHidden ? 'none' : 'block';
+            if (visibleCar !== c) {
+                visibleCar = c;
+                mirrorTimer = glassTimer = 0;
+            }
             const s = (0, vehicle_road_js_1.equipment)(c);
-            g.clearRect(0, 0, 480, 240);
+            mirrorTimer -= dt;
+            if (mirrorTimer <= 0) {
+                mirrorTimer = .12;
+                mirrors.forEach((m, i) => {
+                    const ctx = m.getContext('2d');
+                    if (i === 0 ? s.leftMirror : s.rightMirror) {
+                        ctx.fillStyle = '#344348';
+                        ctx.fillRect(0, 0, W, H);
+                    }
+                    else
+                        paintMirror(ctx, c, sim, i === 0 ? -1 : 1);
+                });
+            }
+            glassTimer -= dt;
+            if (windshieldHidden || glassTimer > 0)
+                return;
+            glassTimer = s.wipers ? 1 / 30 : .09;
+            g.clearRect(0, 0, glassWidth, glassHeight);
             const mist = c.mobilityMist || 0;
             if (mist > .008) {
                 const clear = g.createRadialGradient(240, 218, 15, 240, 218, 285);
@@ -155,19 +203,33 @@ function createCabinGlass(canvas) {
                 clear.addColorStop(.48, 'rgba(180,200,203,' + mist * .27 + ')');
                 clear.addColorStop(1, 'rgba(184,204,209,' + mist * .77 + ')');
                 g.fillStyle = clear;
-                g.fillRect(0, 0, 480, 240);
+                g.fillRect(0, 0, glassWidth, glassHeight);
             }
-            mirrors.forEach((m, i) => {
-                const ctx = m.getContext('2d');
-                if (i === 0 ? s.leftMirror : s.rightMirror) {
-                    ctx.fillStyle = '#344348';
-                    ctx.fillRect(0, 0, W, H);
-                }
-                else
-                    paintMirror(ctx, c, sim, i === 0 ? -1 : 1);
-            });
-            for (let i = 0; i < Math.ceil(s.wet * drops.length); i++) {
+            const time = sim.elapsed, regain = 3.1 - (weather?.rain ?? 0) * 1.45;
+            let sweep = wiped.get(c);
+            if (!sweep || time < sweep.lastDraw) {
+                sweep = { since: time - wiperPeriod, lastDraw: time, on: s.wipers, drops: new Float64Array(drops.length).fill(-Infinity) };
+                wiped.set(c, sweep);
+            }
+            if (s.wipers && !sweep.on)
+                sweep.since = sweep.lastDraw;
+            sweep.on = s.wipers;
+            sweep.lastDraw = time;
+            const count = Math.ceil((s.glassWet ?? s.wet) * drops.length);
+            for (let i = 0; i < drops.length; i++) {
                 const d = drops[i];
+                if (s.wipers)
+                    for (const phase of d.phases) {
+                        const pass = lastWiperPass(time, phase);
+                        if (pass >= sweep.since)
+                            sweep.drops[i] = Math.max(sweep.drops[i], pass);
+                    }
+                if (i >= count)
+                    continue;
+                const alpha = Math.min(1, (time - sweep.drops[i] - .24) / regain);
+                if (alpha <= .025)
+                    continue;
+                g.globalAlpha = alpha;
                 g.fillStyle = 'rgba(25,41,48,.34)';
                 g.beginPath();
                 g.ellipse(d.x, d.y, d.r, d.r * 1.65, -.19, 0, Math.PI * 2);
@@ -175,24 +237,25 @@ function createCabinGlass(canvas) {
                 g.fillStyle = 'rgba(205,226,230,.46)';
                 g.fillRect(d.x - .46, d.y - d.r, Math.max(.55, d.r * .7), .77);
             }
+            g.globalAlpha = 1;
             if (s.wipers) {
-                const f = (1 - Math.cos(sim.elapsed * 5.6)) * .5, a = -.25 + f * 1.52;
-                for (const x of [85, 316]) {
+                const a = wiperRest + (1 - Math.cos(time * wiperRate)) * .5 * wiperTravel;
+                for (const x of wiperPivots) {
                     g.save();
-                    g.translate(x, 240);
+                    g.translate(x, glassHeight);
                     g.rotate(a);
                     g.strokeStyle = '#233039';
                     g.lineWidth = 2.4;
                     g.beginPath();
                     g.moveTo(0, 0);
-                    g.lineTo(0, -80);
+                    g.lineTo(0, -armLength);
                     g.stroke();
-                    g.translate(0, -80);
-                    g.rotate(.24);
+                    g.translate(0, -armLength);
+                    g.rotate(bladeTilt);
                     g.lineWidth = 3.0;
                     g.beginPath();
-                    g.moveTo(0, 21);
-                    g.lineTo(0, -68);
+                    g.moveTo(0, bladeBottom);
+                    g.lineTo(0, bladeTop);
                     g.stroke();
                     g.restore();
                 }

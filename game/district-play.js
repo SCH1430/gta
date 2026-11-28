@@ -8,7 +8,7 @@ const deliveries = require("./district-deliveries.js");
 const venues = require("./district-venues.js");
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 const destinationGuides = [...outskirts.guides, ...deliveries.guides, ...venues.guides];
-const guides = [
+const baseGuides = [
     ['Канальные гаражи', -40, 42, 'Машины, инструмент и мастерская'],
     ['Поворот у «Спектра»', 38.35, 36.35, 'Кнопка пешеходного перехода'],
     ['Прилавок Инны', 30, 25.3, 'Ремонт, очередь и обмен'],
@@ -53,27 +53,31 @@ function aimedSign(scene, camera, sim) {
     return best;
 }
 exports.createDistrictPlay = function(scene, ui, context, persist) {
+    const worldLife = require('./world-life.js').createWorldLife(scene);
     const modules = {
         city: require("./city-additions.js").createCityAdditions(scene),
         mobility: require("./mobility-additions.js").createMobilityAdditions(scene),
         culture: require("./culture-additions.js").createCultureAdditions(scene),
         outskirts: outskirts.createDistrictOutskirts(scene),
         deliveries: deliveries.createDistrictDeliveries(scene),
-        venues: venues.createDistrictVenues(scene)
+        venues: venues.createDistrictVenues(scene),
+        world: worldLife
     };
-    let notes, parking, driven, selection, menuTitle;
+    const guides = [...baseGuides, ...worldLife.guides], atlasGuides = [...destinationGuides, ...worldLife.guides];
+    let notes, parking, driven, selection, menuTitle, menuBody;
     function restore(data) {
         notes = Array.isArray(data?.notes) ? data.notes.filter(n => typeof n === 'string').slice(-64).map(n=>n.slice(0,320)) : [];
         parking = data?.parking && Number.isFinite(data.parking.x) && Number.isFinite(data.parking.z) ? data.parking : null;
-        driven = null; selection = []; menuTitle = '';
+        driven = null; selection = []; menuTitle = ''; menuBody = '';
         for (const [key, mod] of Object.entries(modules)) mod.restore?.(data?.[key]);
     }
     function record(text) {
         const clean = String(text ?? '').trim().slice(0, 320);
         if (clean && notes.at(-1) !== clean) { notes.push(clean); if (notes.length > 64) notes.shift(); }
     }
-    function choose(title, items) {
+    function choose(title, items, body = '') {
         menuTitle = String(title);
+        menuBody = String(body);
         selection = items.filter(item => item && typeof item.run === 'function');
         ui.open('district-choice');
     }
@@ -86,7 +90,7 @@ exports.createDistrictPlay = function(scene, ui, context, persist) {
     }
     function guide(pin) {
         const inside = ctx().sim.home.inside;
-        if (inside || !destinationGuides.includes(pin)) ui.addMapPin(pin[1], pin[2], pin[0]);
+        if (inside || !atlasGuides.includes(pin)) ui.addMapPin(pin[1], pin[2], pin[0]);
         if (inside) {
             ui.notify('Метка «'+pin[0]+'» сохранена. На улице выберите её на карте.');
             return;
@@ -103,16 +107,19 @@ exports.createDistrictPlay = function(scene, ui, context, persist) {
             (notes.length ? '<h3>Последняя запись</h3><p>'+escape(notes.at(-1))+'</p>' : '')+
             (parking ? '<p>Последняя стоянка · '+escape(nav.districtAt(parking.x,parking.z))+'</p>'+button('district:park','Показать машину') : '')+
             '<h3>Рядом</h3>'+ (nearby.map(a=>button(a.id,a.label)).join('') || '<p>Здесь пока нет дворовых дел.</p>')+
-            '<h3>Куда пойти</h3>'+guides.map((p,i)=>button('district:guide:'+i,p[0],p[3])).join('')+
+            '<h3>Куда пойти</h3>'+baseGuides.map((p,i)=>button('district:guide:'+i,p[0],p[3])).join('')+
+            '<h3>Жизнь города</h3>'+worldLife.guides.map((p,i)=>button('district:guide:'+(i+baseGuides.length),p[0],p[3])).join('')+
             (notes.length>1 ? '<details><summary>Предыдущие записи</summary>'+notes.slice(0,-1).reverse().map(n=>'<p>'+escape(n)+'</p>').join('')+'</details>' : '')+'</div>';
     }
     ui.registerPanel('district-book','Городской блокнот',notebook);
     ui.registerPanel('district-choice',() => menuTitle.length <= 42 ? menuTitle : 'Городской блокнот',
         () => '<div class="k-list k-city-book">'+(menuTitle.length>42?'<p>'+escape(menuTitle)+'</p>':'')+
+            menuBody.split('\n').filter(Boolean).map(line=>'<p>'+escape(line)+'</p>').join('')+
             selection.map((a,i)=>'<button type="button" class="k-panel-row k-book-row" data-action="district:pick:'+i+'"><span>'+escape(a.label)+'</span><b aria-hidden="true">›</b></button>').join('')+'</div>', true);
     return {restore, save() {
         return {notes:notes.slice(),parking,...Object.fromEntries(Object.entries(modules).map(([key,mod])=>[key,mod.save?.()]))};
-    }, destinations: destinationGuides.map(([label, x, z]) => ({ label, x, z, area: nav.districtAt(x, z) })),
+    }, destinations: atlasGuides.map(([label, x, z]) => ({ label, x, z, area: nav.districtAt(x, z) })),
+    get lookout() { return worldLife.lookout; },
     radio() {
         const c = ctx();
         return Object.values(modules).flatMap(mod => mod.radio?.(c) ?? []);

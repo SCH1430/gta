@@ -14,6 +14,8 @@ const boarding = require("./vehicle-boarding.js");
 const world_railway_js_1 = require("./world-railway.js");
 const models_js_1 = require("./models.js");
 const human_kits_js_1 = require("./human-kits.js");
+const { streetPerformancePose } = require("./character-performance.js");
+const { courtyardShelter } = require("./world-life-discoveries.js");
 const sim_js_1 = require("./sim.js");
 const ui_js_1 = require("./ui.js");
 const audio_js_1 = require("./audio.js");
@@ -562,7 +564,10 @@ async function start(boot, listen) {
             const r = (0, vehicle_tools_js_1.vehicleAction)(sim, id);
             if (r.message)
                 ui.notify(r.message);
-            ui.refreshPanel();
+            if (r.inspectHood)
+                ui.close();
+            else
+                ui.refreshPanel();
             syncHUD();
             persist();
             return;
@@ -735,10 +740,10 @@ async function start(boot, listen) {
                     feedback = Math.max(feedback, impact.strength);
                 }
                 if ((involved || distance < 23) && impact.strength >= .10 && replayImpacts.length < 16) {
-                    const { time, x, y, z, strength, carId, otherId } = impact;
-                    replayImpacts.push({ time, x, y, z, strength, carId, otherId });
+                    const { time, x, y, z, strength, carId, otherId, crash } = impact;
+                    replayImpacts.push({ time, x, y, z, strength, carId, otherId, crash });
                 }
-                if (event.text === 'pole')
+                if (event.text === 'pole' || event.text === 'fence')
                     shouldSave = true;
             }
             else if (event.type === 'sound') {
@@ -797,6 +802,8 @@ async function start(boot, listen) {
     const tourFrame = () => ({ ...sim.player, inside: sim.home.inside, busy: !!sim.transition || sim.tramRider.onboard || !!sim.home.door });
     const availableTourStop = () => jobs.active ? null : tour.next;
     function actions() {
+        if (districtPlay.lookout)
+            return districtPlay.actions();
         const base = sim.interactionOptions().map(label => ({ id: 'interact', label, value: label }));
         const more = sim.driven || sim.transition || sim.tramRider.onboard ? [] : sim.home.options(sim.hero, sim.elapsed, clockMinutes());
         const stop = availableTourStop(), visit = stop && tour.canInteract(tourFrame()) ? [{ id: 'tour-check', label: stop.action }] : [];
@@ -829,7 +836,8 @@ async function start(boot, listen) {
             missionTitle: objective.title, objective: objective.goal, reward: objective.reward, hint: opts[0]?.label, target: targetPoint(), district: sim.district(),
             search: sim.search, pursuit: pursuitInfo, population: sim.home.inside ? null : sim.populationStatus, lastContact: pursuitInfo.lastSeen, police: sim.wanted ? [...sim.cars.filter(patrolLight), ...sim.footPatrols] : [], atGarage: sim.atGarage(), speed: active?.speed ?? 0,
             vehicleName: displayCar ? vehicle_cabin_js_1.vehicleNames[displayCar.kind] : undefined, damage: displayCar ? 1 - displayCar.health / 100 : 0,
-            repairCost: serviceCar ? (0, vehicle_road_js_1.garageRepairCost)(serviceCar) : 0, garageParts: serviceCar ? (0, garage_service_js_1.workshopJobs)(serviceCar) : undefined, lights: active?.lights });
+            repairCost: serviceCar ? (0, vehicle_road_js_1.garageRepairCost)(serviceCar) : 0, garageParts: serviceCar ? (0, garage_service_js_1.workshopJobs)(serviceCar) : undefined,
+            garageHood: (0, vehicle_tools_js_1.canInspectHood)(sim, serviceCar) ? !!serviceCar.systems?.hood : undefined, lights: active?.lights });
     }
     let previousRatio = window.devicePixelRatio;
     function resize() {
@@ -911,7 +919,8 @@ async function start(boot, listen) {
             showSound(soundCaptions.lines(sim.elapsed, listener, clue.primary, clue.sources, sim.home.inside ? [] : landmarks));
         }
         audio.update(dt, { x: player.x, z: player.z, train: sim.tramRider.onboard, doorOpen: sim.home.open,
-            acousticRoom: (0, acoustic_space_js_1.acousticRoom)(sim.home.zone, player), doorDistance: (0, acoustic_space_js_1.doorwayDistance)(player, sim.home.inside), lookout: !!sim.home.lookout,
+            acousticRoom: (0, acoustic_space_js_1.acousticRoom)(sim.home.zone, player), doorDistance: (0, acoustic_space_js_1.doorwayDistance)(player, sim.home.inside), lookout: !!(sim.home.lookout || districtPlay.lookout),
+            courtyardShelter: sim.home.inside ? 0 : courtyardShelter(player.x, player.z),
             roomMix: sim.home.acoustics(sim.hero, sim.elapsed), broadcast: jobs.broadcast, archive: jobs.archive, townNews, districtRadio: districtPlay.radio,
             inside: sim.home.inside, tramTime: sim.tramTime, district: sim.district(), driving: !!c, speed: c?.speed ?? player.speed,
             wanted: sim.wanted, moving: Math.abs(player.speed) > .15, running: player.speed > 3.5, paused, road, weather: conditions,
@@ -1052,7 +1061,8 @@ async function start(boot, listen) {
         const conditions = (0, weather_js_1.weatherAt)(frame.time, frame.clock);
         world.setTramCabin(false);
         world.update(frame.time, frame.tram, focus, sim.brokenFixtures, frame.power, conditions.daylight);
-        motorWorld.updateCrashDebris([], frame.time, focus);
+        motorWorld.updateCrashDebris(replay.crashes, frame.time, focus);
+        motorWorld.updateFences(frame.fences ?? sim.motorPool.props, frame.time);
         recordedFreight.restore(frame.freight);
         freightView.update(recordedFreight, frame.time, focus);
         weather(dt, focus, !!frame.driven, vehicles, [], frame.time, shot, sim.brokenFixtures, graphics.quality, car => frame.cars.some(c => c.id === car.id && c.active), { weather: conditions, wanted: frame.wanted, fast: Math.abs(focus.speed) > 11, clock: frame.clock, blackout: frame.power });
@@ -1119,7 +1129,6 @@ async function start(boot, listen) {
             showingHouse = inside;
             persist();
         }
-        const lookout = sim.home.lookout, outside = !inside || !!lookout, focus = lookout ? { ...lookout, speed: 0 } : p;
         const fade = sim.home.fade;
         if (fade > 0 || threshold.style.opacity !== '0')
             threshold.style.opacity = String(fade);
@@ -1127,6 +1136,8 @@ async function start(boot, listen) {
         world.setTramCabin(sim.tramRider.onboard);
         const floor = inside ? indoorFloor : heroFloor, conditions = (0, weather_js_1.weatherAt)(sim.elapsed, clockMinutes());
         districtPlay.update(dt, conditions);
+        const streetLookout = districtPlay.lookout, lookout = streetLookout ?? sim.home.lookout;
+        const outside = !inside || !!lookout, focus = lookout ? { ...lookout, speed: 0 } : p;
         const transfer = sim.transition, exchange = sim.handoffRole;
         const transitionCar = transfer ? sim.cars.find(c => c.id === transfer.carId) : undefined;
         const carried = storyBlock() || jobs.carryFinale;
@@ -1168,7 +1179,7 @@ async function start(boot, listen) {
                     continue;
                 }
                 if (!record) {
-                    record = { model: (0, models_js_1.createVehicle)(c.police ? 'patrol' : c.kind, c.color), color: c.color };
+                    record = { model: (0, models_js_1.createVehicle)(c.police ? 'patrol' : c.kind, c.color, false, c.id), color: c.color };
                     cars.set(c.id, record);
                 }
                 const model = record.model;
@@ -1250,11 +1261,13 @@ async function start(boot, listen) {
                 if (previousPose !== undefined && poseDt < interval)
                     continue;
                 peoplePoseAt.set(npc.id, sim.elapsed);
+                const speech = audio.mouth(npc.id), closeFace = speaker?.id === npc.id || range < 6 ** 2 && (participating || speech > 0);
                 model.update(poseDt, npc.speed, false, {
+                    ...streetPerformancePose(npc, conditions, sim.cityLife.witnesses[npc.id], sim.elapsed),
                     passing: npc.speed > .15 && range < 16 ** 2 ? (0, pedestrian_controller_js_1.passingAngle)(npc, sim.people) : 0,
                     anticipation: !car && !lookout && range < 4.2 ** 2,
                     railNear: npc.role === 'dispatcher' && rail.visible && Math.hypot(rail.x - npc.x, rail.z - npc.z) < 19,
-                    conversation: participating || speaker?.id === npc.id, speech: audio.mouth(npc.id), wetness: .48, carry: npc.purchase ? 'parcel' : npc.id === 'pass-12' ? 'cup' : undefined, ground: npc.onboard ? () => npc.y : undefined, nod: sim.elapsed < (npc.lookUntil ?? 0) ? 1 : 0, glance: npc.lookYaw, reaction: npc.reaction, handoff: participating ? sim.handoff : -1, handoffRole: participating ? exchange : null,
+                    conversation: participating || speaker?.id === npc.id, speech, closeFace, speechShape: closeFace ? audio.mouthShape(npc.id) : 0, wetness: .48, carry: npc.purchase ? 'parcel' : npc.id === 'pass-12' ? 'cup' : undefined, ground: npc.onboard ? () => npc.y : undefined, nod: sim.elapsed < (npc.lookUntil ?? 0) ? 1 : 0, glance: npc.lookYaw, reaction: npc.reaction, handoff: participating ? sim.handoff : -1, handoffRole: participating ? exchange : null,
                     handTarget: participating ? sim.handoffPoint ?? undefined : undefined, hasBlock: carried
                 });
                 if (!npc.onboard && model.footfall && (npc.x - p.x) ** 2 + (npc.z - p.z) ** 2 < 26 ** 2)
@@ -1277,13 +1290,16 @@ async function start(boot, listen) {
         if (lookout) {
             camera.position.set(lookout.x, lookout.y, lookout.z);
             camera.rotation.order = 'YXZ';
-            camera.rotation.set(sim.home.peek === 'roof' ? -follow.lookPitch : -.11, sim.home.peek === 'roof' ? follow.yaw : lookout.yaw, 0);
+            if (streetLookout?.aim)
+                camera.lookAt(streetLookout.aim.x, streetLookout.aim.y, streetLookout.aim.z);
+            else
+                camera.rotation.set(sim.home.peek === 'roof' ? -follow.lookPitch : -.11, sim.home.peek === 'roof' ? follow.yaw : lookout.yaw, 0);
             camera.updateMatrixWorld();
         }
         else if (sim.tramRider.onboard)
             (0, tram_interior_js_1.rideView)(camera, sim.tramTime, follow.yaw, follow.lookPitch, sim.tramRider);
         else if (car && !transfer && sim.motorPool.cockpit)
-            (0, vehicle_view_js_1.applyCockpitCamera)(camera, car, follow.yaw, ui.input.rear);
+            (0, vehicle_view_js_1.applyCockpitCamera)(camera, car, follow.yaw, ui.input.rear, follow.lookPitch);
         if (car && !transfer && !lookout)
             impactCamera.update(camera, dt, follow.yaw + (ui.input.rear ? Math.PI : 0), ui.settings.impactMotion, sim.motorPool.cockpit);
         else
@@ -1325,7 +1341,8 @@ async function start(boot, listen) {
         }
         else
             previousPortrait = null;
-        glass.update(sim, dt);
+        const windshieldHidden = ui.input.rear || follow.lookPitch > .38 || (car && Math.cos(follow.yaw - car.yaw) < .74);
+        glass.update(sim, dt, conditions, windshieldHidden);
         stories.update(jobs, jobFrame(dt), camera);
         if (!car && !transfer && follow.distance < .34 && !(portraitFramed && portrait?.id === 'hero'))
             hero.root.visible = false;
@@ -1365,7 +1382,7 @@ async function start(boot, listen) {
             world.cull(camera);
         if (!inside && !sim.tramRider.onboard)
             recorder.capture({ time: sim.elapsed, clock: clockMinutes(), tram: sim.tramTime, wanted: sim.wanted,
-                power: jobs.blackoutPhase, freight: sim.cargoRail.poses.length ? sim.cargoRail.save() : undefined, hero: sim.hero, driven: sim.driven, transfer: sim.transition, cars: sim.cars, people: sim.people, patrol: patrolLight, signal: trafficLight, impacts: replayImpacts, impactLean: c => sim.impactLean(c) });
+                power: jobs.blackoutPhase, freight: sim.cargoRail.poses.length ? sim.cargoRail.save() : undefined, hero: sim.hero, driven: sim.driven, transfer: sim.transition, cars: sim.cars, people: sim.people, props: sim.motorPool.props, patrol: patrolLight, signal: trafficLight, impacts: replayImpacts, impactLean: c => sim.impactLean(c) });
         replayImpacts.length = 0;
         const drawStart = performance.now();
         if (!outside && house.scene.userData.interiorZone === 'campus') {

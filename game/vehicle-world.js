@@ -10,18 +10,10 @@ const street_incidents_view_js_1 = require("./street-incidents-view.js");
 const vehicle_road_js_1 = require("./vehicle-road.js");
 const world_layout_js_1 = require("./world-layout.js");
 const vehicle_snow_js_1 = require("./vehicle-snow.js");
+const { createPicket } = require("./market-fence-view.js");
 function furnishing(p) {
     const b = new model_geometry_js_1.Batch(), { w, h, d } = p;
-    if (p.kind === 'picket') {
-        for (const x of [-w * .43, w * .43])
-            b.box(x, h / 2, 0, .06, h, .07, '#5b6d72');
-        for (const y of [.27, .63]) {
-            b.box(0, y, 0, w, .12, d, '#ae7657');
-            for (let x = -.57; x < .8; x += .32)
-                b.box(x, y, .093, .12, .12, .012, '#dbb787', [0, 0, .20]);
-        }
-    }
-    else if (p.kind === 'cart') {
+    if (p.kind === 'cart') {
         for (const x of [-w * .39, w * .39])
             for (const z of [-d * .39, d * .39])
                 b.ball(x, .09, z, .085, .09, .063, '#2f373c');
@@ -57,7 +49,14 @@ function createMotorWorld(scene) {
     group.name = 'market-props-and-driving-course';
     scene.add(group);
     const crashDebris = (0, street_incidents_view_js_1.createCrashDebris)(group);
-    const parts = (0, vehicle_road_js_1.streetFurniture)().map(p => { const mesh = furnishing(p); group.add(mesh); return mesh; });
+    const props = (0, vehicle_road_js_1.streetFurniture)();
+    const parts = props.map(p => {
+        if (p.kind === 'picket')
+            return createPicket(group, p);
+        const mesh = furnishing(p);
+        group.add(mesh);
+        return (prop) => mesh.position.set(prop.x, (0, world_layout_js_1.groundHeight)(prop.x, prop.z), prop.z);
+    });
     const b = new world_batch_js_1.Batches(group), signs = new world_batch_js_1.Panels(group), { x, z } = vehicle_road_js_1.chargingPost;
     const sign = (key, title, sub, px, py, pz, w, h, angle = 0) => {
         b.box(px, py, pz, w + .05, h + .05, .13, '#344a50', angle);
@@ -134,7 +133,14 @@ function createMotorWorld(scene) {
     group.add(cable);
     cable.frustumCulled = false;
     cable.visible = false;
-    return { updateCrashDebris: crashDebris, update(sim, _dt) {
+    return { updateCrashDebris: crashDebris, updateFences(fences, now) {
+            props.forEach((p, i) => {
+                if (p.kind === 'picket') {
+                    const saved = fences.find(fence => fence.id === p.id);
+                    parts[i](saved ? { ...p, ...saved } : p, now);
+                }
+            });
+        }, update(sim, _dt) {
             crashDebris(sim.streetIncidents.crashes, sim.elapsed, sim.hero);
             const snow = sim.motorPool.snow;
             if (stripeVersion !== snow.revision) {
@@ -148,11 +154,7 @@ function createMotorWorld(scene) {
                 });
                 swath.instanceMatrix.needsUpdate = true;
             }
-            sim.motorPool.props.forEach((p, i) => {
-                const a = parts[i];
-                a.position.set(p.x, (0, world_layout_js_1.groundHeight)(p.x, p.z) + (p.broken ? .08 : 0), p.z);
-                a.rotation.x = p.broken ? -1.48 : 0;
-            });
+            sim.motorPool.props.forEach((p, i) => parts[i](p, sim.elapsed));
             for (const id in sim.brokenFixtures)
                 if (!feet.has(id)) {
                     const f = fixtures_js_1.fixturesById.get(id);

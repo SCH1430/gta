@@ -6,7 +6,16 @@ exports.doorRoofEdge = doorRoofEdge;
 exports.doorAngle = doorAngle;
 exports.doorPullLocal = doorPullLocal;
 exports.doorHandleWorld = doorHandleWorld;
+exports.ladogaSeries = ladogaSeries;
 exports.vehicleNames = { hatch: 'Ладога 04', sedan: 'Вектор С', van: 'Ток-6', suv: 'Тайга 8', pickup: 'Буревестник', coupe: 'Искра GT', taxi: 'Маяк 21', wagon: 'Волна 12', towtruck: 'Строп Э4', utility: 'Буран 62' };
+function ladogaSeries(id) {
+    if (typeof id !== 'string' || !id)
+        return 0;
+    let hash = 2166136261;
+    for (let i = 0; i < id.length; i++)
+        hash = Math.imul(hash ^ id.charCodeAt(i), 16777619);
+    return Number((hash >>> 0) % 3 === 0);
+}
 exports.extraFleet = [
     ['fleet-mayak', 'taxi', -44, 20, Math.PI / 2, '#ddb450'],
     ['fleet-volna', 'wagon', 84, 39, Math.PI, '#8b9391'],

@@ -22,7 +22,7 @@ function doorwayDistance(player, inside) {
 const reflections = {
     street: 0, entrance: .47, stairs: .64, flat: .16, workroom: .28, basement: .56, lift: .41, roof: .02
 };
-function acousticMix({ inside, room, doorOpen, doorDistance, lookout, train, cabinSeal, concrete }) {
+function acousticMix({ inside, room, doorOpen, doorDistance, lookout, train, cabinSeal, concrete, courtyardShelter }) {
     const roomEcho = inside ? reflections[room ?? 'workroom'] : clamp(concrete ?? 0) * .24;
     if (inside) {
         const proximity = 1 / (1 + (Math.max(0, doorDistance ?? 0) / 2.8) ** 2);
@@ -31,6 +31,6 @@ function acousticMix({ inside, room, doorOpen, doorDistance, lookout, train, cab
     }
     if (train)
         return { worldGain: .40, worldCutoff: 2700, stepEcho: .13 };
-    const seal = clamp(cabinSeal ?? 0);
-    return { worldGain: 1 - .55 * seal, worldCutoff: 9800 - 8340 * seal, stepEcho: roomEcho };
+    const seal = clamp(cabinSeal ?? 0), shelter = clamp(courtyardShelter ?? 0);
+    return { worldGain: (1 - .55 * seal) * (1 - .84 * shelter), worldCutoff: (9800 - 8340 * seal) * (1 - .80 * shelter), stepEcho: roomEcho };
 }

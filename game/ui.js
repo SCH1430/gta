@@ -394,10 +394,11 @@ function createUI(host, onAction) {
             return heading + `<div class="k-list">${journal}</div>`;
         const full = view.repairCost ? panelRow('repair', 'tool', 'Полный ремонт', `<b>${money(view.repairCost)}</b>`) : '';
         const jobs = parts.map(({ id, label, price }) => panelRow('repairPart', 'tool', escape(label), `<b>${money(price)}</b>`, id)).join('');
+        const hood = typeof view.garageHood === 'boolean' ? panelRow('motor-garage-hood', 'tool', view.garageHood ? 'Закрыть капот' : 'Поднять капот') : '';
         const body = `<div class="k-garage-line"><span>Кузов</span><strong>${Math.round((1 - (view.damage ?? 0)) * 100)}%</strong></div>`;
         const swatches = Object.entries(garageColors).map(([color, label]) => `<button type="button" data-color="${color}" class="${color === garagePaint ? 'selected' : ''}" style="--paint:${color}" aria-label="${label}"></button>`).join('');
         return heading + body +
-            `<div class="k-list">${full}${jobs}${panelRow('saveCar', 'save', 'Сохранить машину')}${journal}</div>` +
+            `<div class="k-list">${full}${jobs}${hood}${panelRow('saveCar', 'save', 'Сохранить машину')}${journal}</div>` +
             `<div class="k-paint"><span>Окраска кузова</span><div class="k-swatches">${swatches}</div>${panelRow('paint', 'car', 'Нанести окраску', '<b>150 ₽</b>')}</div>`;
     }
     function panelBody() {
@@ -1008,7 +1009,7 @@ function createUI(host, onAction) {
     function update(data) {
         if (data.driving !== undefined && data.driving !== view.driving)
             resetInput();
-        const garageStatus = () => JSON.stringify([view.money, view.vehicleName, view.damage, view.repairCost, view.garageParts]);
+        const garageStatus = () => JSON.stringify([view.money, view.vehicleName, view.damage, view.repairCost, view.garageParts, view.garageHood]);
         const previousGarage = panel === 'garage' ? garageStatus() : '';
         const oldDriving = view.driving;
         Object.assign(view, data);

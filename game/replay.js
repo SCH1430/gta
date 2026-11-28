@@ -7,6 +7,8 @@ exports.unpackReplay = unpackReplay;
 exports.replayAt = replayAt;
 const sim_types_js_1 = require("./sim-types.js");
 const vehicle_road_js_1 = require("./vehicle-road.js");
+const { fenceDamage, validFence } = require("./market-fence.js");
+const { validCrashDebris } = require("./street-incidents.js");
 const span = 30, step = .12, maxImpacts = 16, maxFrames = Math.ceil(span / step) + 2 + maxImpacts, maxImpressions = 12;
 const roles = ['vendor', 'dispatcher', 'mechanic', 'courier', 'walker'];
 const round = (n) => Math.round(n * 1000) / 1000;
@@ -21,6 +23,14 @@ function wearSnapshot(s) {
     if (!s)
         return;
     const wear = {};
+    if ((s.dirt ?? 0) >= .02)
+        wear.dirt = round(s.dirt);
+    if (s.plough)
+        wear.plough = true;
+    if (s.hood)
+        wear.hood = true;
+    if (Number.isFinite(s.charge) && s.charge !== 82)
+        wear.charge = round(s.charge);
     if (!s.leftLamp)
         wear.leftLamp = false;
     if (!s.rightLamp)
@@ -45,7 +55,7 @@ function wearSnapshot(s) {
         wear.donorDoors = { ...s.donorDoors };
     return Object.keys(wear).length ? wear : undefined;
 }
-const sameContact = (a, b) => near(a, b) < 1.35 ** 2 &&
+const sameContact = (a, b) => near(a, b) < 1.35 ** 2 && (a.crash?.kind === 'fence') === (b.crash?.kind === 'fence') &&
     ((a.carId === b.carId && a.otherId === b.otherId) || (a.carId === b.otherId && a.otherId === b.carId));
 class ReplayRecorder {
     frames = [];
@@ -63,10 +73,12 @@ class ReplayRecorder {
             const prior = this.impacts.find(other => Math.abs(mark.time - other.time) < .52 && sameContact(mark, other));
             if (prior) {
                 prior.strength = Math.max(prior.strength, round(mark.strength));
+                if (mark.crash && (!prior.crash || mark.crash.severity >= prior.crash.severity))
+                    prior.crash = mark.crash;
                 continue;
             }
-            const { x, y, z, carId, otherId } = mark;
-            this.impacts.push({ time: round(mark.time), x: round(x), y: y === undefined ? undefined : round(y), z: round(z), strength: round(mark.strength), carId, otherId });
+            const { x, y, z, carId, otherId, crash } = mark;
+            this.impacts.push({ time: round(mark.time), x: round(x), y: y === undefined ? undefined : round(y), z: round(z), strength: round(mark.strength), carId, otherId, crash });
             newImpact = true;
         }
         if (newImpact) {
@@ -108,7 +120,10 @@ class ReplayRecorder {
             carId: tx.carId, kind: tx.kind, side: tx.side, phase: round(tx.phase ?? 0), opening: round(tx.opening ?? 1),
             passengerSlide: round(tx.passengerSlide ?? 0), driverSeatWeight: round(tx.driverSeatWeight ?? 1)
         } : undefined;
-        this.frames.push({ time: sampleTime, clock, tram: round(tram), wanted, power: power === 'normal' ? undefined : power, freight, hero: pose(hero), driven, transfer, cars, people });
+        const fences = source.props?.filter(p => p.kind === 'picket' && (p.fence || p.broken)).map(p => ({
+            id: p.id, x: round(p.x), z: round(p.z), broken: p.broken, fence: fenceDamage(p)
+        }));
+        this.frames.push({ time: sampleTime, clock, tram: round(tram), wanted, power: power === 'normal' ? undefined : power, freight, hero: pose(hero), driven, transfer, cars, people, fences });
         let first = 0;
         while (this.frames[first].time < time - span)
             first++;
@@ -134,13 +149,18 @@ const finite = (n, lo, hi) => typeof n === 'number' && Number.isFinite(n) && n >
 const validPose = (p) => p && finite(p.x, -1500, 1500) && finite(p.z, -1500, 1500) && finite(p.y, -20, 150) && finite(p.speed, -100, 100) && finite(p.yaw, -80, 80);
 const name = (s) => typeof s === 'string' && s.length > 0 && s.length <= 96;
 const validImpact = (m) => m && finite(m.time, 0, 365 * 86400) && finite(m.x, -1500, 1500) && finite(m.z, -1500, 1500) &&
-    (m.y === undefined || finite(m.y, -20, 150)) && finite(m.strength, 0, 1) && name(m.carId) && (m.otherId === undefined || name(m.otherId));
+    (m.y === undefined || finite(m.y, -20, 150)) && finite(m.strength, 0, 1) && name(m.carId) && (m.otherId === undefined || name(m.otherId)) &&
+    (m.crash === undefined || m.crash && ['collision', 'fence'].includes(m.crash.kind) && finite(m.crash.severity, 0, 1) && validCrashDebris(m.crash.debris));
 const validMarks = (value) => Array.isArray(value) && value.length <= 4 && value.every(m => m && finite(m.x, -4, 4) && finite(m.z, -5, 5) && finite(m.severity, 0, 1));
 function validWear(e) {
     if (!e || typeof e !== 'object' || Array.isArray(e))
         return false;
-    const lamps = ['leftLamp', 'rightLamp', 'leftMirror', 'rightMirror'];
+    const lamps = ['leftLamp', 'rightLamp', 'leftMirror', 'rightMirror', 'plough', 'hood'];
     if (lamps.some(k => e[k] !== undefined && typeof e[k] !== 'boolean'))
+        return false;
+    if (e.dirt !== undefined && !finite(e.dirt, 0, 1))
+        return false;
+    if (e.charge !== undefined && !finite(e.charge, 0, 100))
         return false;
     if (e.punctures !== undefined && (!Number.isInteger(e.punctures) || e.punctures < 0 || e.punctures > 15))
         return false;
@@ -178,6 +198,9 @@ function validReplay(value) {
             (c.indicator === undefined || c.indicator === 'hazard' || c.indicator === 'left' || c.indicator === 'right')))
             return false;
         if (!Array.isArray(f.people) || f.people.length > 5 || !f.people.every(p => validPose(p) && name(p.id) && roles.includes(p.role)))
+            return false;
+        if (f.fences !== undefined && (!Array.isArray(f.fences) || f.fences.length > 5 || !f.fences.every(p =>
+            p && /^fence-[0-4]$/.test(p.id) && finite(p.x, -1500, 1500) && finite(p.z, -1500, 1500) && typeof p.broken === 'boolean' && validFence(p.fence) && p.fence.at <= f.time + .001)))
             return false;
         last = f.time;
     }
@@ -287,5 +310,6 @@ function replayAt(clip, seconds) {
         transfer = { ...from, phase: lerp(from.phase, to.phase, t), passengerSlide: lerp(from.passengerSlide, to.passengerSlide, t), driverSeatWeight: lerp(from.driverSeatWeight, to.driverSeatWeight, t) };
     // The simulation switches the stored hero origin from the seat to the chassis centre on ownership change.
     const hero = a.driven === b.driven ? move(a.hero, b.hero, t) : { ...closest.hero };
-    return { ...closest, time, freight, transfer, tram: a.tram < 0 || b.tram < 0 ? closest.tram : lerp(a.tram, b.tram, t), hero, cars, people: decode(closest.people, a.people, b.people) };
+    const fences = a.fences && b.fences ? b.fences.map(p => p.fence.at <= time ? p : a.fences.find(prior => prior.id === p.id)).filter(Boolean) : closest.fences;
+    return { ...closest, time, freight, transfer, tram: a.tram < 0 || b.tram < 0 ? closest.tram : lerp(a.tram, b.tram, t), hero, cars, people: decode(closest.people, a.people, b.people), fences };
 }

@@ -53,11 +53,62 @@ function paintScar() {
     }
     return scar.clone();
 }
-function makeVehicleMotion(kind, root, shell, wheels, doors) {
+function bumperMotion(s, bumpers) {
+    const states = bumpers.map((pivot, i) => ({
+        pivot, end: i === 0 ? -1 : 1, rest: pivot.position.clone(), set: 0, twist: 0, age: 1, kick: 0, hitSide: 0
+    }));
+    let lastImpressions, lastPanels = 0, lastHit;
+    return (dt, visual) => {
+        const e = visual.systems, panels = (0, model_vehicle_wear_js_1.panelWearKey)(e);
+        if (lastPanels !== panels || lastImpressions !== e?.impressions) {
+            lastPanels = panels;
+            lastImpressions = e?.impressions;
+            const marks = (0, model_vehicle_wear_js_1.displayedImpressions)(s, e);
+            for (const state of states) {
+                let strongest = 0, side = 0;
+                for (const hit of marks) {
+                    const closeness = 1 - Math.abs(state.rest.z - hit.z) / .63;
+                    const damage = hit.strength * closeness;
+                    if (damage > strongest) {
+                        strongest = damage;
+                        side = clamp(hit.x / s.w, -1, 1);
+                    }
+                }
+                state.set = T.MathUtils.smoothstep(strongest, .20, .82);
+                state.twist = side * state.set;
+            }
+        }
+        const replay = visual.replayImpact;
+        const hit = visual.scrapes?.at(-1), newHit = !visual.replayPose && hit && hit !== lastHit && visual.impactLean;
+        for (const state of states) {
+            if (replay) {
+                state.age = replay.age;
+                state.kick = replay.strength * clamp(1 - Math.abs(state.rest.z - replay.z) / .63, 0, 1);
+                state.hitSide = clamp(replay.x / s.w, -1, 1);
+            }
+            else if (newHit && Math.abs(state.rest.z - hit.z) < .63) {
+                state.age = 0;
+                state.kick = hit.severity * clamp(1 - Math.abs(state.rest.z - hit.z) / .63, 0, 1);
+                state.hitSide = clamp(hit.x / s.w, -1, 1);
+            }
+            else if (visual.replayPose)
+                state.age = 1;
+            else
+                state.age = Math.min(1, state.age + dt);
+            const swing = state.age < .58 ? state.kick * Math.cos(state.age * 33) * Math.exp(-state.age * 10) : 0;
+            state.pivot.position.y = state.rest.y - state.set * .038 + swing * .032;
+            state.pivot.position.z = state.rest.z - state.end * (state.set * .036 + swing * .038);
+            state.pivot.rotation.set(swing * .12, state.end * state.twist * .092, -state.twist * .125 - state.hitSide * swing * .11);
+        }
+        lastHit = hit;
+    };
+}
+function makeVehicleMotion(kind, root, shell, wheels, doors, bumpers) {
     const s = vehicle_cabin_js_1.specs[kind], c = (0, vehicle_cabin_js_1.carCabin)(kind), tune = ride[kind], wheelY = [0, 0, 0, 0];
     const pitch = new Spring(), roll = new Spring(), lift = new Spring();
     const windowPanes = doors.map(d => d.getObjectByName('side-window'));
     const mirrors = doors.map(d => d.getObjectByName('folding-mirror'));
+    const moveBumpers = bumperMotion(s, bumpers);
     const scars = [];
     let prevSpeed, distance = 0, accel = 0;
     let previousMarks;
@@ -148,5 +199,6 @@ function makeVehicleMotion(kind, root, shell, wheels, doors) {
             }
         });
         showMarks(visual.scrapes, visual.systems);
+        moveBumpers(dt, visual);
     };
 }

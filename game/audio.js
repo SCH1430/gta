@@ -390,6 +390,11 @@ class GameAudio {
         return this.speech && this.ctx && line?.actor === actorId ?
             (0, voice_visemes_js_1.speechAperture)(line.id, line.offset + this.ctx.currentTime - line.started) : 0;
     }
+    mouthShape(actorId) {
+        const line = this.line;
+        return this.speech && this.ctx && line?.actor === actorId ?
+            (0, voice_visemes_js_1.speechShape)(line.id, line.offset + this.ctx.currentTime - line.started) : 0;
+    }
     broadcast(ids, level = .85, fromCar = false) {
         const clips = ids.filter(broadcasts_js_1.isProgramme);
         if (!clips.length)
@@ -734,7 +739,7 @@ class GameAudio {
         const speed = Math.abs(state.speed);
         const acoustics = (0, acoustic_space_js_1.acousticMix)({ inside: state.inside, room: state.acousticRoom,
             doorOpen: state.doorOpen, doorDistance: state.doorDistance, lookout: state.lookout, train: state.train,
-            cabinSeal: state.road?.enclosure ?? (state.road?.interior ? .91 : 0), concrete: air.concrete });
+            cabinSeal: state.road?.enclosure ?? (state.road?.interior ? .91 : 0), concrete: air.concrete, courtyardShelter: state.courtyardShelter });
         this.streetLevel.gain.setTargetAtTime(acoustics.worldGain, at, .21);
         this.streetGate.frequency.setTargetAtTime(acoustics.worldCutoff, at, .21);
         this.stepReflections.gain.setTargetAtTime(acoustics.stepEcho, at, .18);

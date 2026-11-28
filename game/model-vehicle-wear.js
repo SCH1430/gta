@@ -4,6 +4,7 @@ exports.applyLadogaDoorFinish = applyLadogaDoorFinish;
 exports.displayedImpressions = displayedImpressions;
 exports.panelWearKey = panelWearKey;
 exports.applyVehicleWear = applyVehicleWear;
+exports.applyRoadFilm = applyRoadFilm;
 const T = require("../engine/three.module.min.js");
 const vehicle_road_js_1 = require("./vehicle-road.js");
 const vehicle_cabin_js_1 = require("./vehicle-cabin.js");
@@ -150,7 +151,7 @@ function displayedImpressions(s, e) {
     if (!e)
         return [];
     const current = e.impressions ?? [];
-    const legacy = (0, vehicle_impact_damage_js_1.legacyImpressions)(s, e.dents).filter(m => !current.some(mark => mark.panel === m.panel));
+    const legacy = (0, vehicle_impact_damage_js_1.legacyImpressions)(s, e.dents ?? {}).filter(m => !current.some(mark => mark.panel === m.panel));
     return [...current, ...legacy];
 }
 function panelWearKey(e) {
@@ -160,6 +161,125 @@ function panelWearKey(e) {
     for (const panel of vehicle_impact_damage_js_1.bodyPanels)
         key = 101 * key + Math.round((e.dents[panel] ?? 0) * 100);
     return key;
+}
+const filmTemplates = new WeakMap();
+const filmTones = ['#b7bbad', '#c6c9bd', '#8c9185', '#6b6b5d', '#82796a'];
+function filmSurfaces(panels, minWidth, maxHeight) {
+    const sides = { [-1]: [], [1]: [] };
+    panels.forEach((panel, index) => {
+        const geometry = panel.geometry, points = geometry.getAttribute('position'), order = geometry.getIndex();
+        const corner = i => order ? order.getX(i) : i;
+        for (let i = 0, count = order?.count ?? points.count; i < count; i += 3) {
+            const a = corner(i), b = corner(i + 1), c = corner(i + 2);
+            const x0 = points.getX(a), x1 = points.getX(b), x2 = points.getX(c);
+            const side = x0 < 0 ? -1 : 1;
+            if (Math.min(x0 * side, x1 * side, x2 * side) < minWidth)
+                continue;
+            const y0 = points.getY(a), y1 = points.getY(b), y2 = points.getY(c);
+            const low = Math.min(y0, y1, y2), high = Math.max(y0, y1, y2);
+            if (high < .32 || low > maxHeight)
+                continue;
+            const z0 = points.getZ(a), z1 = points.getZ(b), z2 = points.getZ(c);
+            const ay = y1 - y0, az = z1 - z0, by = y2 - y0, bz = z2 - z0, determinant = ay * bz - az * by;
+            if (Math.abs(determinant) < .000001)
+                continue;
+            sides[side].push({ index, x0, y0, z0, ax: x1 - x0, bx: x2 - x0,
+                ay, az, by, bz, inverse: 1 / determinant, low, high, first: Math.min(z0, z1, z2), last: Math.max(z0, z1, z2) });
+        }
+    });
+    return sides;
+}
+function buildRoadFilm(s, panels) {
+    const decals = panels.map(() => new model_geometry_js_1.Batch()), sides = filmSurfaces(panels, s.w * .80, 2 * s.r + .31);
+    const color = n => filmTones[n % filmTones.length];
+    const random = (n) => {
+        const wave = Math.sin(n * 19.931 + 47.11) * 43218.34;
+        return wave - Math.floor(wave);
+    };
+    function sample(side, y, z) {
+        let outer = 0, index = -1;
+        for (const surface of sides[side]) {
+            if (y < surface.low || y > surface.high || z < surface.first || z > surface.last)
+                continue;
+            const { x0, y0, z0, ax, bx, ay, az, by, bz, inverse } = surface, py = y - y0, pz = z - z0;
+            const a = (py * bz - pz * by) * inverse, b = (ay * pz - az * py) * inverse;
+            if (a < 0 || b < 0 || a + b > 1)
+                continue;
+            const x = side * (x0 + a * ax + b * bx);
+            if (x > outer) {
+                outer = x;
+                index = surface.index;
+            }
+        }
+        if (index >= 0)
+            return { index, point: [side * (outer + .004), y, z] };
+    }
+    function streak(side, y, z, length, height, tone) {
+        const a = sample(side, y, z - length * .46), b = sample(side, y + height * .20, z + length * .57);
+        const c = sample(side, y + height, z + length * .26), d = sample(side, y + height * .65, z - length * .55);
+        if (!a || b?.index !== a.index || c?.index !== a.index || d?.index !== a.index)
+            return;
+        decals[a.index].quad(a.point, b.point, c.point, d.point, tone, [side, 0, 0]);
+    }
+    for (const side of [-1, 1]) {
+        const seed = side < 0 ? 217 : 84;
+        for (const axle of [s.fw, s.rw]) {
+            for (let i = 0; i < 51; i++) {
+                const n = seed + i + (axle < 0 ? 0 : 65);
+                const angle = .10 + random(n + 605) * (Math.PI - .20);
+                const reach = s.r + .075 + random(n) ** 1.7 * .19;
+                const y = s.r + Math.sin(angle) * reach, z = axle + Math.cos(angle) * reach;
+                streak(side, y, z, .026 + random(n + 312) ** 2 * .111, .008 + random(n + 810) ** 2 * .039, color(i));
+            }
+        }
+        const length = s.rw - s.fw - (s.r + .06) * 2;
+        for (let i = 0; i < 67; i++) {
+            const n = seed + i + 470;
+            const z = s.fw + s.r + .06 + random(n) * length;
+            const y = .425 + random(n + 130) ** 2.2 * (s.belt - .42) * .52;
+            streak(side, y, z, .038 + random(n + 700) ** 1.7 * .150, .009 + random(n + 330) ** 2 * .037, color(i + 2));
+        }
+    }
+    return decals.map(decal => decal.pos.length ? decal.mesh().geometry : null);
+}
+function applyRoadFilm(kind, panels) {
+    const source = panels[0].geometry;
+    let geometry = filmTemplates.get(source);
+    if (!geometry) {
+        geometry = buildRoadFilm(vehicle_cabin_js_1.specs[kind], panels);
+        filmTemplates.set(source, geometry);
+    }
+    const material = new T.MeshLambertMaterial({
+        vertexColors: true, side: T.DoubleSide, transparent: true, depthWrite: false,
+        polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
+    });
+    const parts = panels.flatMap((panel, i) => {
+        if (!geometry[i])
+            return [];
+        // Deposit vertices were sampled with the doors closed, in the same
+        // coordinate frame as each paint panel's geometry.
+        const film = new T.Mesh(geometry[i], material);
+        film.name = 'salt-and-road-grime';
+        film.position.copy(panel.position);
+        film.visible = false;
+        panel.parent.add(film);
+        return [film];
+    });
+    let previous = -1;
+    return {
+        parts,
+        update(dirt) {
+            const band = Math.round((dirt ?? 0) * 24);
+            if (band === previous)
+                return;
+            previous = band;
+            const opacity = T.MathUtils.smoothstep(band / 24, .025, .82) * .83;
+            material.opacity = opacity;
+            for (const film of parts)
+                film.visible = opacity >= .025;
+        },
+        dispose() { material.dispose(); }
+    };
 }
 function applyVehicleWear(kind, material, parts, farParts, wheels, firstColor) {
     const tint = new T.Color(firstColor), mud = new T.Color('#685b52'), s = vehicle_cabin_js_1.specs[kind];

@@ -3,7 +3,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.tailoredBody = void 0;
 exports.dressFleet = dressFleet;
 exports.fleetSignals = fleetSignals;
-exports.fleetDashboard = fleetDashboard;
 const model_geometry_js_1 = require("./model-geometry.js");
 const vehicle_cabin_js_1 = require("./vehicle-cabin.js");
 const bumper = '#243137', rubber = '#263137', steel = '#88968f', warmMetal = '#aa9d88';
@@ -109,35 +108,6 @@ function fleetSignals(kind, { body, lamps, tails }) {
             body.box(side * w * .688, h - .16, r + .036, .298, .095, .074, '#522f35');
             tails.box(side * w * .688, h - .156, r + .079, .277, .025, .015, '#fd514c');
             body.box(side * w * .78, y - .089, f - .06, .087, .026, .029, warmMetal);
-        }
-    }
-}
-function fleetDashboard(kind, body) {
-    const s = vehicle_cabin_js_1.specs[kind], cab = (0, vehicle_cabin_js_1.carCabin)(kind);
-    const driver = -cab.seatX, y = s.belt, z = s.a + .374;
-    if (kind === 'coupe') {
-        body.box(driver, y + .089, z, .466, .101, .035, '#292831');
-        body.box(driver, y + .092, z + .018, .410, .063, .026, '#436259');
-        for (let i = 0; i < 10; i++) {
-            body.box(driver - .162 + i * .035, y + .101 + i * .001, z + .034, .028, .014, .010, i < 7 ? '#83b2a5' : '#bf8a6f');
-        }
-        body.box(.11, y + .067, z + .018, .109, .115, .039, '#2c353a');
-        body.box(.11, y + .071, z + .041, .083, .079, .012, '#6eaa9f');
-        for (const x of [-.17, .28, .40, .52])
-            body.box(x, y + .034, z + .033, .072, .022, .053, '#25272b');
-    }
-    else {
-        body.box(driver, y + .076, z, .405, .122, .090, '#282f2e');
-        for (const [offset, r] of [[-.094, .081], [.064, .072]]) {
-            body.add(model_geometry_js_1.tube, [driver + offset, y + .091, z + .053], [r * 2, .021, r * 2], steel, [Math.PI / 2, 0, 0]);
-            body.add(model_geometry_js_1.tube, [driver + offset, y + .091, z + .065], [r * 1.77, .009, r * 1.77], '#333b36', [Math.PI / 2, 0, 0]);
-            body.rod([driver + offset, y + .091, z + .072], [driver + offset - r * .47, y + .126, z + .073], .004, '#e6a475', true);
-        }
-        body.box(.077, y + .084, z + .035, .198, .072, .052, '#303b36');
-        body.box(.071, y + .093, z + .066, .124, .021, .008, kind === 'suv' ? '#93a984' : '#b8a879');
-        for (let i = 0; i < 5; i++) {
-            const x = -.040 + i * .067;
-            body.box(x, y + .014, z + .048, .033, .027, .029, kind === 'pickup' ? '#847d69' : '#666b59');
         }
     }
 }

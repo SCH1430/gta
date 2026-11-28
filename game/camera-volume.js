@@ -9,6 +9,7 @@ const collision_js_1 = require("./collision.js");
 const world_layout_js_1 = require("./world-layout.js");
 const vehicle_cabin_js_1 = require("./vehicle-cabin.js");
 const market_quarter_layout_js_1 = require("./market-quarter-layout.js");
+const { placeRoofs } = require("./world-life-place-layout.js");
 const volume = (o, bottom, top) => ({ ...o, bottom, top, fixtureId: (0, fixtures_js_1.fixtureAt)(o.x, o.z)?.id });
 const overhead = (x, z, w, d, bottom, top) => ({ x, z, w, d, bottom, top });
 const buildingsByHeight = new Map([
@@ -36,6 +37,7 @@ function height(o) {
     return o.z === 42.3 ? 2.03 : 2.65;
 }
 const solids = [
+    ...placeRoofs,
     ...world_expansion_layout_js_1.expansionOverheads,
     ...[world_layout_js_1.buildings.garage, world_layout_js_1.buildings.garage2].flatMap(world_layout_js_1.garageRoofSections),
     ...market_quarter_layout_js_1.quarterFloors, ...market_quarter_layout_js_1.quarterRoofs, ...market_quarter_layout_js_1.quarterSupports, ...market_quarter_layout_js_1.quarterWalls,

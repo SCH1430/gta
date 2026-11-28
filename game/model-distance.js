@@ -176,8 +176,12 @@ function distantWalker(role, variant, look, shoulderWidth, fit) {
         panel(look.shade, [[1.249, -.151, .151], [1.304, -.172, .172], [1.373, -.130, .130]], true);
         for (const sign of [-1, 1])
             panel(look.shade, [[1.160, sign * .005 - .005, sign * .005 + .005], [1.263, sign * .055 - .023, sign * .055 + .023], [1.377, sign * .097 - .016, sign * .097 + .016]]);
-        if (kit === 'commuter')
-            panel(look.shirt, [[1.103, -.041, .025], [1.212, -.050, .032], [1.353, -.061, .058], [1.418, -.069, .060]], false, 3);
+        if (kit === 'commuter') {
+            const scarf = tailoring.style.scarf ?? look.shirt;
+            panel(scarf, [[1.103, -.041, .025], [1.212, -.050, .032], [1.353, -.061, .058], [1.418, -.069, .060]], false, 3, .023);
+            if (tailoring.style.scarf)
+                loft(torso, scarf, [[1.403, .098, .096], [1.431, .098, .088], [1.458, .072, .067]], 9, .88);
+        }
         if (kit === 'dispatch') {
             panel(look.accent, [[1.222, -.125, -.086], [1.256, -.126, -.086]]);
             panel(look.shade, [[1.021, -.128, .127], [1.047, -.126, .129]], true, 3);
@@ -225,9 +229,17 @@ function distantWalker(role, variant, look, shoulderWidth, fit) {
     else if (kit === 'canal') {
         loft(torso, look.accent, [[1.367, .123, .103, .008], [1.401, .106, .092, .007], [1.431, .086, .075, .006]], 8);
     }
-    loft(torso, look.shirt, [[1.380, .100, .088, .007], [1.421, .092, .082, .007], [1.463, .071, .065, .005]]);
-    loft(torso, look.skin, [[1.443, .058, .053, .008], [1.48, .050, .048, .002], [1.522, .052, .055]]);
+    if (tailoring.style.reflective)
+        for (const back of [false, true])
+            for (const side of [-1, 1]) {
+                const row = (y, inner, outer) => [y, side < 0 ? -outer : inner, side < 0 ? -inner : outer];
+                panel(tailoring.style.reflective, [row(1.225, .067, .173), row(1.248, .067, .164)], back, 4, .021);
+                panel(tailoring.style.reflective, [row(1.248, .076, .103), row(1.340, .082, .109)], back, 3, .021);
+            }
     const id = (0, human_head_shapes_js_1.identity)(role, variant), form = (0, human_head_shapes_js_1.faceVariant)(role, variant), neckY = 1.439, skin = (0, human_complexion_js_1.skinTint)(form);
+    const neckShape = (0, human_head_shapes_js_1.neckFit)(id, form);
+    loft(torso, look.shirt, [[1.380, .100, .088, .007], [1.421, .092, .082, .007], [1.463, .071, .065, .005]]);
+    loft(torso, look.skin, [[1.443, .058, .053, .008], [1.48, .050 * neckShape.width, .048 * neckShape.depth, .002], [1.522, .052 * neckShape.width, .055 * neckShape.depth]]);
     const face = (0, human_head_shapes_js_1.facialGeometry)(id, form, 'distant'), faceStart = pos.length / 3;
     const facePosition = face.getAttribute('position'), faceColor = face.getAttribute('color'), faceUV = face.getAttribute('uv');
     for (let v = 0; v < facePosition.count; v++) {
@@ -240,13 +252,13 @@ function distantWalker(role, variant, look, shoulderWidth, fit) {
     for (let i = 0; i < faceTriangles.count; i++)
         index.push(faceStart + faceTriangles.getX(i));
     const angles = [-Math.PI, -2.23, -1.56, -1.06, -.59, -.27, 0, .27, .59, 1.06, 1.56, 2.23, Math.PI];
-    const ear = (0, human_head_shapes_js_1.earsFor)(id, form);
     for (const side of [-1, 1]) {
+        const ear = (0, human_head_shapes_js_1.earsFor)(id, form, side);
         ink.set(look.skin);
         const c = pos.length / 3;
         const outline = [[0, 0], [-.81, .63], [-.24, .98], [.55, .84], [.97, .19], [.65, -.59], [.06, -.97], [-.62, -.65]];
         for (let j = 0; j < outline.length; j++) {
-            const [u, v] = outline[j], y = ear.height + ear.size * (.027 * v + .0022 * u + .0012 * u * v);
+            const [u, v] = outline[j], y = ear.height + ear.size * (.027 * v + .0022 * u + .0012 * u * v) - ear.drop * Math.max(0, -v) ** 2;
             const z = ear.depth + ear.size * ((.0148 + .0028 * v) * u + ear.slope * v - .0029 * v * v);
             const x = (0, human_head_shapes_js_1.skull)(id, side * (Math.PI / 2 + (z - .006) * 10.2), y, form).x;
             pos.push(x + side * (j === 0 ? .003 : .0043 + .48 * ear.flare * u), neckY + y, z - .008);
@@ -314,6 +326,10 @@ function distantWalker(role, variant, look, shoulderWidth, fit) {
     else if (kit === 'transit') {
         loft(torso, look.shade, [[1.008, .078, .048, .153], [1.048, .118, .064, .165], [1.223, .119, .058, .170], [1.302, .083, .036, .155]], 6);
     }
+    else if (tailoring.style.backpack) {
+        loft(torso, look.shade, [[1.028, .084, .054, .173], [1.088, .118, .064, .202], [1.256, .115, .065, .211], [1.305, .081, .039, .205]], 7);
+        loft(torso, look.main, [[1.056, .093, .018, .240], [1.181, .092, .021, .261], [1.211, .080, .016, .259]], 7);
+    }
     const { leg: legSize, arm: armSize } = (0, human_wardrobe_js_1.limbFit)(role, tailoring);
     loft(pelvis, look.pants, [[.810, .084, .061, .014], [.838, hips + .052, .085, .014],
         [.882, hips + .074, .113, .015], [.940, hips + .075, .108, .010], [.975, hips + .049, .091, .007]], 10, .84);
@@ -351,8 +367,10 @@ function distantWalker(role, variant, look, shoulderWidth, fit) {
         if (role === 'hero')
             loft(arm, look.accent, [[.906, .039, .044, -.006, wrist], [.918, .041, .047, -.005, wrist]], 7);
         const hand = role === 'vendor' || (role === 'resident' && (outfit === 'windbreaker' || outfit === 'workwear')) ? look.skin : outfit === 'workwear' ? '#875c3e' : '#44413c';
-        loft(arm + 1, hand, [[.765, .010, .019, -.024, wrist], [.790, .017, .037, -.019, wrist],
-            [.821, .023, .040, -.016, wrist], [.856, .022, .034, -.012, wrist], [.888, .017, .027, -.010, wrist]], 6);
+        const handFactor = 1 - .10 * neckShape.young + .025 * neckShape.old;
+        const handRings = [[.765, .010, .019, -.024, wrist], [.790, .017, .037, -.019, wrist],
+            [.821, .023, .040, -.016, wrist], [.856, .022, .034, -.012, wrist], [.888, .017, .027, -.010, wrist]];
+        loft(arm + 1, hand, handRings.map(([y, w, d, z, x]) => [.888 + (y - .888) * handFactor, w * handFactor, d * handFactor, z, x]), 6);
     }
     const base = new T.BufferGeometry();
     base.setIndex(index);

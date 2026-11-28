@@ -6,6 +6,7 @@ exports.paintCloth = paintCloth;
 exports.fitShoulder = fitShoulder;
 exports.attachBend = attachBend;
 exports.fitWaist = fitWaist;
+exports.seatedJacketGeometry = seatedJacketGeometry;
 exports.drapeCoat = drapeCoat;
 const T = require("../engine/three.module.min.js");
 const human_fabric_js_1 = require("./human-fabric.js");
@@ -71,11 +72,11 @@ class Surface {
         }
         if (cap)
             for (const j of [0, rings.length - 1]) {
-                const r = rings[j], center = this.vertex([r[4] ?? 0, r[0], r[5] ?? 0], color, tag, .88, .5, .966);
+                const r = rings[j], center = this.vertex([r[4] ?? 0, r[0], r[5] ?? 0], color, tag, .88, .5, (0, human_fabric_js_1.clothV)());
                 const rim = this.pos.length / 3;
                 for (let k = 0; k < segments; k++) {
                     const n = (start + j * stride + k) * 3;
-                    this.vertex([this.pos[n], this.pos[n + 1], this.pos[n + 2]], color, tag, .92, .5 + .48 * Math.cos(k * 2 * Math.PI / segments), .966);
+                    this.vertex([this.pos[n], this.pos[n + 1], this.pos[n + 2]], color, tag, .92, .5 + .48 * Math.cos(k * 2 * Math.PI / segments), (0, human_fabric_js_1.clothV)());
                 }
                 for (let k = 0; k < segments; k++) {
                     const a = rim + k, b = rim + (k + 1) % segments;
@@ -116,7 +117,7 @@ class Surface {
         const start = this.pos.length / 3;
         for (let j = 0; j < rows.length; j++) {
             const [a, b] = rows[j];
-            this.vertex(a, color, tag, .98, .1, .966);
+            this.vertex(a, color, tag, .98, .1, (0, human_fabric_js_1.clothV)());
             this.vertex(b, color, tag, 1, .9, .983);
             if (!j)
                 continue;
@@ -319,17 +320,22 @@ function attachBend(source, parent, joint) {
         levels.set(y, l);
     }
     const heights = [...levels.keys()].sort((a, b) => b - a);
-    const layers = heights.map(y => ({ indices: levels.get(y), w: T.MathUtils.smoothstep(heights[0] - y, 0, heights[0] - heights[heights.length - 1]) }));
+    const layers = heights.map(y => ({ indices: levels.get(y), w: T.MathUtils.smoothstep(heights[0] - y, 0, heights[0] - heights[heights.length - 1]),
+        crease: Math.exp(-(((y - pivot - .015) / .046) ** 2)) * Math.sin((y - pivot) * 159) }));
+    const knee = source.name === 'trouser-knee-gusset';
     g.boundingSphere = new T.Sphere(new T.Vector3(0, pivot, 0), .22);
     const rotation = new T.Quaternion(), identity = new T.Quaternion(), last = new T.Quaternion(0, 0, 0, 0), v = new T.Vector3();
     return { mesh, update() {
             if (1 - Math.abs(last.dot(joint.quaternion)) < 1e-13)
                 return;
             last.copy(joint.quaternion);
-            for (const { indices, w } of layers) {
+            const flex = Math.min(1, Math.hypot(joint.quaternion.x, joint.quaternion.z) * 1.7);
+            for (const { indices, w, crease } of layers) {
                 rotation.slerpQuaternions(identity, joint.quaternion, w);
                 for (const i of indices) {
-                    v.set(p.getX(i), p.getY(i) - pivot, p.getZ(i)).applyQuaternion(rotation);
+                    const z = p.getZ(i), inside = Math.max(0, (knee ? z : -z) * 22);
+                    v.set(p.getX(i) * (1 + flex * crease * .035), p.getY(i) - pivot,
+                        z + (knee ? 1 : -1) * flex * inside * crease * (knee ? .008 : .006)).applyQuaternion(rotation);
                     dst.setXYZ(i, v.x, v.y + pivot, v.z);
                     v.fromBufferAttribute(n, i).applyQuaternion(rotation);
                     normal.setXYZ(i, v.x, v.y, v.z);
@@ -339,7 +345,28 @@ function attachBend(source, parent, joint) {
             normal.needsUpdate = true;
         } };
 }
-function fitWaist(mesh, spine) {
+function seatedFold(x, y, z, strength) {
+    const low = 1 - T.MathUtils.smoothstep(y, .065, .227);
+    const rear = T.MathUtils.smoothstep(z, .025, .091);
+    const bunch = Math.sin(y * 92 + Math.abs(x) * 13) * low * (1 - rear);
+    return [x * low * .034 * strength, low * (.014 - rear * .006) * strength, (-rear * low * .018 - bunch * .010) * strength];
+}
+
+function seatedJacketGeometry(source, strength = 1) {
+    const g = source.clone(), p = g.getAttribute('position');
+    for (let i = 0; i < p.count; i++) {
+        const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+        if (y < .227) {
+            const [dx, dy, dz] = seatedFold(x, y, z, strength);
+            p.setXYZ(i, x + dx, y + dy, z + dz);
+        }
+    }
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    return g;
+}
+
+function fitWaist(mesh, spine, cut) {
     const source = mesh.geometry, g = source.clone();
     mesh.geometry = g;
     mesh.userData.articulated = true;
@@ -349,21 +376,32 @@ function fitWaist(mesh, spine) {
     const vertices = [];
     for (let i = 0; i < p.count; i++) {
         const w = (1 - T.MathUtils.smoothstep(p.getY(i), .057, .198)) * T.MathUtils.smoothstep(p.getZ(i), .002, .059);
-        if (w > 0)
-            vertices.push({ i, w });
+        if (w > 0 || p.getY(i) < .227)
+            vertices.push({ i, w, fold: seatedFold(p.getX(i), p.getY(i), p.getZ(i), cut === 'wool' ? .67 : cut === 'quilted' ? 1.18 : .94) });
     }
     const inverse = new T.Matrix4(), rotation = new T.Matrix3(), a = new T.Vector3(), b = new T.Vector3();
-    return () => {
+    let previousSeat = 0;
+    return (seat = 0) => {
         spine.updateMatrix();
         inverse.copy(spine.matrix).invert();
         rotation.getNormalMatrix(inverse);
-        for (const { i, w } of vertices) {
+        const seatChanged = seat !== previousSeat;
+        previousSeat = seat;
+        for (const { i, w, fold } of vertices) {
+            if (w === 0 && !seatChanged)
+                continue;
             a.fromBufferAttribute(p, i);
-            a.lerp(b.copy(a).applyMatrix4(inverse), w);
+            if (w > 0)
+                a.lerp(b.copy(a).applyMatrix4(inverse), w);
+            a.x += fold[0] * seat;
+            a.y += fold[1] * seat;
+            a.z += fold[2] * seat;
             pos.setXYZ(i, a.x, a.y, a.z);
-            a.fromBufferAttribute(n, i);
-            a.lerp(b.copy(a).applyMatrix3(rotation), w).normalize();
-            norm.setXYZ(i, a.x, a.y, a.z);
+            if (w > 0) {
+                a.fromBufferAttribute(n, i);
+                a.lerp(b.copy(a).applyMatrix3(rotation), w).normalize();
+                norm.setXYZ(i, a.x, a.y, a.z);
+            }
         }
         pos.needsUpdate = true;
         norm.needsUpdate = true;

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sculptHand = sculptHand;
+exports.handGrip = handGrip;
 exports.sculptBoot = sculptBoot;
 const T = require("../engine/three.module.min.js");
 const human_fabric_js_1 = require("./human-fabric.js");
@@ -108,21 +109,41 @@ class Sculpt {
         return mesh;
     }
 }
-function sculptHand(side, fit, role) {
-    const bare = role === 'vendor' || (role === 'resident' && (fit.cut === 'windbreaker' || fit.cut === 'workwear'));
+const handModels = new WeakMap();
+function handGrip(mesh, mode) {
+    const pose = mesh && handModels.get(mesh.geometry);
+    if (pose)
+        mesh.geometry = pose(mode);
+}
+function sculptHand(side, fit, role, grip = 'rest') {
+    const bare = role === 'vendor' || role === 'mechanic' || (role === 'resident' && (fit.cut === 'windbreaker' || fit.cut === 'workwear'));
     const work = fit.cut === 'workwear', courier = role === 'hero' || role === 'courier';
     const high = role !== 'resident';
+    const age = fit.age ?? .4;
     const size = (fit.feminine ? .93 : 1) + fit.build * .056;
+    const breadth = 1 + .11 * fit.build + .087 * (age - .4) + (work ? .05 : 0);
+    const closed = grip === 'handle', holdingCup = grip === 'cup';
+    const flex = closed ? 1 : holdingCup ? .62 : 0;
     const skin = palette(fit.look.skin), leather = palette(work ? '#896442' : courier ? '#363d3e' : fit.cut === 'wool' ? '#493d38' : '#514942');
     const tone = bare ? skin : leather;
     const soft = tone.clone().lerp(palette(bare ? '#a96e61' : '#241e1a'), bare ? .25 : .22);
     const seam = tone.clone().multiplyScalar(bare ? .88 : .58);
     const raised = tone.clone().lerp(palette(bare ? '#dfaf97' : work ? '#ba946c' : '#7e8079'), .32);
-    const blend = (j, a) => tone.clone().lerp(soft, .50 - .50 * Math.cos(a)).lerp(raised, j >= 3 ? .30 : .08);
+    const dry = tone.clone().lerp(palette('#edbdab'), .20 + age * .18);
+    const marking = tone.clone().lerp(palette('#4a433b'), .42);
+    const blend = (j, a) => {
+        const color = tone.clone().lerp(soft, .50 - .50 * Math.cos(a)).lerp(raised, j >= 3 ? .30 : .08);
+        const knuckle = Math.max(0, Math.cos(a)) ** 3 * (j === 2 || j === 3 ? 1 : .14);
+        if (bare)
+            color.lerp(dry, knuckle * (.24 + age * .28));
+        if (role === 'mechanic')
+            color.lerp(marking, Math.max(0, Math.sin(a * 3.5 + j * 1.9)) ** 5 * (j >= 2 ? .80 : .25));
+        return color;
+    };
     const s = new Sculpt(side, bare ? undefined : 'leather');
-    const over = bare ? 1 : 1.086;
+    const over = bare ? 1 : work ? 1.159 : 1.095;
     const shape = ([y, w, d, x = 0, z = 0], a) => [
-        x + size * over * w * squareRound(Math.cos(a), .87), y, z + size * over * d * squareRound(Math.sin(a), .97)
+        x + size * over * w * squareRound(Math.cos(a), .87), y, z * breadth + size * over * d * breadth * squareRound(Math.sin(a), .97)
     ];
     const palm = [
         [-.179, .017, .024, 0, -.010], [-.198, .016, .025, -.002, -.010], [-.216, .019, .030, .001, -.011],
@@ -139,15 +160,16 @@ function sculptHand(side, fit, role) {
     s.round(palm, palmPoint, blend, high ? 14 : 12, false);
     const widths = [.0106, .0110, .0102, .0085], ends = [-.317, -.327, -.316, -.301];
     for (let i = 0; i < 4; i++) {
-        const z = -.040 + i * .0193 * size, y = ends[i], curl = .018 + i * .0026, w = widths[i];
+        const z = -.040 + i * .0193 * size, y = ends[i] + flex * (.011 + i * .0014) + (age < .2 ? .004 : 0);
+        const curl = .018 + i * .0026 + flex * (.033 - i * .002), w = widths[i] * (work ? 1.05 : 1);
         const hinge = mix(-.265, y, .48), middle = mix(-.265, y, .73), center = -.002 - curl * .51;
         const rows = [
             [-.253 + i * .002, w * 1.06, w * 1.01, .004, z], [-.267 + i * .002, w, w * 1.00, .006, z],
             [hinge + .004, w * .88, w * .88, .004 - curl * .16, z - .001],
             [hinge - .003, w * .94, w * .91, .001 - curl * .30, z - .002],
             [middle, w * .77, w * .79, center, z - .004],
-            [y + .006, w * .75, w * .71, -curl, z - .006], [y, w * .43, w * .49, -curl - .002, z - .006],
-            [y - .001, w * .15, w * .18, -curl - .001, z - .006]
+            [y + .006, w * .75, w * .71, -curl, z - .006 + flex * .003], [y, w * .43, w * .49, -curl - .002, z - .006 + flex * .004],
+            [y - .001, w * .15, w * .18, -curl - .001, z - .006 + flex * .004]
         ];
         s.round(rows, shape, blend, high ? 8 : 6, 'last');
         if (bare) {
@@ -168,6 +190,12 @@ function sculptHand(side, fit, role) {
         [-.244, .013, .013, -.013, -.051], [-.251, .011, .010, -.020, -.055],
         [-.259, .010, .010, -.026, -.052], [-.270, .007, .007, -.028, -.046], [-.275, .003, .004, -.027, -.044]
     ];
+    if (flex) {
+        for (let i = 2; i < thumb.length; i++) {
+            thumb[i][3] -= (i - 1) * .003 * flex;
+            thumb[i][4] += (i - 1) * .0030 * flex;
+        }
+    }
     s.round(thumb, shape, blend, high ? 10 : 8);
     if (bare && high) {
         const nail = skin.clone().lerp(palette('#e5b3a5'), .5);
@@ -190,9 +218,34 @@ function sculptHand(side, fit, role) {
             s.tube(patch.map(row => [row[j][0] + .001, row[j][1], row[j][2]]), .0011, soft, 4);
         if (high && work)
             s.tube([[.023, -.232, -.015], [.027, -.240, -.013], [.028, -.249, -.011]], .0025, palette(fit.style.accent), 4);
+        if (side === (fit.variant % 2 ? 1 : -1) && (fit.variant % 3 === 0 || courier)) {
+            const y0 = -.241, edge = [.50, .38, .28];
+            const marks = edge.map((span, index) => Array.from({ length: 5 }, (_, j) => {
+                const point = palmPoint([y0 + (1 - index) * .007, .021, .038, .004, -.010], mix(-span, span, j / 4));
+                point[0] += .0016;
+                return point;
+            }));
+            s.strip(marks, j => j === 1 ? raised : seam);
+            const repairThread = palette('#b0a078');
+            for (const j of [0, 2, 4])
+                s.tube([marks[0][j], marks[1][j].map((p, k) => p + (k === 0 ? .0017 : 0)), marks[2][j]], .00085, repairThread, 4);
+        }
     }
     const mesh = s.mesh('winter-glove');
     mesh.userData.outfitDye = bare ? 'none' : 'gloves';
+    if (grip === 'rest') {
+        const cache = { rest: mesh.geometry };
+        function pose(mode) {
+            if (mode !== 'handle' && mode !== 'cup')
+                return cache.rest;
+            if (!cache[mode]) {
+                cache[mode] = sculptHand(side, fit, role, mode).geometry;
+                handModels.set(cache[mode], pose);
+            }
+            return cache[mode];
+        }
+        handModels.set(mesh.geometry, pose);
+    }
     return mesh;
 }
 const last = [
@@ -217,16 +270,23 @@ function sculptBoot(side, fit, role) {
     const liner = palette(city ? '#40332f' : sport ? '#303938' : '#3d3731');
     const outsoleHeight = field ? .038 : city ? .024 : .032;
     const sideScale = city ? .91 : sport ? .96 : worker ? 1.065 : 1;
+    const phase = (fit.variant ?? 0) * 1.39 + side * 1.57;
+    const worn = .0029 + .0017 * Math.sin(phase);
+    const scorch = trim.clone().lerp(palette('#9b8e77'), worker ? .33 : .18);
     function bottom(z) { return outsoleHeight + .004 * Math.max(0, (locomotion_poses_js_1.toePivot - z) / .006); }
     function uppers(z, angle, lift = 0) {
         const { width, offset, top } = sectionAt(z), flat = bottom(z), above = Math.sin(angle), cross = Math.cos(angle);
-        const y = above >= 0 ? flat + (top - flat) * Math.pow(above, worker ? .67 : .85) : flat + above * .004;
+        const creaseCentre = -.075 + .010 * Math.cos(phase + angle * 2.3);
+        const crease = higher => Math.exp(-(((z - creaseCentre - higher) / .010) ** 2));
+        const rumple = Math.max(0, above) ** 1.7 * (crease(-.011) - .72 * crease(.004)) * (worker ? .008 : .005);
+        const y = (above >= 0 ? flat + (top - flat) * Math.pow(above, worker ? .67 : .85) + rumple : flat + above * .004);
         return [(offset + (width - .003) * sideScale * squareRound(cross, .85)) * size, y + lift, z];
     }
     const footOutline = [...last.map(r => [r, 1]), ...last.slice().reverse().map(r => [r, -1])];
     const soleLayers = [[.012, .91], [outsoleHeight * .64, 1], [outsoleHeight - (field ? .011 : .005), 1], [outsoleHeight - .002, 1], [outsoleHeight, .95]];
     s.strip(soleLayers.map(([height, scale]) => footOutline.map(([[z, w, offset], sideSign]) => [
-        (offset + sideSign * w * sideScale * scale) * size, height + .005 * Math.max(0, (locomotion_poses_js_1.toePivot - z) / .006), z
+        (offset + sideSign * w * sideScale * scale) * size, height + .005 * Math.max(0, (locomotion_poses_js_1.toePivot - z) / .006) +
+            worn * T.MathUtils.smoothstep(z, .030, .079) * (sideSign > 0 ? 1 : .30), z
     ])), j => j >= (field ? 2 : 3) ? welt : rubber, true, true, true);
     const contact = rubber.clone().multiplyScalar(.69);
     const tread = high ? [-.150, -.125, -.098, -.070, .010, .038, .063] : [-.143, -.112, -.081, .013, .043, .069];
@@ -240,7 +300,7 @@ function sculptBoot(side, fit, role) {
                 [x1, z - length * .26], [x1, z + length * .39], [x0 + (x1 - x0) * .20, z + length * .57],
                 [x0, z + length * .19], [x0, z - length * .36], [x1 - (x1 - x0) * .32, z - length * .58]
             ];
-            const footY = locomotion_poses_js_1.soleHeight + (city && i > 3 ? .001 : 0);
+            const footY = locomotion_poses_js_1.soleHeight + (city && i > 3 ? .001 : 0) + (sign > 0 ? worn : worn * .25) * T.MathUtils.smoothstep(z, .033, .078);
             s.strip([footY, .012 + .21 * outsoleHeight].map(y => treadOutline.map(([x, z]) => [x, y, z])), j => j ? rubber : contact, true, true, 'first');
         }
     for (const z of [locomotion_poses_js_1.toePivot, locomotion_poses_js_1.heelPivot]) {
@@ -251,7 +311,8 @@ function sculptBoot(side, fit, role) {
     }
     const detail = high ? 16 : 12;
     const cover = last.map(([z]) => Array.from({ length: detail }, (_, i) => uppers(z, i * turn / detail)));
-    s.strip(cover, (j, a) => (j < 3 ? toecap : j > 8 ? quarter : upper).clone().lerp(trim, .26 * (1 - Math.abs(Math.sin(a)))), true, false, true);
+    s.strip(cover, (j, a) => (j < 3 ? toecap : j > 8 ? quarter : upper).clone().lerp(trim, .26 * (1 - Math.abs(Math.sin(a))))
+        .lerp(scorch, (j < 3 || j > 8) ? .19 + .17 * Math.cos(a * 2 + phase) : 0), true, false, true);
     const collar = [
         [.096, .047, .055, 0, .006], [.118, .046, .056, 0, .008], [.137, .043, .052, 0, .010],
         [.153, .0415, .050, 0, .011], [.166, .043, .049, 0, .011], [.176, .041, .046, 0, .010]
@@ -315,5 +376,23 @@ function sculptBoot(side, fit, role) {
     }
     const mesh = s.mesh('lace-up-winter-boot');
     mesh.userData.outfitDye = 'boots';
+    const crust = new Sculpt(side);
+    const ice = [palette('#a8bac1'), palette('#7d929c'), palette('#d2d9dc')];
+    for (const [i, position] of [-.113, -.086, -.031, .025, .053].entries()) {
+        const { width, offset } = sectionAt(position);
+        const x = (offset + width * .60 * (i % 2 ? 1 : -1)) * size;
+        const z = position + .004 * Math.sin(phase + i * 8.3), y = locomotion_poses_js_1.soleHeight + .003;
+        const a = crust.point([x - .014, y, z - .005], ice[i % 3]);
+        const b = crust.point([x + .013, y + .002, z - .006], ice[(i + 1) % 3]);
+        const c = crust.point([x + .010, y, z + .008], ice[i % 3]);
+        const d = crust.point([x - .005, y - .001, z + .005], ice[(i + 2) % 3]);
+        crust.triangle(a, b, c);
+        crust.triangle(a, d, b);
+        crust.triangle(b, d, c);
+        crust.triangle(c, d, a);
+    }
+    const frost = crust.mesh('snow-packed-sole');
+    frost.visible = false;
+    mesh.add(frost);
     return mesh;
 }

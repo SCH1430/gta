@@ -31,7 +31,8 @@ exports.createMobilityView=function(scene) {
     const stop=tramStops.works;
     rail.box(stop.x+.65,.095,stop.z-2.7,.97,.19,8.4,'#7d8889');
     rail.box(stop.x+1.15,1.42,stop.z+.52,.075,2.84,.075,'#456774');
-    signs.place('mobility-works-stop',()=>signTexture('МАСТЕРСКИЕ','17Д / 17Р • ПО ТРЕБОВАНИЮ','#f4d494','#344d57',3.7),stop.x+1.14,2.47,stop.z+.54,1.55,.51,Math.PI/2);
+    const { board } = stop;
+    signs.place('mobility-works-stop',()=>signTexture('МАСТЕРСКИЕ','17Д / 17Р • ПО ТРЕБОВАНИЮ','#f4d494','#344d57',3.7),board.x,board.y,board.z,1.55,.51,Math.PI/2);
     for(let m=79;m<105;m+=.65){
         const a=serviceSiding(m),b=serviceSiding(Math.min(105,m+.65));
         for(const side of [-.74,.74])

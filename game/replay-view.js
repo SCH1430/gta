@@ -19,6 +19,13 @@ function carState(car) {
         Object.assign((0, vehicle_road_js_1.equipment)(state), car.wear);
     return state;
 }
+function replayImpact(impacts, car, time) {
+    const hit = impacts?.findLast(mark => mark.time <= time && time - mark.time < .58 && (mark.carId === car.id || mark.otherId === car.id));
+    if (!hit)
+        return;
+    const x = hit.x - car.x, z = hit.z - car.z, sin = Math.sin(car.yaw), cos = Math.cos(car.yaw);
+    return { age: time - hit.time, strength: hit.strength, x: x * cos - z * sin, z: x * sin + z * cos };
+}
 const replayPanel = (seconds, archive) => `<div class="k-tour">
   <p>Запись улицы идёт автоматически. Откройте недавнюю поездку, чтобы выбрать ракурс или сделать кадр.</p>
   <button class="k-job-btn is-main" data-action="replay-open" ${seconds < .8 ? 'disabled' : ''}>Последние ${Math.min(30, Math.ceil(seconds))} с</button>
@@ -59,6 +66,7 @@ function createReplayView(scene, events) {
     const marks = node.querySelector('.k-replay-marks'), ticks = node.querySelector('.k-replay-ticks');
     const button = (id) => node.querySelector(`[data-replay="${id}"]`);
     let clip = null, seconds = 0, lens = 'street', slow = false, paused = false, requestPhoto = false, revision = 0;
+    let crashes = [];
     let selectedImpact, activeMark = null;
     function timeLabel(n) { return '0:' + Math.floor(n).toString().padStart(2, '0'); }
     function clearImpact() {
@@ -165,6 +173,7 @@ function createReplayView(scene, events) {
     }, true);
     function show(current) {
         clip = current;
+        crashes = (current.impacts ?? []).filter(mark => mark.crash).map(({ time, x, z, crash }) => ({ ...crash, at: time, x, z }));
         seconds = 0;
         paused = slow = requestPhoto = false;
         lens = 'street';
@@ -182,6 +191,7 @@ function createReplayView(scene, events) {
     }
     function hide() {
         clip = null;
+        crashes = [];
         revision++;
         stage.removeFromParent();
         node.hidden = true;
@@ -254,7 +264,7 @@ function createReplayView(scene, events) {
             for (const [i, c] of f.cars.entries()) {
                 let record = cars.get(c.id);
                 if (!record) {
-                    record = { model: (0, models_js_1.createVehicle)(c.police ? 'patrol' : c.kind, c.color), color: c.color };
+                    record = { model: (0, models_js_1.createVehicle)(c.police ? 'patrol' : c.kind, c.color, false, c.id), color: c.color };
                     cars.set(c.id, record);
                     stage.add(record.model.root);
                 }
@@ -269,7 +279,8 @@ function createReplayView(scene, events) {
                 model.update(advance, c.speed, c.steer, c.lights, c.braking, 1 - c.health / 100, { cameraDistance: camera.position.distanceTo(model.root.position),
                     doorSide: c === transitionCar ? transfer.side : undefined, doorOpen: c === transitionCar ? transfer.doorOpen : 0,
                     npcDriver: !driving && c !== transitionCar && Math.abs(c.speed) > .2, occupied: driving && c !== transitionCar, cockpit: cabin && driving, patrolClock: f.time, patrolActive: c.active,
-                    indicator: c.indicator, systems: solids[i].systems, scrapes: c.scrapes, impactLean: c.lean, snapshotPose: paused });
+                    indicator: c.indicator, systems: solids[i].systems, scrapes: c.scrapes, impactLean: c.lean,
+                    replayPose: true, replayImpact: replayImpact(clip.impacts, c, f.time), snapshotPose: paused });
             }
             actor.root.visible = !f.driven;
             actor.root.position.set(f.hero.x, f.hero.y, f.hero.z);
@@ -289,7 +300,7 @@ function createReplayView(scene, events) {
                 model.update(advance, p.speed, false, {});
             }
             controls(!!follower);
-            return { frame: f, camera, cars: solids, focus };
+            return { frame: f, camera, cars: solids, focus, crashes };
         }, afterDraw() {
             if (requestPhoto) {
                 requestPhoto = false;

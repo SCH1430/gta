@@ -51,21 +51,22 @@ function surface(data, w, h) {
     return new T.MeshLambertMaterial({ map: rgbaTexture(data, w, h), side: T.FrontSide });
 }
 exports.lipArea = [.30, .535, .70, .728];
-function featureMaterial(id, amount) {
-    const key = id + '/' + amount;
+function featureMaterial(id, amount, shape = 0) {
+    const key = id + '/' + amount + '/' + shape;
     let mat = materials.get(key);
     if (mat)
         return mat;
     decode();
     const [u0, v0, u1, v1] = exports.lipArea, w = Math.ceil((u1 - u0) * human_albedo_data_js_1.albedoWidth), h = Math.ceil((v1 - v0) * human_albedo_data_js_1.albedoHeight);
     const output = new Uint8Array(w * h * 4), source = rgba[id];
+    const width = shape < 0 ? .023 : shape > 0 ? .034 : .030;
     for (let j = 0; j < h; j++)
         for (let i = 0; i < w; i++) {
             const u = u0 + (u1 - u0) * i / (w - 1), v = v0 + (v1 - v0) * j / (h - 1);
             const x = (.5 - u) * exports.faceWidth, y = exports.faceTop - v * exports.faceHeight;
-            const across = Math.abs(x) / .030, edge = Math.max(0, 1 - across * across);
+            const across = Math.abs(x) / width, edge = Math.max(0, 1 - across * across);
             const mid = .0972 - .0008 * across + .0007 * Math.cos(2 * Math.PI * across);
-            const aperture = .0088 * amount / 5 * edge, upper = mid + aperture * .15, lower = mid - aperture * .85;
+            const aperture = .0088 * amount / 5 * edge * (1 - shape * .13), upper = mid + aperture * (shape < 0 ? .28 : .15), lower = upper - aperture;
             let sy = y, cavity = 0, teeth = 0;
             if (y < upper && y > lower && edge > 0) {
                 cavity = clamp((upper - y) / .0009) * clamp((y - lower) / .0009);

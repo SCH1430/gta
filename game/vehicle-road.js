@@ -28,19 +28,21 @@ Object.defineProperty(exports, "bodyPanels", { enumerable: true, get: function (
 exports.donorDoorSides = ['leftSide', 'rightSide'];
 const isLacquer = (value) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
 exports.isLacquer = isLacquer;
-const fresh = () => ({ leftLamp: true, rightLamp: true, leftMirror: false, rightMirror: false, manoeuvre: false, wipers: false, boot: false, cargo: 'empty', load: 0, high: false, wet: 0, tyre: 0, shock: 0, charge: 82, plugged: false,
+const fresh = () => ({ leftLamp: true, rightLamp: true, leftMirror: false, rightMirror: false, manoeuvre: false, wipers: false, boot: false, cargo: 'empty', load: 0, high: false, wet: 0, glassWet: 0, tyre: 0, shock: 0, charge: 82, plugged: false,
     dents: {}, punctures: 0, tyreWear: 0, winterTyres: false, underbody: false, auxLights: false,
-    reinforcedSuspension: false, dirt: 0, windowsOpen: false, plough: false, bedDrop: 0, bedMoving: false, towedMass: 0 });
+    reinforcedSuspension: false, dirt: 0, windowsOpen: false, plough: false, hood: false, bedDrop: 0, bedMoving: false, towedMass: 0 });
 function equipment(c) { return c.systems ??= fresh(); }
 function restoreEquipment(c) {
     const raw = c.systems, clean = fresh();
     if (raw) {
-        for (const k of ['leftLamp', 'rightLamp', 'leftMirror', 'rightMirror', 'manoeuvre', 'wipers', 'boot', 'high', 'plugged', 'winterTyres', 'underbody', 'auxLights', 'reinforcedSuspension', 'windowsOpen', 'plough'])
+        for (const k of ['leftLamp', 'rightLamp', 'leftMirror', 'rightMirror', 'manoeuvre', 'wipers', 'boot', 'high', 'plugged', 'winterTyres', 'underbody', 'auxLights', 'reinforcedSuspension', 'windowsOpen', 'plough', 'hood'])
             if (typeof raw[k] === 'boolean')
                 clean[k] = raw[k];
-        for (const [k, lo, hi] of [['wet', 0, 1], ['load', 0, 1400], ['tyre', -1, 1], ['shock', 0, 30], ['charge', 0, 100], ['tyreWear', 0, 1], ['dirt', 0, 1]])
+        for (const [k, lo, hi] of [['wet', 0, 1], ['glassWet', 0, 1], ['load', 0, 1400], ['tyre', -1, 1], ['shock', 0, 30], ['charge', 0, 100], ['tyreWear', 0, 1], ['dirt', 0, 1]])
             if (Number.isFinite(raw[k]))
                 clean[k] = Math.max(lo, Math.min(hi, raw[k]));
+        if (!Number.isFinite(raw.glassWet))
+            clean.glassWet = clean.wet;
         if (['empty', 'tools', 'crate', 'calibrator'].includes(raw.cargo))
             clean.cargo = raw.cargo;
         if (Number.isInteger(raw.punctures))

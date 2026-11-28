@@ -9,6 +9,7 @@ const collision_js_1 = require("./collision.js");
 const world_expansion_layout_js_1 = require("./world-expansion-layout.js");
 const vehicle_towing_js_1 = require("./vehicle-towing.js");
 const vehicle_snow_js_1 = require("./vehicle-snow.js");
+const { strikeFence, validFence } = require("./market-fence.js");
 const towRoads = [...world_expansion_layout_js_1.expansionRoads, ...region_layout_js_1.regionRoads];
 const distance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 class MotorPool {
@@ -21,7 +22,7 @@ class MotorPool {
     records = {};
     towQuote = null;
     road(x, z, sim) { return (0, vehicle_road_js_1.roadProfile)(x, z, sim.brokenFixtures); }
-    save() { return { props: this.props.map(({ id, x, z, broken, vx, vz }) => ({ id, x, z, broken, vx, vz })), cockpit: this.cockpit, tow: this.towing.save(), snow: this.snow.patches, vault: this.vault, trial: this.trial, records: this.records }; }
+    save() { return { props: this.props.map(({ id, x, z, broken, vx, vz, fence }) => ({ id, x, z, broken, vx, vz, fence })), cockpit: this.cockpit, tow: this.towing.save(), snow: this.snow.patches, vault: this.vault, trial: this.trial, records: this.records }; }
     restore(s, cars) {
         this.props = (0, vehicle_road_js_1.streetFurniture)();
         for (const car of cars)
@@ -29,8 +30,11 @@ class MotorPool {
                 (0, vehicle_road_js_1.restoreEquipment)(car);
         for (const p of this.props) {
             const q = s?.props?.find(v => v.id === p.id);
-            if (q && [q.x, q.z, q.vx, q.vz].every(Number.isFinite))
+            if (q && [q.x, q.z, q.vx, q.vz].every(Number.isFinite)) {
                 Object.assign(p, { x: q.x, z: q.z, broken: !!q.broken, vx: q.vx, vz: q.vz });
+                if (p.kind === 'picket' && validFence(q.fence))
+                    p.fence = { ...q.fence };
+            }
         }
         this.cockpit = s?.cockpit === true;
         this.vault = s?.vault ?? null;
@@ -69,12 +73,10 @@ class MotorPool {
         this.towQuote = best;
         return best;
     }
-    strike(p, c, impact) {
+    strike(p, c, impact, tangent, now, hit) {
         if (p.kind === 'picket') {
-            if (impact < 3.1)
-                return false;
-            p.broken = true;
-            return true;
+            strikeFence(p, impact, tangent, now, hit.contact, -hit.nz || c.vz);
+            return false;
         }
         if ((p.kind === 'box' || p.kind === 'cart') && impact > .4) {
             const gain = p.kind === 'box' ? .88 : .62;
@@ -122,7 +124,9 @@ class MotorPool {
             p.vx *= drag;
             p.vz *= drag;
         }
-        for (const c of sim.cars)
+        for (const c of sim.cars) {
+            if (c.systems?.hood && (c.id === sim.driven || c.id === sim.transition?.carId || c.carriedBy || Math.abs(c.speed) > .4 || Math.hypot(c.vx, c.vz) > .6))
+                c.systems.hood = false;
             if (c.systems?.plugged) {
                 const s = c.systems;
                 if (distance(c, vehicle_road_js_1.chargingPost) > 7.3) {
@@ -131,6 +135,7 @@ class MotorPool {
                 }
                 s.charge = Math.min(100, s.charge + dt * .48);
             }
+        }
         this.towing.update(sim, dt);
         this.snow.step(sim.activeCar(), sim.elapsed);
         const car = sim.activeCar(), tr = this.trial;

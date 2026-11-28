@@ -11,6 +11,11 @@ const human_sleeve_js_1 = require("./human-sleeve.js");
 const human_extremities_js_1 = require("./human-extremities.js");
 const model_geometry_js_1 = require("./model-geometry.js");
 const human_kits_js_1 = require("./human-kits.js");
+const { ageFor } = require('./human-head-shapes.js');
+const reflectorMaterial = new T.MeshPhongMaterial({
+    vertexColors: true, specular: '#e9e5d2', shininess: 39,
+    emissive: '#a3a28b', emissiveIntensity: .08
+});
 const complexions = [
     ['#be8f76', '#443530'], ['#c6997b', '#493632'], ['#bc937b', '#62615b'], ['#b88366', '#352c2e'],
     ['#a9775e', '#49392e'], ['#d4a487', '#675047'], ['#b08269', '#41322c'], ['#9d715d', '#352f2c'],
@@ -30,7 +35,10 @@ function appearance(role, variant) {
     const acrossHip = (feminine ? .187 : .169) + Math.max(-.005, build * .027) + (parka ? .012 : athletic ? -.008 : 0);
     const chest = shoulderWidth + (parka ? .029 : role === 'hero' ? .022 : cut === 'wool' ? .019 : .009);
     const depth = (feminine ? .120 : .131) + build * .023;
-    return { look: { main, shade, accent, shirt, pants, skin, hair }, style, build, shoulderWidth, hipWidth, waist, acrossHip, chest, depth, scale, feminine, thick, long, parka, cut };
+    const variantId = role === 'resident' ? n : ['hero', 'vendor', 'dispatcher', 'mechanic', 'courier'].indexOf(role) + 15;
+    const pocketSide = variantId % 2 ? -1 : 1, pocketLoad = [.016, .009, 0, .012, .005][variantId % 5];
+    return { look: { main, shade, accent, shirt, pants, skin, hair }, style, build, shoulderWidth, hipWidth, waist, acrossHip, chest, depth, scale, feminine, thick, long, parka, cut,
+        variant: variantId, age: ageFor(role, n), pocketSide, pocketLoad, packStraps: style.kit === 'transit' || style.backpack };
 }
 function coatLength(role, fit) {
     const { cut, style } = fit;
@@ -69,6 +77,63 @@ function foldedHood(surface, fit) {
     surface.shell(lining, (0, human_cloth_js_1.tint)(shirt, .71));
     surface.shell(outer.map((row, i) => [row[4], lining[i][1]].map(([x, y, z]) => [x, y + .0025, z])), (0, human_cloth_js_1.tint)(shade, .66), 2);
 }
+function collarLining(fit) {
+    const knit = new human_cloth_js_1.Surface('knit', -.516), { look, cut } = fit;
+    const top = cut === 'quilted' ? .557 : .548;
+    knit.loft([[.522, .070, .063, .069, 0, .007], [.532, .066, .060, .064, 0, .007], [top, .059, .055, .059, 0, .007]], look.shirt, 0, 20, .91);
+    knit.loft([[top - .002, .060, .056, .060, 0, .007], [top, .056, .052, .056, 0, .007], [top - .007, .054, .050, .054, 0, .007]],
+        (0, human_cloth_js_1.tint)(look.shirt, .66), 0, 20, .91);
+    return knit.mesh('rib-knit-inner-collar');
+}
+
+function wornPocket(surface, fit, point) {
+    const side = fit.pocketSide, { look, variant } = fit, x = side * (.098 + (variant % 3) * .007), y = .126 + (variant % 4) * .009;
+    const color = (0, human_cloth_js_1.tint)(look.main, fit.cut === 'wool' ? 1.12 : 1.19);
+    const patch = (y, width) => [x - width, x + width, y];
+    const front = (x, y, rise) => point(x, y, rise);
+    surface.fittedPatch([patch(y - .021, .018), patch(y - .012, .029), patch(y + .010, .028), patch(y + .015, .017)], front, color, 1, false, .010, .001);
+    if (variant % 3 === 1 || variant === 15) {
+        const repaired = (0, human_cloth_js_1.tint)(look.shade, 1.27);
+        surface.fittedPatch([patch(y - .019, .011), patch(y - .013, .023), patch(y + .007, .021), patch(y + .012, .017)], front, repaired, 2, false, .012, .001);
+        const thread = (0, human_cloth_js_1.tint)(look.accent, .77);
+        for (let i = -2; i <= 2; i++) {
+            const q = x + i * .007;
+            surface.stroke([point(q - .002, y - .014, .015), point(q + .002, y - .010, .015)], .0014, thread);
+        }
+    }
+}
+
+function personalGear(role, fit, point) {
+    const mesh = new model_geometry_js_1.Batch();
+    const attach = role === 'dispatcher' ? [.093, .284] : role === 'hero' || role === 'courier' ? [-.112, .243] : [fit.pocketSide * .117, .330];
+    const [x, y, z] = point(...attach, .015);
+    if (role === 'dispatcher') {
+        mesh.box(x, y + .008, z, .018, .020, .012, '#4b5559');
+        const cord = Array.from({ length: 26 }, (_, i) => [x + Math.sin(i * .87) * .006, y - i * .0025, z - .008 + Math.cos(i * .87) * .004]);
+        for (let i = 1; i < cord.length; i++)
+            mesh.rod(cord[i - 1], cord[i], .0019, '#292f33');
+        mesh.add(model_geometry_js_1.ring, [x, y - .068, z - .005], [.009, .009, .017], '#c4bd9d');
+        mesh.box(x + .004, y - .086, z - .009, .013, .038, .004, '#a8a387', [0, .24, .19]);
+    }
+    else if (role === 'courier' || role === 'hero') {
+        mesh.rod([x, y + .014, z + .002], [x, y - .022, z - .012], .007, '#555455', true);
+        mesh.add(model_geometry_js_1.ring, [x - .007, y - .021, z - .014], [.017, .025, .022], '#b0a788', [0, -.23, .23]);
+        mesh.box(x - .010, y - .066, z - .023, .048, .079, .028, '#4d484b', [0, -.12, .12]);
+        mesh.box(x - .013, y - .070, z - .038, .038, .055, .005, '#7e6f58', [0, -.12, .12]);
+    }
+    else {
+        const plate = fit.variant % 3 === 0 ? '#c9a66c' : fit.variant % 3 === 1 ? '#a9baae' : '#9cb5bb';
+        mesh.box(x, y, z, .018, .027, .017, '#454b4b');
+        mesh.box(x, y - .029, z - .012, .054, .038, .006, plate, [0, .15 * fit.pocketSide, .04]);
+        mesh.box(x - .009, y - .028, z - .016, .013, .015, .002, '#746a54');
+        for (const row of [-.037, -.030, -.023])
+            mesh.box(x + .010, y + row, z - .016, .015, .002, .002, '#627273');
+    }
+    const part = mesh.mesh();
+    part.name = 'personal-kit-with-fastener';
+    return part;
+}
+
 function upperBody(role, fit) {
     const l = fit.look, hero = role === 'hero', mechanic = fit.cut === 'workwear';
     const { feminine, thick, parka, long, cut, shoulderWidth: shoulder, waist, acrossHip: hips, chest, depth } = fit;
@@ -91,9 +156,14 @@ function upperBody(role, fit) {
             ring[2] += fill;
             ring[3] += fill * 1.12;
         }
-    const textile = cut === 'wool' || fit.style.openKnit ? 'wool' : cut === 'quilted' ? 'quilted' : 'outerwear';
+    const textile = cut === 'wool' || fit.style.openKnit ? 'wool' : cut === 'quilted' || cut === 'waxed' ? cut : 'outerwear';
     const surface = new human_cloth_js_1.Surface(textile), tail = new human_cloth_js_1.Surface(textile), strap = new human_cloth_js_1.Surface('leather'), flap = new human_cloth_js_1.Surface('leather');
-    const { point, atAngle, armhole, sculpt, light, cut: cutSocket } = (0, human_sleeve_js_1.tailor)(shell, cut);
+    const { point, atAngle, armhole, sculpt, light, cut: cutSocket } = (0, human_sleeve_js_1.tailor)(shell, cut, fit);
+    const finish = name => {
+        const torso = surface.mesh(name);
+        torso.add(collarLining(fit), personalGear(role, fit, point));
+        return torso;
+    };
     if (hero) {
         surface.loft(shell.slice(0, 8), l.main, 1, 28, .87, sculpt, false, cutSocket, light);
         surface.loft(shell.slice(7), (0, human_cloth_js_1.tint)(l.main, .92), 1, 28, .87, sculpt, false, (row, k) => cutSocket(row + 7, k), light);
@@ -137,12 +207,15 @@ function upperBody(role, fit) {
     const rolledEnd = hero ? .015 : trim ? .037 : parka ? .025 : .015;
     const rolled = [[end + .010, hemWidth + .004, hemFront + .004, hemBack + .004, 0, .004], [end + rolledEnd, hemWidth + .005, hemFront + .005, hemBack + .005, 0, .004]];
     tail.loft(rolled, (0, human_cloth_js_1.tint)(l.shade, .82), 2, 28, .77, drape);
+    tail.loft([[end + .010, hemWidth - .006, hemFront - .008, hemBack - .008, 0, .004], [end + .020, hemWidth - .010, hemFront - .011, hemBack - .010, 0, .004],
+        [end + .045, hemWidth - .009, hemFront - .014, hemBack - .013, 0, .004]], (0, human_cloth_js_1.tint)(l.shirt, .68), 0, 28, .77, drape);
     if (role === 'vendor') {
         const apron = lower.map(([y, w, f, b, x, z]) => [y + .013, w - .005, f + .003, b, x, z]);
         tail.loft(apron, '#354b47', 0, 28, .77, (p, a, j) => { drape(p, a, j); p[2] -= .009; }, false, (_, k) => Math.sin((k + .5) * Math.PI / 14) > -.72);
     }
     const seam = (coords, w, col, tag = 0, back = false, off = .003) => surface.stroke(coords.map(([x, y]) => point(x, y, off, back)), w, col, tag, back);
     const panel = (rows, col, tag = 0, back = false, off = .004, relief = .003) => surface.fittedPatch(rows, (x, y, rise) => point(x, y, rise, back), col, tag, back, off, relief);
+    wornPocket(surface, fit, point);
     for (const s of [-1, 1]) {
         seam([[s * .080, .493], [s * .119, .462], [s * .154, .435], [s * (shoulder - .014), .397], [s * (chest - .012), .348]], .0033, l.shade, 2);
         seam([[s * .088, .488], [s * .141, .453], [s * (shoulder - .008), .419], [s * (chest - .002), .377]], .005, l.shade, 2, true);
@@ -251,7 +324,7 @@ function upperBody(role, fit) {
             const strapPts = [[-.128, .465], [-.119, .416], [-.091, .378], [-.038, .32], [.012, .269], [.062, .220], [.115, .17], [.157, .140]];
             for (const [width, col, off] of [[.032, '#343f3c', .010], [.021, '#555b4f', .013]])
                 strap.stroke(strapPts.map(([x, y]) => { const p = point(x, y, off); p[1] -= .39; return p; }), width, col);
-            const m = surface.mesh('courier-field-jacket');
+            const m = finish('courier-field-jacket');
             m.add(bagMesh);
             const lid = flap.mesh('bag-lid');
             lid.scale.copy(bagMesh.scale);
@@ -316,7 +389,21 @@ function upperBody(role, fit) {
         }
     }
     (0, human_kits_js_1.addKit)(surface, fit.style, point, shoulder);
-    return { armhole, torso: surface.mesh('winter-outerwear'), tail: tail.mesh('coat-hem'), strap: null, flap: null };
+    let reflectors;
+    if (fit.style.reflective) {
+        const tape = new human_cloth_js_1.Surface('outerwear');
+        for (const back of [false, true]) {
+            for (const side of [-1, 1]) {
+                const row = (y, inner, outer) => [side < 0 ? -outer : inner, side < 0 ? -inner : outer, y];
+                const clothPoint = (x, y, rise) => point(x, y, rise, back);
+                tape.fittedPatch([row(.308, .067, .173), row(.331, .067, .164)], clothPoint, fit.style.reflective, 0, back, .020, .001);
+                tape.fittedPatch([row(.331, .076, .103), row(.423, .082, .109)], clothPoint, fit.style.reflective, 0, back, .020, .001);
+            }
+        }
+        reflectors = tape.mesh('reflective-jacket-tape');
+        reflectors.material = reflectorMaterial;
+    }
+    return { armhole, torso: finish('winter-outerwear'), tail: tail.mesh('coat-hem'), strap: null, flap: null, reflectors };
 }
 function limbs(side, fit, role, socket) {
     const l = fit.look, suit = fit.cut === 'wool', utility = fit.cut === 'workwear' || role === 'hero', trim = fit.cut === 'windbreaker';
@@ -400,7 +487,10 @@ function limbs(side, fit, role, socket) {
         }, false, (_, k) => Math.sin((k + .5) * Math.PI / 10) > -.53);
     }
     const fore = lower.mesh('forearm-sleeve');
-    fore.add((0, human_extremities_js_1.sculptHand)(side, fit, role));
+    const innerCuff = new human_cloth_js_1.Surface('knit', .211);
+    innerCuff.loft([[-.212, .025 * arm, .026 * arm, .032 * arm, side * .002, -.004], [-.194, .026 * arm, .028 * arm, .036 * arm, side * .002, -.004],
+        [-.179, .030 * arm, .032 * arm, .039 * arm, side * .002, -.003]], (0, human_cloth_js_1.tint)(l.shirt, .82), 0, 14, .91);
+    fore.add((0, human_extremities_js_1.sculptHand)(side, fit, role), innerCuff.mesh('rib-knit-cuff'));
     return { aUpper: upper, aLower: fore, armBends: aBend.mesh('sleeve-elbow-gusset'), lUpper: thigh.mesh('trouser-thigh'), lLower: calf.mesh('trouser-shin'), legBends: kBend.mesh('trouser-knee-gusset'), feet: (0, human_extremities_js_1.sculptBoot)(side, fit, role) };
 }
 function props() {

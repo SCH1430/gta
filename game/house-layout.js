@@ -10,6 +10,7 @@ exports.moveInHouse = moveInHouse;
 exports.houseClearance = houseClearance;
 const campusMotion = require("./campus-movement.js");
 const interior_layout_js_1 = require("./interior-layout.js");
+const { plantShelf } = require("./world-life-neighbor-layout.js");
 exports.houseEntry = { x: -34.96, z: 15.80 };
 exports.houseOutside = { x: -34.96, z: 17.0, yaw: Math.PI };
 exports.houseSpawn = { x: -.85, z: 5.90, yaw: 0 };
@@ -48,6 +49,7 @@ exports.housePlan = {
 };
 const wallThickness = .16;
 const solids = [
+    { ...plantShelf, bottom: exports.houseUpper, top: exports.houseUpper + plantShelf.h },
     ...walls.map(a => ({ x: (a.x1 + a.x2) / 2, z: (a.z1 + a.z2) / 2, w: Math.abs(a.x2 - a.x1) + wallThickness,
         d: Math.abs(a.z2 - a.z1) + wallThickness, bottom: -.20, top: 6.42 })),
     ...exports.furnishings.map(f => ({ ...f, bottom: f.base, top: f.base + f.h }))

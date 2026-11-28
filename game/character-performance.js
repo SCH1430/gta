@@ -1,7 +1,37 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CharacterPerformance = exports.principalGaits = void 0;
+exports.streetPerformancePose = streetPerformancePose;
 const three_module_min_js_1 = require("../engine/three.module.min.js");
+const { fenceDamageWitness } = require("./city-life.js");
+const { tramStops } = require("./world-railway.js");
+const { shortAngle } = require("./model-gait.js");
+const stationBoards = Object.values(tramStops).map(stop => stop.board);
+function streetPerformancePose(person, conditions, witness, elapsed) {
+    if (person.onboard || person.platformStep)
+        return {};
+    const wind = Math.hypot(conditions.gustX, conditions.gustZ);
+    const windSide = Math.sign(conditions.gustX * Math.cos(person.yaw) - conditions.gustZ * Math.sin(person.yaw)) || 1;
+    const directionTo = point => shortAngle(Math.atan2(person.x - point.x, person.z - point.z) - person.yaw);
+    let board;
+    if (person.speed < .25) {
+        let closest = 5.4 ** 2;
+        for (const candidate of stationBoards) {
+            const distance = (person.x - candidate.x) ** 2 + (person.z - candidate.z) ** 2;
+            if (distance < closest) {
+                closest = distance;
+                board = candidate;
+            }
+        }
+    }
+    const impactAge = witness?.reason === fenceDamageWitness && witness.t <= elapsed ? elapsed - witness.t : Infinity;
+    return {
+        wind, windSide, cold: conditions.temperature < 2,
+        boardAngle: board ? directionTo(board) : undefined,
+        boardPitch: board ? Math.atan2(board.y - person.y - 1.55, Math.hypot(person.x - board.x, person.z - board.z)) : 0,
+        impactAge, impactAngle: impactAge < 3 ? directionTo(witness) : undefined
+    };
+}
 exports.principalGaits = {
     vendor: 'careful', mechanic: 'worker', dispatcher: 'limp', courier: 'courier'
 };
